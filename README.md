@@ -42,13 +42,6 @@ Project `CLAUDE.md` files do **not** re-import these — they contain
 only project-specific content. A project that needs to *override* a
 shared rule states the exception explicitly in its own `CLAUDE.md`.
 
-## Non-Rails projects
-
-Projects without a milestones/issues regime (e.g., single-file static
-sites) can skip `project-tracking.md` by stating so in their own
-`CLAUDE.md`. Each module is self-contained and can be omitted without
-breaking the others.
-
 ## Related
 
 - `chezmoi` (not this repo) — for dotfiles like `.vimrc` and `.bashrc`.
