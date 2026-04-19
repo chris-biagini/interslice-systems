@@ -15,6 +15,7 @@ so every project on the machine inherits the same baseline.
 | `superpowers-usage.md` | When to use superpowers, visual companion setup, execution mode. |
 | `subagents.md` | Opus subagents for coding tasks. |
 | `dev-style.md` | Cross-project development posture. |
+| `rails.md` | Ruby + Rails idioms: architectural postures, Ruby style, architectural-comments convention. |
 
 ## Import pattern
 

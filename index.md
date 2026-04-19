@@ -11,3 +11,4 @@ module + wiring it in happens in the same commit in the same repo —
 @./superpowers-usage.md
 @./subagents.md
 @./dev-style.md
+@./rails.md
