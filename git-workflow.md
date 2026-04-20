@@ -44,8 +44,6 @@ Design docs and plans live on the branch.
 ## Key rules
 
 - **Squash-merge PRs** (`gh pr merge --squash`) for clean linear history.
-- **`-D` not `-d`** for local branch deletion. Post-commit hooks that
-  rewrite SHAs make `-d`'s "is it merged?" check fail.
 - **No manual git worktrees.** Use simple `git checkout -b` branching.
   The Agent tool's built-in `isolation: "worktree"` handles subagent
   isolation automatically when needed. This overrides any superpowers
