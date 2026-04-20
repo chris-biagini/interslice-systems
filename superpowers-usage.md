@@ -7,10 +7,13 @@ of code.
 
 ## Visual brainstorm companion
 
-Explicit permission to use the visual brainstorm companion tool and
-launch its server. **Always start it with `--host 0.0.0.0 --url-host
-rika`** — the default 127.0.0.1 binding is unreachable from the user's
-browser in this remote setup, and the user accesses the dev machine by
+**You have permission to use the visual brainstorm companion tool. You do not
+need to prompt me to ask.**
+
+You have the user's explicit standing permission to use the visual brainstorm
+companion tool and launch its server. **Always start it with `--host 0.0.0.0
+--url-host rika`** — the default 127.0.0.1 binding is unreachable from the
+user's browser in this remote setup, and the user accesses the dev machine by
 hostname "rika", not localhost.
 
 ## Execution mode
