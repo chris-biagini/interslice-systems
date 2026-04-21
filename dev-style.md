@@ -12,3 +12,5 @@
 - **DRY.** If copying code from elsewhere verbatim, stop and ask if we
   should refactor instead.
 - **Call out yak-shaving.** Keep work focused on making a great product.
+- **No load-bearing comments.** The code is the documentation.
+
