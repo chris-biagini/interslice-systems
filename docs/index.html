@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="en" data-screen-label="Homepage v5 · Minimal">
+<html lang="en" data-screen-label="Homepage">
 <head>
 <meta charset="utf-8">
 <title>interslice.systems — building the future, tomorrow!</title>
 <link rel="stylesheet" href="tokens.css">
 <style>
-  html, body { margin: 0; padding: 0; background: var(--paper-0); color: var(--ink-0); font-family: var(--font-body); }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); }
   *, *::before, *::after { box-sizing: border-box; }
   a { color: inherit; }
 
@@ -24,7 +24,7 @@
   .page::before {
     content: "";
     position: absolute; inset: 0;
-    background-image: radial-gradient(var(--ink-0) 1.1px, transparent 1.3px);
+    background-image: radial-gradient(var(--stamp-ink) 1.1px, transparent 1.3px);
     background-size: 22px 22px;
     opacity: 0.045;
     pointer-events: none;
@@ -34,27 +34,11 @@
   .top {
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 24px;
     position: relative;
     z-index: 2;
   }
-  .est {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    padding: 7px 12px;
-    border: 2px solid var(--ink-0);
-    background: var(--paper-0);
-    box-shadow: 3px 3px 0 0 var(--ink-0);
-  }
-  .est .pip { width: 8px; height: 8px; border-radius: 999px; background: var(--ink-yellow); border: 1.5px solid var(--ink-0); }
-  .est em { font-style: normal; color: var(--ink-magenta); font-weight: 700; }
 
   .motto {
     font-family: var(--font-display);
@@ -62,7 +46,7 @@
     font-style: italic;
     font-size: 14px;
     letter-spacing: -0.01em;
-    color: var(--ink-1);
+    color: var(--fg-muted);
     text-align: right;
     line-height: 1.3;
     max-width: 22ch;
@@ -78,7 +62,7 @@
     font-size: 28px;
     line-height: 0;
     vertical-align: -6px;
-    color: var(--ink-0);
+    color: var(--fg);
     margin-right: 2px;
   }
   .motto::after {
@@ -87,7 +71,7 @@
     font-size: 28px;
     line-height: 0;
     vertical-align: -6px;
-    color: var(--ink-0);
+    color: var(--fg);
     margin-left: 2px;
   }
 
@@ -126,12 +110,12 @@
     /* pull up to absorb the line-box's top half-leading so the wordmark
        sits visually a few pixels under the logo */
     margin: -0.18em 0 0;
-    color: var(--ink-0);
+    color: var(--fg);
     text-wrap: balance;
   }
   .wordmark i {
     font-style: normal;
-    color: var(--ink-0);
+    color: var(--fg);
     /* font-rendered middot — no transform, keeps native baseline alignment */
     /* optical balance: the dot's glyph has more right-side bearing than left,
        so we ADD margin on the left and PULL margin on the right to even the gap. */
@@ -141,7 +125,7 @@
   }
   .wordmark b {
     font-weight: 500;
-    color: var(--ink-0);
+    color: var(--fg);
   }
 
   /* big mirepoix CTA — the central action */
@@ -158,7 +142,7 @@
     font-weight: 700;
     letter-spacing: 0.28em;
     text-transform: uppercase;
-    color: var(--ink-2);
+    color: var(--fg-muted);
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -167,7 +151,7 @@
     content: "";
     width: 28px;
     height: 2px;
-    background: var(--ink-0);
+    background: var(--fg);
   }
 
   .cta {
@@ -178,19 +162,19 @@
     font-weight: 700;
     font-size: clamp(28px, 4.4vw, 56px);
     letter-spacing: -0.03em;
-    color: var(--ink-0);
+    color: var(--fg);
     text-decoration: none;
     padding: 10px 26px 14px;
-    border: 3px solid var(--ink-0);
-    background: var(--paper-0);
-    box-shadow: 8px 8px 0 0 var(--ink-magenta), 8px 8px 0 5px var(--ink-0);
+    border: 3px solid var(--border);
+    background: var(--bg);
+    box-shadow: 8px 8px 0 0 var(--ink-magenta), 8px 8px 0 5px var(--stamp-ink);
     transition: transform 140ms var(--ease-snap), box-shadow 140ms var(--ease-snap);
     position: relative;
     line-height: 1;
   }
   .cta b {
     font-weight: 700;
-    color: var(--ink-0);
+    color: var(--fg);
   }
   .cta .arrow {
     font-family: var(--font-display);
@@ -202,12 +186,12 @@
   }
   .cta:hover {
     transform: translate(-2px, -2px);
-    box-shadow: 10px 10px 0 0 var(--ink-magenta), 10px 10px 0 5px var(--ink-0);
+    box-shadow: 10px 10px 0 0 var(--ink-magenta), 10px 10px 0 5px var(--stamp-ink);
   }
   .cta:hover .arrow { transform: translate(4px, -4px); }
   .cta:active {
     transform: translate(5px, 5px);
-    box-shadow: 0 0 0 0 var(--ink-magenta), 0 0 0 0 var(--ink-0);
+    box-shadow: 0 0 0 0 var(--ink-magenta), 0 0 0 0 var(--stamp-ink);
   }
 
   .cta-sub {
@@ -216,19 +200,12 @@
     font-weight: 700;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--ink-2);
+    color: var(--fg-muted);
     margin-top: 4px;
     display: inline-flex;
     align-items: center;
     gap: 10px;
   }
-  .cta-sub .dot {
-    width: 8px; height: 8px; border-radius: 999px;
-    background: var(--ink-green);
-    border: 1px solid var(--ink-0);
-    animation: blink 1.6s ease-in-out infinite;
-  }
-  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
   /* ===================== SNEAK PREVIEW CARD ===================== */
   .sneak-row {
@@ -253,6 +230,9 @@
     font-weight: 700;
     letter-spacing: 0.22em;
     text-transform: uppercase;
+    /* Yellow sticker is theme-invariant — pin its text, outline, and
+       shadow to --ink-0 (don't let dark mode flip them to cream, which
+       would be low-contrast against yellow). */
     color: var(--ink-0);
     background: var(--ink-yellow);
     border: 2px solid var(--ink-0);
@@ -263,9 +243,9 @@
   }
 
   .sneak__card {
-    background: #fff;
-    border: 3px solid var(--ink-0);
-    box-shadow: 7px 7px 0 0 var(--ink-cyan), 7px 7px 0 3px var(--ink-0);
+    background: var(--bg-raised);
+    border: 3px solid var(--border);
+    box-shadow: 7px 7px 0 0 var(--ink-cyan), 7px 7px 0 3px var(--stamp-ink);
     padding: 14px 14px 12px;
     display: flex;
     flex-direction: column;
@@ -274,7 +254,7 @@
   .sneak__head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 8px;
     font-family: var(--font-mono);
     font-size: 10px;
@@ -283,27 +263,17 @@
     text-transform: uppercase;
   }
   .sneak__sku {
-    padding: 3px 8px;
+    padding: 3px 10px;
     border: 2px solid var(--ink-0);
     background: var(--ink-magenta);
     color: #fff;
   }
-  .sneak__product {
-    color: var(--ink-0);
-    margin-right: auto;
-    margin-left: 8px;
-    letter-spacing: 0.14em;
-    font-weight: 700;
-  }
-  .sneak__when {
-    color: var(--ink-orange);
-    font-weight: 700;
-  }
+  .sneak__sku b { font-weight: 700; margin-right: 6px; }
 
   /* tiny CRT */
   .mcrt {
-    background: #0B1019;
-    border: 2px solid var(--ink-0);
+    background: var(--crt-screen-deep);
+    border: 2px solid var(--border);
     border-radius: 4px;
     padding: 10px 12px 9px;
     font-family: var(--font-crt);
@@ -353,11 +323,10 @@
     font-weight: 700;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--ink-2);
+    color: var(--fg-muted);
     padding-top: 6px;
-    border-top: 2px solid var(--ink-0);
+    border-top: 2px solid var(--border);
   }
-  .sneak__foot b { color: var(--ink-0); font-weight: 700; }
 
   /* ===================== FOOTER ===================== */
   .foot {
@@ -368,166 +337,152 @@
     align-items: center;
     gap: 24px;
     padding-top: 14px;
-    border-top: 2px solid var(--ink-0);
+    border-top: 2px solid var(--border);
     font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--ink-2);
+    color: var(--fg-muted);
   }
   .foot__left {
     display: inline-flex;
     align-items: center;
     gap: 14px;
   }
-  .foot__left .pip {
-    display: inline-block;
-    width: 9px; height: 9px;
-    border-radius: 999px;
-    background: var(--ink-magenta);
-    border: 1.5px solid var(--ink-0);
-  }
   .foot__cmyk { display: inline-flex; gap: 4px; }
-  .foot__cmyk span { width: 9px; height: 9px; border-radius: 999px; border: 1.5px solid var(--ink-0); display: inline-block; }
+  .foot__cmyk span { width: 9px; height: 9px; border-radius: 999px; border: 1.5px solid var(--border); display: inline-block; }
   .foot__cmyk .c { background: var(--ink-cyan); }
   .foot__cmyk .m { background: var(--ink-magenta); }
   .foot__cmyk .y { background: var(--ink-yellow); }
-  .foot__cmyk .k { background: var(--ink-0); }
+  .foot__cmyk .k { background: var(--fg); }
 
   /* ===================== MEMPHIS SPRINKLES =====================
      Scattered geometric primitives in the gutters — quiet but distinctive.
      Positioned absolutely against .page. */
-  .sprinkle { position: absolute; pointer-events: none; z-index: 0; }
+  .sprinkle { position: absolute; pointer-events: none; z-index: 0; color: var(--stamp-ink); }
 
-  /* Sprinkles cluster around the page edges & corners, radiating away
-     from the centered logo+wordmark. Rotations point each shape away
-     from center so the layout reads as a slow outward burst. */
+  /* Memphis-style scatter: visual weight spread across all eight zones
+     (TL, TC, TR, ML, MR, BL, BC, BR-sneak) rather than radial-uniform.
+     Rotations vary freely — radiating is no longer a strict rule.
+     Forbidden zone: bottom-right ~65–100% height × 0–24% from right edge
+     (the .sneak preview card lives here). */
 
-  /* magenta squiggle, top-left corner */
-  .sp-squig-1 { top: 96px; left: 40px; width: 140px; transform: rotate(-22deg); }
-  /* cyan squiggle, bottom-left corner */
-  .sp-squig-2 { bottom: 110px; left: 40px; width: 120px; transform: rotate(18deg); }
-
-  /* yellow triangle, far top-right */
-  .sp-tri-1 { top: 96px; right: 6%; width: 42px; transform: rotate(-18deg); }
-  /* green triangle, far bottom-right */
-  .sp-tri-2 { bottom: 110px; right: 8%; width: 26px; transform: rotate(38deg); }
-
-  /* solid cyan dot — far left edge */
-  .sp-dot-1 {
-    top: 46%; left: 3.5%;
-    width: 26px; height: 26px;
-    background: var(--ink-cyan);
-    border: 2px solid var(--ink-0);
-    border-radius: 999px;
-    box-shadow: 3px 3px 0 0 var(--ink-0);
+  /* ─── TOP-LEFT ─── 3 items, anchoring the corner that the .est box vacated */
+  .sp-squig-1 { top: 80px; left: 60px; width: 168px; transform: rotate(-16deg); }
+  .sp-check {
+    top: 78px; left: 24%;
+    width: 36px; height: 36px;
+    border: 2px solid var(--border);
+    background:
+      conic-gradient(var(--fg) 0 25%, var(--bg) 0 50%, var(--fg) 0 75%, var(--bg) 0);
+    transform: rotate(-14deg);
   }
-  /* orange dot — far bottom-left */
   .sp-dot-2 {
-    bottom: 180px; left: 5%;
+    top: 170px; left: 13%;
     width: 18px; height: 18px;
     background: var(--ink-orange);
-    border: 2px solid var(--ink-0);
-    border-radius: 999px;
-  }
-  /* tiny magenta dot — far top-right */
-  .sp-dot-3 {
-    top: 180px; right: 4%;
-    width: 14px; height: 14px;
-    background: var(--ink-magenta);
-    border: 2px solid var(--ink-0);
+    border: 2px solid var(--border);
     border-radius: 999px;
   }
 
-  /* ring (donut) — far right edge */
-  .sp-ring {
-    top: 38%; right: 3.5%;
-    width: 40px; height: 40px;
-    border: 3px solid var(--ink-0);
+  /* ─── TOP-RIGHT ─── 3 items, all below motto (which ends ~90–130px from top) */
+  .sp-tri-1 { top: 170px; right: 5%; width: 48px; transform: rotate(-26deg); }
+  .sp-stripe {
+    top: 132px; right: 22%;
+    width: 68px; height: 20px;
+    border: 2px solid var(--border);
     border-radius: 999px;
-    background: var(--paper-0);
+    background: repeating-linear-gradient(45deg, var(--ink-magenta) 0 6px, var(--bg) 6px 12px);
+    transform: rotate(20deg);
+  }
+  .sp-dot-3 {
+    top: 246px; right: 3%;
+    width: 14px; height: 14px;
+    background: var(--ink-magenta);
+    border: 2px solid var(--border);
+    border-radius: 999px;
+  }
+
+  /* ─── MID-LEFT ─── 2 items at the page edge, mid-height */
+  .sp-dot-1 {
+    top: 40%; left: 2.8%;
+    width: 30px; height: 30px;
+    background: var(--ink-cyan);
+    border: 2px solid var(--border);
+    border-radius: 999px;
+    box-shadow: 3px 3px 0 0 var(--stamp-ink);
+  }
+  .sp-bar-1 {
+    top: 54%; left: 8%;
+    width: 82px; height: 16px;
+    background: var(--ink-magenta);
+    border: 2px solid var(--border);
+    transform: rotate(-32deg);
+    box-shadow: 3px 3px 0 0 var(--stamp-ink);
+  }
+
+  /* ─── MID-RIGHT ─── 2 items, both ABOVE the sneak preview's top edge */
+  .sp-ring {
+    top: 32%; right: 3.5%;
+    width: 44px; height: 44px;
+    border: 3px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg);
     position: absolute;
   }
   .sp-ring::after {
     content: "";
     position: absolute;
-    inset: 7px;
+    inset: 8px;
     border-radius: 999px;
     background: var(--ink-yellow);
   }
+  .sp-bar-2 {
+    top: 48%; right: 2.5%;
+    width: 64px; height: 12px;
+    background: var(--ink-overlap);
+    border: 2px solid var(--border);
+    transform: rotate(32deg);
+  }
 
-  /* arc / half-pill — bottom-left, opening outward */
+  /* ─── BOTTOM-LEFT ─── 2 items (down from 5; the rest moved to bottom-center) */
+  .sp-squig-2 { bottom: 130px; left: 56px; width: 140px; transform: rotate(22deg); }
   .sp-arc {
-    bottom: 240px; left: 3%;
-    width: 76px; height: 38px;
-    border: 3px solid var(--ink-0);
+    bottom: 268px; left: 3%;
+    width: 82px; height: 40px;
+    border: 3px solid var(--border);
     border-bottom: 0;
     border-radius: 80px 80px 0 0;
     background: var(--ink-overlap);
-    transform: rotate(-28deg);
+    transform: rotate(-34deg);
     position: absolute;
   }
 
-  /* magenta bar — left edge, angled away */
-  .sp-bar-1 {
-    top: 58%; left: 3%;
-    width: 70px; height: 16px;
-    background: var(--ink-magenta);
-    border: 2px solid var(--ink-0);
-    transform: rotate(-26deg);
-    box-shadow: 3px 3px 0 0 var(--ink-0);
-  }
-  /* deep-blue bar — right edge, angled away */
-  .sp-bar-2 {
-    top: 56%; right: 4%;
-    width: 56px; height: 12px;
-    background: var(--ink-overlap);
-    border: 2px solid var(--ink-0);
-    transform: rotate(26deg);
-  }
-
-  /* X cross — far right edge */
+  /* ─── BOTTOM-CENTER ─── 3 items, filling the previously empty stretch
+     between the bottom-left cluster and the sneak-preview card */
+  .sp-reg { bottom: 88px; left: 24%; width: 32px; height: 32px; }
   .sp-cross {
-    top: 70%; right: 5%;
-    width: 28px; height: 28px;
+    bottom: 96px; left: 42%;
+    width: 30px; height: 30px;
+    transform: rotate(8deg);
   }
   .sp-cross::before, .sp-cross::after {
     content: "";
     position: absolute;
     left: 0; right: 0;
     height: 5px;
-    top: 11px;
-    background: var(--ink-0);
+    top: 12px;
+    background: var(--fg);
   }
   .sp-cross::before { transform: rotate(45deg); }
   .sp-cross::after { transform: rotate(-45deg); }
-
-  /* registration mark — bottom-left corner */
-  .sp-reg {
-    bottom: 70px; left: 4%;
-    width: 30px; height: 30px;
-  }
-
-  /* checkerboard chip — top edge, well off-center */
-  .sp-check {
-    top: 96px; left: 16%;
-    width: 32px; height: 32px;
-    border: 2px solid var(--ink-0);
-    background:
-      conic-gradient(var(--ink-0) 0 25%, var(--paper-0) 0 50%, var(--ink-0) 0 75%, var(--paper-0) 0);
-    transform: rotate(-14deg);
-  }
-
-  /* small striped pill — top-right, angled outward */
-  .sp-stripe {
-    top: 150px; right: 14%;
-    width: 60px; height: 18px;
-    border: 2px solid var(--ink-0);
-    border-radius: 999px;
-    background: repeating-linear-gradient(45deg, var(--ink-magenta) 0 6px, var(--paper-0) 6px 12px);
-    transform: rotate(22deg);
-  }
+  /* tri-2 is the only sprinkle that could collide with the .sneak card on
+     narrow viewports. Sneak's left edge sits at viewport_right − 384px
+     (8px sneak-row padding + 320px card width + 56px .page padding).
+     `right: max(36%, 408px)` floats tri-2 at column ~64% on wide viewports
+     and clamps to 408px (24px clear of sneak's left) on narrow ones. */
+  .sp-tri-2 { bottom: 70px; right: max(36%, 408px); width: 30px; transform: rotate(48deg); }
 </style>
 </head>
 <body>
@@ -542,10 +497,10 @@
   </svg>
 
   <svg class="sprinkle sp-tri-1" viewBox="0 0 42 38" aria-hidden="true">
-    <polygon points="21,2 40,36 2,36" fill="#FED105" stroke="#0B0E1F" stroke-width="2.5"></polygon>
+    <polygon points="21,2 40,36 2,36" fill="#FED105" stroke="currentColor" stroke-width="2.5"></polygon>
   </svg>
   <svg class="sprinkle sp-tri-2" viewBox="0 0 26 24" aria-hidden="true">
-    <polygon points="13,2 24,22 2,22" fill="#019C49" stroke="#0B0E1F" stroke-width="2"></polygon>
+    <polygon points="13,2 24,22 2,22" fill="#019C49" stroke="currentColor" stroke-width="2"></polygon>
   </svg>
 
   <span class="sprinkle sp-dot-1"></span>
@@ -560,34 +515,33 @@
   <span class="sprinkle sp-stripe"></span>
 
   <svg class="sprinkle sp-reg" viewBox="0 0 30 30" aria-hidden="true">
-    <circle cx="15" cy="15" r="11" fill="none" stroke="#0B0E1F" stroke-width="2"></circle>
-    <line x1="15" y1="0" x2="15" y2="30" stroke="#0B0E1F" stroke-width="2"></line>
-    <line x1="0" y1="15" x2="30" y2="15" stroke="#0B0E1F" stroke-width="2"></line>
+    <circle cx="15" cy="15" r="11" fill="none" stroke="currentColor" stroke-width="2"></circle>
+    <line x1="15" y1="0" x2="15" y2="30" stroke="currentColor" stroke-width="2"></line>
+    <line x1="0" y1="15" x2="30" y2="15" stroke="currentColor" stroke-width="2"></line>
   </svg>
 
   <!-- ============ TOP STRIP ============ -->
   <header class="top">
-    <span class="est">
-      <span class="pip"></span>
-      EST. <em>1983</em>
-    </span>
     <p class="motto">We're building the future, <em>tomorrow!</em></p>
   </header>
 
   <!-- ============ BODY: LOGO + WORDMARK + CTA ============ -->
   <section class="body">
     <div class="stack">
-      <img class="mark" src="logo-mark-stamped.svg" alt="Interslice mark" width="168" height="168">
+      <picture>
+        <source srcset="logo-mark-stamped-on-dark.svg" media="(prefers-color-scheme: dark)">
+        <img class="mark" src="logo-mark-stamped.svg" alt="Interslice mark" width="168" height="168">
+      </picture>
 
       <h1 class="wordmark">interslice<i>·</i><b>systems</b></h1>
 
       <div class="cta-wrap">
-        <span class="cta-label">Our software is shipping</span>
+        <span class="cta-label">Visit our new web-site!</span>
         <a class="cta" href="https://mirepoix.recipes" target="_blank" rel="noopener">
           <span>open <b>mirepoix.recipes</b></span>
           <span class="arrow">↗</span>
         </a>
-        <span class="cta-sub"><span class="dot"></span>live · build 2026.05</span>
+        <span class="cta-sub">Netscape Navigator recommended</span>
       </div>
     </div>
   </section>
@@ -598,9 +552,7 @@
     <span class="sneak__tape">↳ sneak preview</span>
     <div class="sneak__card">
       <div class="sneak__head">
-        <span class="sneak__sku">IS-2200</span>
-        <span class="sneak__product">Recipe Router</span>
-        <span class="sneak__when">Fall '98</span>
+        <span class="sneak__sku"><b>IS-2200</b>Recipe Router</span>
       </div>
       <div class="mcrt" aria-hidden="true">
         <div class="mcrt__line mcrt__line--accent">IS-2200 · BIOS v2.4</div>
@@ -611,8 +563,7 @@
         <div class="mcrt__line">RX OK · 4 / 14 · cowabunga<span class="mcrt__cursor"></span></div>
       </div>
       <div class="sneak__foot">
-        <span><b>Coming</b> · Fall 1998</span>
-        <span>FIG. 01</span>
+        <span>Coming Fall 1998</span>
       </div>
     </div>
   </aside>
@@ -621,8 +572,7 @@
   <!-- ============ FOOTER ============ -->
   <footer class="foot">
     <span class="foot__left">
-      <span class="pip"></span>
-      © 1983–2026 Interslice Systems
+      © 1983–2026 Interslice Systems, a wholly owned subsidiary of Nordyne Defense Dynamics.
     </span>
     <span class="foot__cmyk">
       <span class="c"></span><span class="m"></span><span class="y"></span><span class="k"></span>

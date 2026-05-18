@@ -1,0 +1,21 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Interslice mark (on dark)">
+
+  <g fill="none" stroke-width="24" stroke-linecap="round">
+    <line x1="100" y1="100" x2="100" y2="28" stroke="#F32C09"></line>
+    <line x1="100" y1="100" x2="37.65" y2="136" stroke="#019C49"></line>
+    <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0001A0"></line>
+  </g>
+
+  <circle cx="100" cy="28" r="24" fill="#F32C09"></circle>
+  <circle cx="37.65" cy="136" r="24" fill="#019C49"></circle>
+  <circle cx="162.35" cy="136" r="24" fill="#0001A0"></circle>
+
+  <g>
+    <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#E5047F"></path>
+    <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#F32C09"></path>
+    <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FED105"></path>
+    <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#019C49"></path>
+    <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"></path>
+    <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"></path>
+  </g>
+</svg>

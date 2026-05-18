@@ -7,6 +7,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=VT323&display=swap");
 
 :root {
+  color-scheme: light dark;
+
   /* -------- CMYK INK PRIMARIES (the four arms of the mark) ---- */
   --ink-magenta:   #E5047F;  /* M */
   --ink-cyan:      #00A8F3;  /* C */
@@ -30,6 +32,38 @@
   --orange-600:    #B11E00;
   --green-100:     #D2F1DC;
   --green-600:     #016B32;
+  --overlap-100:   #D4D4F1;  /* pale periwinkle — only 100-tint missing from family */
+
+  /* -------- CRT HARDWARE SUB-PALETTE --------
+     The VT323 typeface has its own color language: phosphor inks
+     glowing on glass, molded-plastic bezel, side knobs. Used only
+     inside hardware-themed UI (Mirepoix Diagnostics, BootSplash,
+     IS-2200 monitor widget, type-crt preview). Do NOT use these
+     on paper or for body copy. Theme-invariant — phosphor looks
+     the same in light and dark mode. */
+
+  /* phosphor inks (the four CRT type colors) */
+  --crt-green:        #44FF8A;
+  --crt-amber:        #FFBB33;
+  --crt-cyan:         #5EE2FF;
+  --crt-magenta:      #FF6CB4;
+
+  /* screens (the dark behind glowing phosphor) */
+  --crt-screen:       #03150A;  /* unlit phosphor — faint green cast */
+  --crt-screen-deep:  #0B1019;  /* CRT-inside-monitor backdrop */
+
+  /* molded-plastic bezel */
+  --crt-bezel:        #1A1F2E;  /* default bezel housing */
+  --crt-bezel-grad-top: #1C2335;
+  --crt-bezel-grad-bot: #0A0E1C;
+
+  /* side knob radial-gradient stops (light → dark) */
+  --crt-knob-hi:      #AAAABB;
+  --crt-knob-mid:     #555566;
+  --crt-knob-lo:      #222233;
+
+  /* LED off (unlit status indicator) */
+  --crt-led-off:      #2A2F48;
 
   /* -------- NEUTRALS (paper + ink, 1997 jewel-case manual) ---- */
   --paper-0:       #F4F1EA;  /* warm cream — primary light bg */
@@ -58,6 +92,7 @@
   --fg-subtle:     var(--ink-3);
   --border:        var(--ink-0);          /* hard black borders, Memphis-y */
   --border-soft:   var(--paper-edge);
+  --stamp-ink:     var(--ink-0);          /* Memphis offset-shadow + sticker outline color (swaps to --paper-0 in dark) */
   --accent:        var(--ink-magenta);
   --link:          var(--ink-overlap);
   --link-hover:    var(--ink-magenta);
@@ -131,10 +166,10 @@
   --bw-mega:  6px;     /* hero cards, bezels */
 
   /* -------- SHADOWS — Memphis offset blocks, NO blur -------- */
-  --sh-stamp-sm: 3px 3px 0 0 var(--ink-0);
-  --sh-stamp-md: 6px 6px 0 0 var(--ink-0);
-  --sh-stamp-lg: 10px 10px 0 0 var(--ink-0);
-  --sh-stamp-xl: 14px 14px 0 0 var(--ink-0);
+  --sh-stamp-sm: 3px 3px 0 0 var(--stamp-ink);
+  --sh-stamp-md: 6px 6px 0 0 var(--stamp-ink);
+  --sh-stamp-lg: 10px 10px 0 0 var(--stamp-ink);
+  --sh-stamp-xl: 14px 14px 0 0 var(--stamp-ink);
   /* colored stamp variants (for hero callouts) */
   --sh-stamp-magenta: 6px 6px 0 0 var(--ink-magenta);
   --sh-stamp-cyan:    6px 6px 0 0 var(--ink-cyan);
@@ -157,8 +192,16 @@
   --grid-gutter: var(--sp-6);
 }
 
-/* ============================ DARK MODE ============================ */
+/* ============================ DARK MODE ============================
+   Two activation paths:
+   1) Explicit:  add data-theme="dark" to <html> (or .theme-dark to a subtree).
+   2) Automatic: matches OS via @media (prefers-color-scheme: dark) below,
+      but only when the page hasn't been pinned to light via data-theme="light".
+   Memphis stamps + borders flip from --ink-0 → --paper-0 (the cream halo
+   used in logo-mark-stamped-on-dark.svg — dark mode's "sticker outline"). */
+
 :root[data-theme="dark"], .theme-dark {
+  color-scheme: dark;
   --bg:           var(--navy-0);
   --bg-raised:    var(--navy-1);
   --bg-recessed:  #00061B;
@@ -167,12 +210,28 @@
   --fg-subtle:    #6E7796;
   --border:       var(--paper-0);
   --border-soft:  var(--navy-2);
+  --stamp-ink:    var(--paper-0);
   --link:         var(--ink-cyan);
   --link-hover:   var(--ink-yellow);
-  --sh-stamp-sm: 3px 3px 0 0 var(--paper-0);
-  --sh-stamp-md: 6px 6px 0 0 var(--paper-0);
-  --sh-stamp-lg: 10px 10px 0 0 var(--paper-0);
-  --sh-stamp-xl: 14px 14px 0 0 var(--paper-0);
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg:           var(--navy-0);
+    --bg-raised:    var(--navy-1);
+    --bg-recessed:  #00061B;
+    --fg:           var(--paper-0);
+    --fg-muted:     #B3BAD0;
+    --fg-subtle:    #6E7796;
+    --border:       var(--paper-0);
+    --border-soft:  var(--navy-2);
+    --stamp-ink:    var(--paper-0);
+    --link:         var(--ink-cyan);
+    --link-hover:   var(--ink-yellow);
+  }
 }
 
 /* ============================ ELEMENT DEFAULTS ============================ */
