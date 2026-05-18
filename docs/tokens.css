@@ -1,0 +1,208 @@
+/* =============================================================
+   Interslice Design System — colors_and_type.css
+   "Building the future, tomorrow!"
+   ============================================================= */
+
+/* ---------- Fonts (brand families, loaded from Google Fonts) ---------- */
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=VT323&display=swap");
+
+:root {
+  /* -------- CMYK INK PRIMARIES (the four arms of the mark) ---- */
+  --ink-magenta:   #E5047F;  /* M */
+  --ink-cyan:      #00A8F3;  /* C */
+  --ink-yellow:    #FED105;  /* Y */
+  --ink-orange:    #F32C09;  /* M+Y arm */
+  --ink-green:     #019C49;  /* C+Y arm */
+  --ink-overlap:   #0001A0;  /* C+M, the deep registration blue */
+  --ink-key:       #0B0E1F;  /* K, our near-black */
+
+  /* tint/shade siblings for surfaces, hovers, washes */
+  --magenta-100:   #FFE3F1;
+  --magenta-200:   #F88DBF;
+  --magenta-600:   #C00468;
+  --cyan-100:      #DFF3FD;
+  --cyan-200:      #8CD5F8;
+  --cyan-600:      #007EB6;
+  --yellow-100:    #FFF5C2;
+  --yellow-200:    #FFE466;
+  --yellow-600:    #C29F00;
+  --orange-100:    #FFDDD3;
+  --orange-600:    #B11E00;
+  --green-100:     #D2F1DC;
+  --green-600:     #016B32;
+
+  /* -------- NEUTRALS (paper + ink, 1997 jewel-case manual) ---- */
+  --paper-0:       #F4F1EA;  /* warm cream — primary light bg */
+  --paper-1:       #EAE5D5;  /* bone — recessed surface */
+  --paper-2:       #D6CFBC;  /* manila — divider/disabled */
+  --paper-edge:    #BFB69E;  /* deeper edge */
+
+  --ink-0:         #0B0E1F;  /* primary fg / near-black */
+  --ink-1:         #1B2040;  /* secondary fg */
+  --ink-2:         #4A4E66;  /* tertiary fg */
+  --ink-3:         #7C8095;  /* muted fg */
+
+  --navy-0:        #000926;  /* primary dark bg (matches logo) */
+  --navy-1:        #0A1438;  /* raised dark surface */
+  --navy-2:        #182656;  /* dark divider */
+
+  --jet:           #000000;  /* the pill black */
+  --bone-stroke:   #F4F1EA;  /* the white pill outline */
+
+  /* -------- SEMANTIC -------- */
+  --bg:            var(--paper-0);
+  --bg-raised:     #FFFFFF;
+  --bg-recessed:   var(--paper-1);
+  --fg:            var(--ink-0);
+  --fg-muted:      var(--ink-2);
+  --fg-subtle:     var(--ink-3);
+  --border:        var(--ink-0);          /* hard black borders, Memphis-y */
+  --border-soft:   var(--paper-edge);
+  --accent:        var(--ink-magenta);
+  --link:          var(--ink-overlap);
+  --link-hover:    var(--ink-magenta);
+  --success:       var(--ink-green);
+  --warning:       var(--ink-yellow);
+  --danger:        var(--ink-orange);
+  --info:          var(--ink-cyan);
+
+  /* -------- TYPE --------
+     Display: Space Grotesk    (geometric, slightly quirky terminals)
+     Body:    Hanken Grotesk   (humanist neutral, great manual reading)
+     Mono:    JetBrains Mono   (system labels, part #s, console)
+     CRT:     VT323            (use sparingly — system chrome only)
+  */
+  --font-display: "Space Grotesk", "Hanken Grotesk", system-ui, sans-serif;
+  --font-body:    "Hanken Grotesk", -apple-system, system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --font-crt:     "VT323", "JetBrains Mono", monospace;
+
+  /* fluid type scale (1.250 — Major Third) */
+  --fs-12:  0.75rem;
+  --fs-14:  0.875rem;
+  --fs-16:  1rem;
+  --fs-18:  1.125rem;
+  --fs-20:  1.25rem;
+  --fs-24:  1.5rem;
+  --fs-32:  2rem;
+  --fs-40:  2.5rem;
+  --fs-56:  3.5rem;
+  --fs-80:  5rem;
+
+  /* line heights */
+  --lh-tight:  1.05;
+  --lh-snug:   1.2;
+  --lh-normal: 1.45;
+  --lh-loose:  1.6;
+
+  /* tracking */
+  --tr-tight:    -0.02em;
+  --tr-normal:   0;
+  --tr-label:    0.08em;   /* uppercase system labels */
+  --tr-stamp:    0.18em;   /* widely-tracked part-numbers */
+
+  /* -------- SPACING (4-pt base) -------- */
+  --sp-0:  0;
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3:  12px;
+  --sp-4:  16px;
+  --sp-5:  20px;
+  --sp-6:  24px;
+  --sp-8:  32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+  --sp-20: 80px;
+  --sp-24: 96px;
+
+  /* -------- RADII (zero for industrial; pill for screens) ---- */
+  --r-0:    0px;       /* default — hardware front-panel */
+  --r-2:    2px;
+  --r-4:    4px;       /* small chips */
+  --r-8:    8px;       /* cards */
+  --r-12:   12px;      /* feature cards */
+  --r-pill: 999px;     /* the logo pill — buttons, screens */
+
+  /* -------- BORDERS -------- */
+  --bw-hair:  1px;
+  --bw-rule:  2px;     /* the default. crisp. */
+  --bw-bold:  3px;     /* primary buttons, focus */
+  --bw-mega:  6px;     /* hero cards, bezels */
+
+  /* -------- SHADOWS — Memphis offset blocks, NO blur -------- */
+  --sh-stamp-sm: 3px 3px 0 0 var(--ink-0);
+  --sh-stamp-md: 6px 6px 0 0 var(--ink-0);
+  --sh-stamp-lg: 10px 10px 0 0 var(--ink-0);
+  --sh-stamp-xl: 14px 14px 0 0 var(--ink-0);
+  /* colored stamp variants (for hero callouts) */
+  --sh-stamp-magenta: 6px 6px 0 0 var(--ink-magenta);
+  --sh-stamp-cyan:    6px 6px 0 0 var(--ink-cyan);
+  --sh-stamp-yellow:  6px 6px 0 0 var(--ink-yellow);
+  --sh-stamp-blue:    6px 6px 0 0 var(--ink-overlap);
+  /* one inset “bezel” shadow for hardware-y panels */
+  --sh-bezel: inset 0 2px 0 #FFFFFFCC, inset 0 -2px 0 #00000022;
+  /* a soft drop ONLY for floating dropdowns / toasts */
+  --sh-float: 0 12px 24px -8px #000926AA;
+
+  /* -------- MOTION -------- */
+  --ease-snap:   cubic-bezier(0.2, 0.9, 0.2, 1.1); /* gentle bounce */
+  --ease-clack:  cubic-bezier(0.6, 0, 0.4, 1);     /* mechanical */
+  --dur-fast:   120ms;
+  --dur-base:   180ms;
+  --dur-slow:   320ms;
+
+  /* -------- LAYOUT -------- */
+  --content-max: 1200px;
+  --grid-gutter: var(--sp-6);
+}
+
+/* ============================ DARK MODE ============================ */
+:root[data-theme="dark"], .theme-dark {
+  --bg:           var(--navy-0);
+  --bg-raised:    var(--navy-1);
+  --bg-recessed:  #00061B;
+  --fg:           var(--paper-0);
+  --fg-muted:     #B3BAD0;
+  --fg-subtle:    #6E7796;
+  --border:       var(--paper-0);
+  --border-soft:  var(--navy-2);
+  --link:         var(--ink-cyan);
+  --link-hover:   var(--ink-yellow);
+  --sh-stamp-sm: 3px 3px 0 0 var(--paper-0);
+  --sh-stamp-md: 6px 6px 0 0 var(--paper-0);
+  --sh-stamp-lg: 10px 10px 0 0 var(--paper-0);
+  --sh-stamp-xl: 14px 14px 0 0 var(--paper-0);
+}
+
+/* ============================ ELEMENT DEFAULTS ============================ */
+html, body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: var(--fs-16); line-height: var(--lh-normal); }
+* { box-sizing: border-box; }
+
+h1, .h1 { font-family: var(--font-display); font-weight: 700; font-size: var(--fs-80); line-height: var(--lh-tight); letter-spacing: var(--tr-tight); margin: 0 0 var(--sp-6); }
+h2, .h2 { font-family: var(--font-display); font-weight: 700; font-size: var(--fs-56); line-height: var(--lh-tight); letter-spacing: var(--tr-tight); margin: 0 0 var(--sp-5); }
+h3, .h3 { font-family: var(--font-display); font-weight: 600; font-size: var(--fs-32); line-height: var(--lh-snug); margin: 0 0 var(--sp-4); }
+h4, .h4 { font-family: var(--font-display); font-weight: 600; font-size: var(--fs-24); line-height: var(--lh-snug); margin: 0 0 var(--sp-3); }
+h5, .h5 { font-family: var(--font-display); font-weight: 600; font-size: var(--fs-20); line-height: var(--lh-snug); margin: 0 0 var(--sp-3); }
+
+p, .body  { font-size: var(--fs-16); line-height: var(--lh-normal); margin: 0 0 var(--sp-4); }
+.lead     { font-family: var(--font-display); font-weight: 500; font-size: var(--fs-24); line-height: var(--lh-snug); letter-spacing: var(--tr-tight); }
+.small    { font-size: var(--fs-14); line-height: var(--lh-normal); }
+.caption  { font-size: var(--fs-12); line-height: var(--lh-normal); color: var(--fg-muted); }
+
+.label    { font-family: var(--font-mono); font-size: var(--fs-12); font-weight: 500; text-transform: uppercase; letter-spacing: var(--tr-label); color: var(--fg-muted); }
+.stamp    { font-family: var(--font-mono); font-size: var(--fs-12); font-weight: 700; text-transform: uppercase; letter-spacing: var(--tr-stamp); }
+.partno   { font-family: var(--font-mono); font-size: var(--fs-14); font-weight: 700; letter-spacing: var(--tr-stamp); }
+.crt      { font-family: var(--font-crt); font-size: var(--fs-24); line-height: 1; color: var(--ink-cyan); }
+
+code, kbd, pre, samp, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+code { background: var(--paper-1); padding: 0.1em 0.35em; border-radius: var(--r-4); border: 1px solid var(--paper-edge); }
+pre  { background: var(--ink-0); color: var(--paper-0); padding: var(--sp-4); border-radius: var(--r-8); overflow-x: auto; border: var(--bw-rule) solid var(--ink-0); box-shadow: var(--sh-stamp-md); }
+pre code { background: transparent; border: 0; padding: 0; color: inherit; }
+
+a { color: var(--link); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+a:hover { color: var(--link-hover); }
+
+hr { border: 0; border-top: var(--bw-rule) solid var(--ink-0); margin: var(--sp-6) 0; }
+
+::selection { background: var(--ink-yellow); color: var(--ink-0); }
