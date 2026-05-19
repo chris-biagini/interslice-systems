@@ -92,13 +92,27 @@
     padding: 0 20px;
   }
 
-  /* logo mark, big */
+  /* logo mark, big — inline SVG with light + dark layers */
   .mark {
     width: 168px;
     height: 168px;
     display: block;
-    /* logo-mark-stamped.svg already has the offset shadow baked in — no filter here */
+    overflow: visible; /* let dark-mode halos bleed past the 168px box */
   }
+  /* layer toggling: light by default, dark when theme=dark or OS=dark (unless theme=light) */
+  .mark .m-dark { display: none; }
+  :root[data-theme="dark"] .mark .m-light { display: none; }
+  :root[data-theme="dark"] .mark .m-dark  { display: inline; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .mark .m-light { display: none; }
+    :root:not([data-theme="light"]) .mark .m-dark  { display: inline; }
+  }
+
+  /* The perimeter bloom is rendered through a single Gaussian-blur
+     filter, so we don't animate individual halos — a premium Trinitron
+     is rock-stable, not breathing. The .halos group's opacity is still
+     scaled by --glow-strength so the Tweaks panel can dim the whole rim. */
+  .mark .halos { opacity: var(--glow-strength, 1); }
 
   /* wordmark — set as live text so it can be enormous + crisp */
   .wordmark {
@@ -483,6 +497,128 @@
      `right: max(36%, 408px)` floats tri-2 at column ~64% on wide viewports
      and clamps to 408px (24px clear of sneak's left) on narrow ones. */
   .sp-tri-2 { bottom: 70px; right: max(36%, 408px); width: 30px; transform: rotate(48deg); }
+
+  /* ===================== DARK-MODE PHOSPHORESCENCE =====================
+     The colored Memphis sprinkles light up like phosphor against the
+     navy page at night — each sprinkle haloed in its own ink hue. The
+     paper-colored marks (sp-check, sp-cross, sp-reg) stay flat; they're
+     printed in cream, not emitting light.
+
+     How it works:
+       1. Each glowing sprinkle declares its --glow channels (space-
+          separated R G B). One shared filter rule reads them into a
+          three-layer drop-shadow halo (tight / mid / wide bloom).
+       2. --glow-base is 0 in light mode, 1 in dark — so the same rule
+          applies in both, but collapses to a zero-blur, zero-offset
+          shadow (hidden behind the silhouette) on paper.
+       3. --glow-strength (0 → 1.4) multiplies the bloom. Tweakable.
+       4. A slow, low-amplitude opacity flicker per-sprinkle simulates
+          phosphor settling. Periods + delays are co-prime so the wash
+          never syncs into a single pulse. */
+
+  /* per-sprinkle hue channels (space-sep rgb for rgb(R G B / α) syntax) */
+  .sp-squig-1 { --glow: 229 4 127; }   /* magenta squiggle */
+  .sp-squig-2 { --glow: 0 168 243; }   /* cyan squiggle */
+  .sp-tri-1   { --glow: 254 209 5; }   /* yellow triangle */
+  .sp-tri-2   { --glow: 1 156 73; }    /* green triangle */
+  .sp-dot-1   { --glow: 0 168 243; }   /* cyan dot */
+  .sp-dot-2   { --glow: 243 44 9; }    /* orange dot */
+  .sp-dot-3   { --glow: 229 4 127; }   /* magenta dot */
+  .sp-ring    { --glow: 254 209 5; }   /* yellow inner — outer cream stays flat */
+  .sp-arc     { --glow: 0 1 160; }     /* deep registration blue */
+  .sp-bar-1   { --glow: 229 4 127; }   /* magenta bar */
+  .sp-bar-2   { --glow: 0 1 160; }     /* deep-blue bar */
+  .sp-stripe  { --glow: 229 4 127; }   /* magenta stripe pill */
+  /* sp-check, sp-cross, sp-reg — no --glow set. They stay flat. */
+
+  :root { --glow-base: 0; --glow-strength: 1; }
+  :root[data-theme="dark"] { --glow-base: 1; }
+  :root[data-theme="light"] { --glow-base: 0; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --glow-base: 1; }
+  }
+
+  /* shared halo. --g collapses to 0 in light mode → invisible. */
+  :is(.sp-squig-1, .sp-squig-2, .sp-tri-1, .sp-tri-2,
+      .sp-dot-1, .sp-dot-2, .sp-dot-3,
+      .sp-ring, .sp-arc, .sp-bar-1, .sp-bar-2, .sp-stripe) {
+    --g: calc(var(--glow-base) * var(--glow-strength));
+    filter:
+      drop-shadow(0 0 calc(3px  * var(--g)) rgb(var(--glow) / 0.95))
+      drop-shadow(0 0 calc(10px * var(--g)) rgb(var(--glow) / 0.55))
+      drop-shadow(0 0 calc(22px * var(--g)) rgb(var(--glow) / 0.25));
+    transition: filter 240ms var(--ease-snap, ease-out);
+  }
+
+  /* Colored Memphis stamps on the hero CTA + sneak card already provide
+     directional offset — give them a phosphor wash so the magenta and
+     cyan "stick" bloom into the page rather than sitting on it. */
+  .cta { --gb: var(--glow-base); }
+  :root[data-theme="dark"] .cta,
+  :is(:root:not([data-theme="light"])) .cta {
+    /* nothing to do here — actual filter rule below uses media+attr */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .cta {
+      filter:
+        drop-shadow(0 0 calc(6px  * var(--glow-strength)) rgb(229 4 127 / 0.55))
+        drop-shadow(0 0 calc(18px * var(--glow-strength)) rgb(229 4 127 / 0.28));
+    }
+    :root:not([data-theme="light"]) .sneak__card {
+      filter:
+        drop-shadow(0 0 calc(5px  * var(--glow-strength)) rgb(0 168 243 / 0.50))
+        drop-shadow(0 0 calc(16px * var(--glow-strength)) rgb(0 168 243 / 0.22));
+    }
+  }
+  :root[data-theme="dark"] .cta {
+    filter:
+      drop-shadow(0 0 calc(6px  * var(--glow-strength)) rgb(229 4 127 / 0.55))
+      drop-shadow(0 0 calc(18px * var(--glow-strength)) rgb(229 4 127 / 0.28));
+  }
+  :root[data-theme="dark"] .sneak__card {
+    filter:
+      drop-shadow(0 0 calc(5px  * var(--glow-strength)) rgb(0 168 243 / 0.50))
+      drop-shadow(0 0 calc(16px * var(--glow-strength)) rgb(0 168 243 / 0.22));
+  }
+
+  /* phosphor flicker — co-prime periods + negative delays so the wash
+     never syncs. Gated to dark mode + opt-in via data-flicker. */
+  @keyframes phosphor-flicker {
+    0%, 100% { opacity: 1; }
+    47%      { opacity: 0.86; }
+    53%      { opacity: 1.0;  }
+    71%      { opacity: 0.93; }
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-squig-1 { animation: phosphor-flicker 5.2s -0.4s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-squig-2 { animation: phosphor-flicker 6.7s -2.1s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-tri-1   { animation: phosphor-flicker 4.9s -1.3s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-tri-2   { animation: phosphor-flicker 7.3s -3.6s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-dot-1   { animation: phosphor-flicker 5.8s -0.9s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-dot-2   { animation: phosphor-flicker 6.4s -2.8s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-dot-3   { animation: phosphor-flicker 5.5s -3.2s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-ring    { animation: phosphor-flicker 7.0s -1.7s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-arc     { animation: phosphor-flicker 6.1s -2.5s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-bar-1   { animation: phosphor-flicker 5.4s -0.6s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-bar-2   { animation: phosphor-flicker 6.9s -3.9s ease-in-out infinite; }
+    :root:not([data-theme="light"]):not([data-flicker="off"]) .sp-stripe  { animation: phosphor-flicker 5.0s -1.1s ease-in-out infinite; }
+  }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-squig-1 { animation: phosphor-flicker 5.2s -0.4s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-squig-2 { animation: phosphor-flicker 6.7s -2.1s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-tri-1   { animation: phosphor-flicker 4.9s -1.3s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-tri-2   { animation: phosphor-flicker 7.3s -3.6s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-dot-1   { animation: phosphor-flicker 5.8s -0.9s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-dot-2   { animation: phosphor-flicker 6.4s -2.8s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-dot-3   { animation: phosphor-flicker 5.5s -3.2s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-ring    { animation: phosphor-flicker 7.0s -1.7s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-arc     { animation: phosphor-flicker 6.1s -2.5s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-bar-1   { animation: phosphor-flicker 5.4s -0.6s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-bar-2   { animation: phosphor-flicker 6.9s -3.9s ease-in-out infinite; }
+  :root[data-theme="dark"]:not([data-flicker="off"]) .sp-stripe  { animation: phosphor-flicker 5.0s -1.1s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sprinkle { animation: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -528,10 +664,231 @@
   <!-- ============ BODY: LOGO + WORDMARK + CTA ============ -->
   <section class="body">
     <div class="stack">
-      <picture>
-        <source srcset="logo-mark-stamped-on-dark.svg" media="(prefers-color-scheme: dark)">
-        <img class="mark" src="logo-mark-stamped.svg" alt="Interslice mark" width="168" height="168">
-      </picture>
+      <svg class="mark" viewBox="0 0 200 200" width="168" height="168" role="img" aria-label="Interslice mark">
+        <defs>
+          <!-- ===== RIM BLOOM filter =====
+               Twenty-four colored seeds placed directly on the logo's
+               actual perimeter — 5 around each tip ball's outside arc,
+               1 at each arm-edge midpoint, 1 in each indent. Blurred
+               together by feGaussianBlur, the seeds blend into one
+               contiguous spectrum halo that tracks the real tripod
+               silhouette (curves around the balls, straights along
+               the arms, kinks at the indents).
+
+               Color cycles R → orange → Y → yellow-green → G → teal
+               → C → azure → B → indigo → M → red-magenta → R, with the
+               six pure waypoints (R/Y/G/C/B/M) sitting at the same
+               angular positions as the pinwheel hub's segments. ===== -->
+          <filter id="rim-bloom" filterUnits="userSpaceOnUse"
+                  x="-40" y="-40" width="280" height="280">
+            <feGaussianBlur stdDeviation="8"/>
+          </filter>
+
+          <!-- ===== TRINITRON CRT TREATMENT =====
+               Premium Sony Trinitron-inspired surface. The logo's
+               silhouette is the screen's extent — masked, so all CRT
+               effects render only inside the logo.
+
+               Inside the mask, from back to front:
+                 a. flat colored phosphor (the actual "image")
+                 b. faint beam hot-spots (bloom where the beam is
+                    most intense — center of each lit shape)
+                 c. aperture grille — thin vertical dark gaps between
+                    phosphor stripes (Trinitron uses vertical wires,
+                    not a dot mask)
+                 d. scanlines — fainter horizontal dim bands
+                 e. two horizontal damping wires (signature Trinitron
+                    stabilizer-wire shadows across the tube face)
+                 f. glass front gloss — light catching the curved face
+          -->
+
+          <!-- aperture grille: ~3-unit period (≈2.5px at display), with
+               a ~1-unit dark gap. Three of these stack visually per
+               R/G/B triad on a real grille — here we just darken the
+               gaps; the phosphor color underneath provides the chroma. -->
+          <pattern id="grille" width="3" height="6" patternUnits="userSpaceOnUse">
+            <rect x="0" y="0" width="1" height="6" fill="#000000" opacity="0.62"/>
+          </pattern>
+
+          <!-- scanlines: ~3-unit period (≈2.5px at display), every
+               other line dim. Gives the horizontal "line structure". -->
+          <pattern id="scanlines" width="6" height="3" patternUnits="userSpaceOnUse">
+            <rect x="0" y="0" width="6" height="1" fill="#000000" opacity="0.32"/>
+          </pattern>
+
+          <!-- CRT front-glass gloss: a primary reflection band near
+               the top of the tube face and a weaker secondary lower
+               down — the way light catches the slight curvature. -->
+          <linearGradient id="crt-glass" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.22"/>
+            <stop offset="14%"  stop-color="#FFFFFF" stop-opacity="0.07"/>
+            <stop offset="32%"  stop-color="#FFFFFF" stop-opacity="0"/>
+            <stop offset="58%"  stop-color="#FFFFFF" stop-opacity="0.05"/>
+            <stop offset="74%"  stop-color="#FFFFFF" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+          </linearGradient>
+
+          <!-- logo silhouette as a mask — the screen extent. All CRT
+               effects below are nested inside <g mask="url(#logo-mask)">,
+               so they only render where phosphor lives. Uses the exact
+               pinwheel paths (not a r=34 circle) so the inner segment
+               shape matches and we don't get CRT-without-phosphor gaps. -->
+          <mask id="logo-mask" maskUnits="userSpaceOnUse">
+            <rect x="0" y="0" width="200" height="200" fill="#000000"/>
+            <g fill="#FFFFFF" stroke="#FFFFFF">
+              <g fill="none" stroke-width="24" stroke-linecap="round">
+                <line x1="100" y1="100" x2="100"    y2="28"/>
+                <line x1="100" y1="100" x2="37.65"  y2="136"/>
+                <line x1="100" y1="100" x2="162.35" y2="136"/>
+              </g>
+              <circle cx="100"    cy="28"  r="24"/>
+              <circle cx="37.65"  cy="136" r="24"/>
+              <circle cx="162.35" cy="136" r="24"/>
+              <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z"/>
+              <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z"/>
+              <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z"/>
+              <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z"/>
+              <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z"/>
+              <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z"/>
+            </g>
+          </mask>
+        </defs>
+
+        <!-- =================================================================
+             LIGHT-MODE LAYER — paper-stamped flat logo (current look)
+             ================================================================= -->
+        <g class="m-light">
+          <g transform="translate(7 7)" fill="#0B0E1F" stroke="#0B0E1F">
+            <g fill="none" stroke-width="32" stroke-linecap="round">
+              <line x1="100" y1="100" x2="100" y2="28"></line>
+              <line x1="100" y1="100" x2="37.65" y2="136"></line>
+              <line x1="100" y1="100" x2="162.35" y2="136"></line>
+            </g>
+            <circle cx="100" cy="28" r="28"></circle>
+            <circle cx="37.65" cy="136" r="28"></circle>
+            <circle cx="162.35" cy="136" r="28"></circle>
+            <circle cx="100" cy="100" r="38"></circle>
+          </g>
+          <g fill="none" stroke-width="24" stroke-linecap="round">
+            <line x1="100" y1="100" x2="100" y2="28" stroke="#00A8F3"></line>
+            <line x1="100" y1="100" x2="37.65" y2="136" stroke="#E5047F"></line>
+            <line x1="100" y1="100" x2="162.35" y2="136" stroke="#FED105"></line>
+          </g>
+          <circle cx="100" cy="28" r="24" fill="#00A8F3"></circle>
+          <circle cx="37.65" cy="136" r="24" fill="#E5047F"></circle>
+          <circle cx="162.35" cy="136" r="24" fill="#FED105"></circle>
+          <g>
+            <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#019C49"></path>
+            <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#00A8F3"></path>
+            <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#0001A0"></path>
+            <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#E5047F"></path>
+            <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#F32C09"></path>
+            <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#FED105"></path>
+          </g>
+        </g>
+
+        <!-- =================================================================
+             DARK-MODE LAYER — Trinitron-grade CRT. The logo's silhouette
+             IS the screen: aperture grille, scanlines, damping wires, and
+             glass front gloss all clip to the logo shape via #logo-mask.
+             Outside the silhouette, only the colored phosphor bloom
+             escaping past the screen edge (the back halos) renders.
+
+             Layer order:
+               1. backing halos — emitted phosphor light spilling outward
+               2. inside the screen (masked):
+                 a. flat colored phosphor (the lit image)
+                 b. beam hot-spots — soft bloom at the center of each
+                    lit element where the beam dwells
+                 c. aperture grille — thin vertical dark gaps
+                 d. scanlines — horizontal dim bands
+                 e. two Trinitron damping wires (the Sony signature)
+                 f. glass front gloss
+             ================================================================= -->
+        <g class="m-dark">
+          <!-- 1. PERIMETER BLOOM — twelve colored seeds at 30° intervals
+               around the logo's centroid. Their radius from center
+               varies with cos(3θ) so the seeds sit ~just outside the
+               tip balls (r=100, blooming outward past r=96 ball edge)
+               and ~just outside the pinwheel between arms (r=40, just
+               past the r=34 hub edge). All twelve are blurred together
+               via #rim-bloom — overlapping colors blend into a single
+               contiguous spectrum halo. -->
+          <g class="halos" filter="url(#rim-bloom)">
+            <!-- 30° magenta — indent between B (BR) and R (top) -->
+            <circle cx="134.64" cy="80"     r="22" fill="#E5047F"/>
+            <!-- 60° red-magenta — over the top-right shoulder -->
+            <circle cx="135"    cy="39.38"  r="22" fill="#EC1844"/>
+            <!-- 90° red — directly past the top R tip -->
+            <circle cx="100"    cy="0"      r="26" fill="#F32C09"/>
+            <!-- 120° orange — over the top-left shoulder -->
+            <circle cx="65"     cy="39.38"  r="22" fill="#F97D37"/>
+            <!-- 150° yellow — indent between R (top) and G (BL) -->
+            <circle cx="65.36"  cy="80"     r="22" fill="#FED105"/>
+            <!-- 180° yellow-green — over the left side of the BL arm -->
+            <circle cx="30"     cy="100"    r="22" fill="#7FCC27"/>
+            <!-- 210° green — directly past the BL G tip -->
+            <circle cx="13.4"   cy="150"    r="26" fill="#019C49"/>
+            <!-- 240° teal — over the bottom-left shoulder -->
+            <circle cx="65"     cy="160.62" r="22" fill="#01A29E"/>
+            <!-- 270° cyan — indent between G (BL) and B (BR), under hub -->
+            <circle cx="100"    cy="140"    r="22" fill="#00A8F3"/>
+            <!-- 300° azure — over the bottom-right shoulder -->
+            <circle cx="135"    cy="160.62" r="22" fill="#0054C9"/>
+            <!-- 330° blue — directly past the BR B tip -->
+            <circle cx="186.6"  cy="150"    r="26" fill="#0001A0"/>
+            <!-- 0° indigo — over the right side of the BR arm -->
+            <circle cx="170"    cy="100"    r="22" fill="#732C8F"/>
+          </g>
+
+          <!-- 2. inside the screen — everything below clips to the logo -->
+          <g mask="url(#logo-mask)">
+            <!-- 2a. flat colored phosphor (the "image" on the screen) -->
+            <g fill="none" stroke-width="24" stroke-linecap="round">
+              <line x1="100" y1="100" x2="100"    y2="28"  stroke="#F32C09"/>
+              <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#019C49"/>
+              <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0001A0"/>
+            </g>
+            <circle cx="100"    cy="28"  r="24" fill="#F32C09"/>
+            <circle cx="37.65"  cy="136" r="24" fill="#019C49"/>
+            <circle cx="162.35" cy="136" r="24" fill="#0001A0"/>
+            <g class="hub-segs">
+              <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#E5047F"/>
+              <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#F32C09"/>
+              <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FED105"/>
+              <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#019C49"/>
+              <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
+              <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>
+            </g>
+
+            <!-- 2b. beam hot-spots — bloom where the beam dwells longest.
+                 Soft white wash over the center of each lit element. -->
+            <g class="hotspots">
+              <circle cx="100"    cy="28"  r="14" fill="#FFFFFF" opacity="0.20"/>
+              <circle cx="37.65"  cy="136" r="14" fill="#FFFFFF" opacity="0.20"/>
+              <circle cx="162.35" cy="136" r="14" fill="#FFFFFF" opacity="0.20"/>
+              <circle cx="100"    cy="100" r="16" fill="#FFFFFF" opacity="0.10"/>
+            </g>
+
+            <!-- 2c. aperture grille — thin vertical dark stripes -->
+            <rect x="0" y="0" width="200" height="200" fill="url(#grille)"/>
+
+            <!-- 2d. scanlines — fainter horizontal dim bands -->
+            <rect x="0" y="0" width="200" height="200" fill="url(#scanlines)"/>
+
+            <!-- 2e. Trinitron damping wires — two horizontal stabilizer
+                 shadows at roughly 1/3 and 2/3 of the screen height.
+                 Stroke width 1 ≈ ~0.85px at 168px display — barely-there
+                 dark lines, the Trinitron tell. -->
+            <line x1="0" y1="68"  x2="200" y2="68"  stroke="#000000" stroke-width="1" opacity="0.62"/>
+            <line x1="0" y1="132" x2="200" y2="132" stroke="#000000" stroke-width="1" opacity="0.62"/>
+
+            <!-- 2f. glass front gloss — primary highlight near the top,
+                 fainter secondary lower down. Light on a curved tube. -->
+            <rect x="0" y="0" width="200" height="200" fill="url(#crt-glass)"/>
+          </g>
+        </g>
+      </svg>
 
       <h1 class="wordmark">interslice<i>·</i><b>systems</b></h1>
 
