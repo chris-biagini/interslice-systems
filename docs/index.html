@@ -97,7 +97,7 @@
     width: 168px;
     height: 168px;
     display: block;
-    overflow: visible; /* let dark-mode halos bleed past the 168px box */
+    overflow: visible; /* let the dark-mode phosphor bleed past the 168px box */
   }
   /* layer toggling: light by default, dark when theme=dark or OS=dark (unless theme=light) */
   .mark .m-dark { display: none; }
@@ -108,11 +108,50 @@
     :root:not([data-theme="light"]) .mark .m-dark  { display: inline; }
   }
 
-  /* The perimeter bloom is rendered through a single Gaussian-blur
-     filter, so we don't animate individual halos — a premium Trinitron
-     is rock-stable, not breathing. The .halos group's opacity is still
-     scaled by --glow-strength so the Tweaks panel can dim the whole rim. */
-  .mark .halos { opacity: var(--glow-strength, 1); }
+  /* Phosphor bleed: a duplicate of the colored phosphor content, run
+     through #phosphor-bleed (multi-scale Gaussian) and drawn BEHIND
+     the masked sharp screen. We don't animate the bleed itself — a
+     premium Trinitron is rock-stable, not breathing — but when
+     .hub-segs rotates, the bleed's pinwheel rotates with it because
+     the same CSS rule matches both copies of the class.
+     --glow-strength scales the bleed's opacity so the future Tweaks
+     panel can dim the whole halo. */
+  .mark .bleed { opacity: var(--glow-strength, 1); }
+
+  /* In dark mode the central pinwheel rotates slowly: the Trinitron is
+     displaying a rotating image, not rotating itself. .hub-segs sits
+     inside #logo-mask and BELOW the aperture grille, scanlines, damping
+     wires, and front-glass gloss in document order — so all those
+     screen-surface artifacts stay fixed in screen space while the
+     colored phosphor underneath turns.
+     SVG elements default transform-origin to (0,0); we pin it to
+     (100,100), the hub's geometric center in user units. */
+  @keyframes hub-spin {
+    to { transform: rotate(360deg); }
+  }
+  .mark .hub-segs { transform-origin: 100px 100px; }
+  /* will-change: transform hints the browser to promote each rotating
+     <use> to its own GPU compositing layer, so per-frame rotation is
+     a GPU transform instead of a rasterize. Scoped to dark mode (the
+     only mode where these animate) so we don't pay the layer cost in
+     light mode where the element is display:none anyway. */
+  :root[data-theme="dark"] .mark .hub-segs {
+    animation: hub-spin 36s linear infinite reverse;
+    will-change: transform;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .mark .hub-segs {
+      animation: hub-spin 36s linear infinite reverse;
+      will-change: transform;
+    }
+  }
+  /* Vestibular accommodation — rotation off when reduced motion is requested. */
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-theme="dark"] .mark .hub-segs,
+    :root:not([data-theme="light"]) .mark .hub-segs {
+      animation: none;
+    }
+  }
 
   /* wordmark — set as live text so it can be enormous + crisp */
   .wordmark {
@@ -485,49 +524,209 @@
     <div class="stack">
       <svg class="mark" viewBox="0 0 200 200" width="168" height="168" role="img" aria-label="Interslice mark">
         <defs>
-          <!-- ===== RIM BLOOM filter =====
-               Twenty-four colored seeds placed directly on the logo's
-               actual perimeter — 5 around each tip ball's outside arc,
-               1 at each arm-edge midpoint, 1 in each indent. Blurred
-               together by feGaussianBlur, the seeds blend into one
-               contiguous spectrum halo that tracks the real tripod
-               silhouette (curves around the balls, straights along
-               the arms, kinks at the indents).
+          <!-- ===== PHOSPHOR BLEED filter (additive) =====
+               Applied to a duplicate of the colored phosphor content
+               (arms, tip balls, hub segments) drawn BEHIND the masked
+               sharp screen. Inside the silhouette the sharp screen
+               paints on top and hides this; outside, only the soft
+               blurred light shows — the "frosted-glass cutout" look.
 
-               Color cycles R → orange → Y → yellow-green → G → teal
-               → C → azure → B → indigo → M → red-magenta → R, with the
-               six pure waypoints (R/Y/G/C/B/M) sitting at the same
-               angular positions as the pinwheel hub's segments. ===== -->
-          <filter id="rim-bloom" filterUnits="userSpaceOnUse"
+               This filter does ADDITIVE color mixing in the ambient
+               far halo. The naive approach — one Gaussian over the
+               composited source — gives weighted-average mixing at
+               output pixels (red ∩ green = dim yellow), but real
+               light addition gives (red + green = bright yellow).
+               So we split the source by color channel and blur each
+               independently:
+
+                 1. extract R channel (zero G,B); blur it
+                 2. extract G channel (zero R,B); blur it
+                 3. extract B channel (zero R,G); blur it
+                 4. composite via feBlend mode="screen" — for
+                    non-overlapping colors this gives true addition;
+                    for same-color overlaps it brightens smoothly
+                    toward saturation (1 - (1-A)(1-B))
+
+               The result: as the rotating hub's colored petals
+               sweep past the stationary arm halos, their bleed
+               glows visibly ADD together — the moment a red petal
+               aligns with the green arm, a bright yellow patch
+               flashes in the halo around the shoulder.
+
+               The near rim blur is kept as a single pass over the
+               composited source: rim sits right at the silhouette
+               edge where there isn't much room for color overlap,
+               so additive mixing isn't needed there and we save
+               two Gaussians of cost.
+
+               feComponentTransfer with feFuncA slope>1 boosts the
+               per-pixel alpha (clamping at 1.0) so the halo holds
+               its color a little further out before fading. The
+               two knobs are independent: stdDeviation tunes spread,
+               feFuncA slope tunes prominence.
+
+               The bleed is not hand-positioned colored seeds — it IS
+               the logo's geometry, blurred. So its shape tracks the
+               actual silhouette (curves around the balls, straights
+               along the arms, kinks at the indents) and the inner
+               colors of the halo turn with the pinwheel for free. ===== -->
+          <filter id="phosphor-bleed" filterUnits="userSpaceOnUse"
                   x="-40" y="-40" width="280" height="280">
-            <feGaussianBlur stdDeviation="8"/>
+            <!-- 1-3: extract each channel, blur each independently -->
+            <feColorMatrix in="SourceGraphic" type="matrix" values="
+              1 0 0 0 0
+              0 0 0 0 0
+              0 0 0 0 0
+              0 0 0 1 0" result="r-only"/>
+            <feGaussianBlur in="r-only" stdDeviation="13" result="r-far"/>
+            <feColorMatrix in="SourceGraphic" type="matrix" values="
+              0 0 0 0 0
+              0 1 0 0 0
+              0 0 0 0 0
+              0 0 0 1 0" result="g-only"/>
+            <feGaussianBlur in="g-only" stdDeviation="13" result="g-far"/>
+            <feColorMatrix in="SourceGraphic" type="matrix" values="
+              0 0 0 0 0
+              0 0 0 0 0
+              0 0 1 0 0
+              0 0 0 1 0" result="b-only"/>
+            <feGaussianBlur in="b-only" stdDeviation="13" result="b-far"/>
+
+            <!-- 4: additive screen-blend the three channel blurs -->
+            <feBlend in="r-far"  in2="g-far" mode="screen" result="rg-far"/>
+            <feBlend in="rg-far" in2="b-far" mode="screen" result="rgb-far"/>
+
+            <feComponentTransfer in="rgb-far" result="far-bright">
+              <feFuncA type="linear" slope="1.3"/>
+            </feComponentTransfer>
+
+            <!-- Near rim: single combined Gaussian, non-additive -->
+            <feGaussianBlur in="SourceGraphic" stdDeviation="4.5" result="near"/>
+            <feComponentTransfer in="near" result="near-bright">
+              <feFuncA type="linear" slope="1.4"/>
+            </feComponentTransfer>
+
+            <feMerge>
+              <feMergeNode in="far-bright"/>
+              <feMergeNode in="near-bright"/>
+            </feMerge>
           </filter>
 
+          <!-- ===== PHOSPHOR SOURCES =====
+               Colored phosphor content split into two reusable
+               groups so the rotating hub can be animated directly
+               on its <use> instances. CSS animations applied to
+               elements INSIDE <defs> don't reliably propagate to
+               <use> clones (closed-shadow-tree selector boundary),
+               but animations applied to the <use> elements
+               themselves work fine — they're real DOM elements
+               with their own animation state.
+                 #phosphor-arms — the three arms + three tip balls
+                                  (static, never animated).
+                 #phosphor-hub  — the six rotating petal paths
+                                  (animated via the .hub-segs class
+                                   on every <use> that references it).
+               Five use sites pair the two together: the bleed
+               group + the solid phosphor base + the three
+               RGB-stripe channel layers. All five hub uses share
+               the same CSS animation, so they rotate in lockstep. ===== -->
+          <g id="phosphor-arms">
+            <g fill="none" stroke-width="24" stroke-linecap="round">
+              <line x1="100" y1="100" x2="100"    y2="28"  stroke="#F32C09"/>
+              <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#019C49"/>
+              <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0001A0"/>
+            </g>
+            <circle cx="100"    cy="28"  r="24" fill="#F32C09"/>
+            <circle cx="37.65"  cy="136" r="24" fill="#019C49"/>
+            <circle cx="162.35" cy="136" r="24" fill="#0001A0"/>
+          </g>
+          <g id="phosphor-hub">
+            <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#E5047F"/>
+            <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#F32C09"/>
+            <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FED105"/>
+            <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#019C49"/>
+            <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
+            <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>
+          </g>
+
           <!-- ===== TRINITRON CRT TREATMENT =====
-               Premium Sony Trinitron-inspired surface. The logo's
-               silhouette is the screen's extent — masked, so all CRT
-               effects render only inside the logo.
+               Sony Trinitron-inspired surface. The logo's silhouette
+               IS the screen's extent — masked, so all CRT effects
+               render only inside the logo.
 
                Inside the mask, from back to front:
-                 a. flat colored phosphor (the actual "image")
+                 a. RGB-stripe phosphor — three copies of the source,
+                    each filtered to a single color channel and
+                    masked to a different column phase. This is the
+                    actual Trinitron aperture-grille triad: pure red
+                    means only R stripes lit, yellow means R+G lit,
+                    boundaries between adjacent colors show authentic
+                    stripe-aligned blending. (No separate grille-
+                    darkening layer — dark bars emerge naturally
+                    wherever one channel is unlit.)
                  b. faint beam hot-spots (bloom where the beam is
                     most intense — center of each lit shape)
-                 c. aperture grille — thin vertical dark gaps between
-                    phosphor stripes (Trinitron uses vertical wires,
-                    not a dot mask)
-                 d. scanlines — fainter horizontal dim bands
-                 e. two horizontal damping wires (signature Trinitron
+                 c. scanlines — fainter horizontal dim bands
+                 d. two horizontal damping wires (signature Trinitron
                     stabilizer-wire shadows across the tube face)
-                 f. glass front gloss — light catching the curved face
+                 e. glass front gloss — light catching the curved face
           -->
 
-          <!-- aperture grille: ~3-unit period (≈2.5px at display), with
-               a ~1-unit dark gap. Three of these stack visually per
-               R/G/B triad on a real grille — here we just darken the
-               gaps; the phosphor color underneath provides the chroma. -->
-          <pattern id="grille" width="3" height="6" patternUnits="userSpaceOnUse">
-            <rect x="0" y="0" width="1" height="6" fill="#000000" opacity="0.62"/>
+          <!-- RGB extract filters: each zeros out two color channels
+               and keeps one, multiplied by 2.5 so medium-intensity
+               channels (e.g. the B=127 in our magenta, the G=156 in
+               our green) reach full saturation; already-maxed channels
+               just clamp at 1.0. The stripes sit at 0.65 opacity over
+               the solid base, so we want them as punchy as possible
+               to make the subpixel structure visible. -->
+          <filter id="extract-r" filterUnits="userSpaceOnUse"
+                  x="0" y="0" width="200" height="200">
+            <feColorMatrix in="SourceGraphic" type="matrix" values="
+              2.5 0 0 0 0
+              0   0 0 0 0
+              0   0 0 0 0
+              0   0 0 1 0"/>
+          </filter>
+          <filter id="extract-g" filterUnits="userSpaceOnUse"
+                  x="0" y="0" width="200" height="200">
+            <feColorMatrix in="SourceGraphic" type="matrix" values="
+              0 0   0 0 0
+              0 2.5 0 0 0
+              0 0   0 0 0
+              0 0   0 1 0"/>
+          </filter>
+          <filter id="extract-b" filterUnits="userSpaceOnUse"
+                  x="0" y="0" width="200" height="200">
+            <feColorMatrix in="SourceGraphic" type="matrix" values="
+              0 0 0   0 0
+              0 0 0   0 0
+              0 0 2.5 0 0
+              0 0 0   1 0"/>
+          </filter>
+
+          <!-- RGB stripe masks: each is white at one column per
+               3-unit period (≈2.5 device px at the 168px display)
+               and black elsewhere. Stack the three masked layers
+               and you tile the screen with R-G-B-R-G-B columns —
+               the Trinitron phosphor stripe pattern. -->
+          <pattern id="stripe-r-pat" width="3" height="3" patternUnits="userSpaceOnUse">
+            <rect x="0" y="0" width="1" height="3" fill="#FFFFFF"/>
           </pattern>
+          <pattern id="stripe-g-pat" width="3" height="3" patternUnits="userSpaceOnUse">
+            <rect x="1" y="0" width="1" height="3" fill="#FFFFFF"/>
+          </pattern>
+          <pattern id="stripe-b-pat" width="3" height="3" patternUnits="userSpaceOnUse">
+            <rect x="2" y="0" width="1" height="3" fill="#FFFFFF"/>
+          </pattern>
+          <mask id="stripe-r-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+            <rect width="200" height="200" fill="url(#stripe-r-pat)"/>
+          </mask>
+          <mask id="stripe-g-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+            <rect width="200" height="200" fill="url(#stripe-g-pat)"/>
+          </mask>
+          <mask id="stripe-b-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+            <rect width="200" height="200" fill="url(#stripe-b-pat)"/>
+          </mask>
 
           <!-- scanlines: ~3-unit period (≈2.5px at display), every
                other line dim. Gives the horizontal "line structure". -->
@@ -607,77 +806,95 @@
         </g>
 
         <!-- =================================================================
-             DARK-MODE LAYER — Trinitron-grade CRT. The logo's silhouette
-             IS the screen: aperture grille, scanlines, damping wires, and
-             glass front gloss all clip to the logo shape via #logo-mask.
-             Outside the silhouette, only the colored phosphor bloom
-             escaping past the screen edge (the back halos) renders.
+             DARK-MODE LAYER — a Trinitron tube inlaid into a frosted-glass
+             cutout. The logo's silhouette IS the screen: aperture grille,
+             scanlines, damping wires, and front-glass gloss all clip to
+             that shape via #logo-mask. Around the silhouette, the colored
+             phosphors are duplicated as-is and blurred via #phosphor-bleed;
+             the sharp masked screen on top covers the bleed inside the
+             silhouette, so only the soft outer halo bleeding into the
+             frosted glass is visible. The halo's color and shape are
+             therefore exact-by-construction — it can't drift from the
+             logo because it IS the logo, blurred.
 
              Layer order:
-               1. backing halos — emitted phosphor light spilling outward
+               1. phosphor bleed — <use>s of #phosphor-arms + #phosphor-hub,
+                  multi-scale Gaussian-blurred, drawn behind the screen
+                  so it bleeds outward past the silhouette into the
+                  frosted glass. The hub use carries class="hub-segs"
+                  so it rotates with the pinwheel — even through the
+                  heavy blur, the rotating hub's colors visibly cycle
+                  through the halo's shoulder regions.
                2. inside the screen (masked):
-                 a. flat colored phosphor (the lit image)
-                 b. beam hot-spots — soft bloom at the center of each
-                    lit element where the beam dwells
-                 c. aperture grille — thin vertical dark gaps
-                 d. scanlines — horizontal dim bands
-                 e. two Trinitron damping wires (the Sony signature)
-                 f. glass front gloss
+                 a. PHOSPHOR — a solid-color base layer carrying the
+                    full source phosphor, plus three semi-transparent
+                    RGB-stripe layers on top (extract-r/g/b + stripe
+                    masks). The base provides vibrancy; the stripes
+                    provide subpixel structure. At a color boundary,
+                    the stripes still show the channel-by-channel
+                    transition (e.g. the R-stripe column drops from
+                    "bright red over yellow" to "near-black over
+                    green" across the yellow→green segment edge).
+                 b. beam hot-spots — bright wash at the center of each
+                    lit element where the beam dwells longest
+                 c. scanlines — horizontal dim bands
+                 d. two Trinitron damping wires (the Sony signature)
+                 e. glass front gloss
              ================================================================= -->
         <g class="m-dark">
-          <!-- 1. PERIMETER BLOOM — twelve colored seeds at 30° intervals
-               around the logo's centroid. Their radius from center
-               varies with cos(3θ) so the seeds sit ~just outside the
-               tip balls (r=100, blooming outward past r=96 ball edge)
-               and ~just outside the pinwheel between arms (r=40, just
-               past the r=34 hub edge). All twelve are blurred together
-               via #rim-bloom — overlapping colors blend into a single
-               contiguous spectrum halo. -->
-          <g class="halos" filter="url(#rim-bloom)">
-            <!-- 30° magenta — indent between B (BR) and R (top) -->
-            <circle cx="134.64" cy="80"     r="22" fill="#E5047F"/>
-            <!-- 60° red-magenta — over the top-right shoulder -->
-            <circle cx="135"    cy="39.38"  r="22" fill="#EC1844"/>
-            <!-- 90° red — directly past the top R tip -->
-            <circle cx="100"    cy="0"      r="26" fill="#F32C09"/>
-            <!-- 120° orange — over the top-left shoulder -->
-            <circle cx="65"     cy="39.38"  r="22" fill="#F97D37"/>
-            <!-- 150° yellow — indent between R (top) and G (BL) -->
-            <circle cx="65.36"  cy="80"     r="22" fill="#FED105"/>
-            <!-- 180° yellow-green — over the left side of the BL arm -->
-            <circle cx="30"     cy="100"    r="22" fill="#7FCC27"/>
-            <!-- 210° green — directly past the BL G tip -->
-            <circle cx="13.4"   cy="150"    r="26" fill="#019C49"/>
-            <!-- 240° teal — over the bottom-left shoulder -->
-            <circle cx="65"     cy="160.62" r="22" fill="#01A29E"/>
-            <!-- 270° cyan — indent between G (BL) and B (BR), under hub -->
-            <circle cx="100"    cy="140"    r="22" fill="#00A8F3"/>
-            <!-- 300° azure — over the bottom-right shoulder -->
-            <circle cx="135"    cy="160.62" r="22" fill="#0054C9"/>
-            <!-- 330° blue — directly past the BR B tip -->
-            <circle cx="186.6"  cy="150"    r="26" fill="#0001A0"/>
-            <!-- 0° indigo — over the right side of the BR arm -->
-            <circle cx="170"    cy="100"    r="22" fill="#732C8F"/>
+          <!-- 1. PHOSPHOR BLEED — two <use> references to the colored
+               phosphor sources (#phosphor-arms + #phosphor-hub), drawn
+               UNMASKED and run through #phosphor-bleed. The blur
+               extends outward past the silhouette into the surrounding
+               "frosted glass"; the sharp masked screen below paints
+               on top of the bleed inside the silhouette, so only the
+               soft outer halo (and a hair of edge bloom kissing the
+               silhouette) is visible. Both <use>s are STATIC here
+               (no .hub-segs class on the hub use) — the bleed's
+               Gaussian is wide enough that pinwheel rotation is
+               imperceptible after the blur, so we save the per-frame
+               filter re-eval by holding it still. -->
+          <g class="bleed" filter="url(#phosphor-bleed)">
+            <use href="#phosphor-arms"/>
+            <!-- Hub rotates here too — the bleed blur doesn't kill the
+                 temporal information. Even after stdDev=13 averaging,
+                 the colors at any given halo point still cycle through
+                 cyan/yellow/magenta as the pinwheel turns underneath,
+                 and that churn is a distinctive part of the look. The
+                 per-frame filter re-eval cost is real but worth it. -->
+            <use class="hub-segs" href="#phosphor-hub"/>
           </g>
 
           <!-- 2. inside the screen — everything below clips to the logo -->
           <g mask="url(#logo-mask)">
-            <!-- 2a. flat colored phosphor (the "image" on the screen) -->
-            <g fill="none" stroke-width="24" stroke-linecap="round">
-              <line x1="100" y1="100" x2="100"    y2="28"  stroke="#F32C09"/>
-              <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#019C49"/>
-              <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0001A0"/>
-            </g>
-            <circle cx="100"    cy="28"  r="24" fill="#F32C09"/>
-            <circle cx="37.65"  cy="136" r="24" fill="#019C49"/>
-            <circle cx="162.35" cy="136" r="24" fill="#0001A0"/>
-            <g class="hub-segs">
-              <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#E5047F"/>
-              <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#F32C09"/>
-              <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FED105"/>
-              <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#019C49"/>
-              <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
-              <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>
+            <!-- 2a. PHOSPHOR — a vibrant solid base + RGB-stripe accents.
+                 The cheat: pure stripe rendering caps brightness at
+                 ~33% for single-channel colors (the lit channel only
+                 covers 1/3 of the area). Instead, paint the full
+                 solid phosphor first (the "base"), then layer the
+                 R/G/B stripes semi-transparently on top. The base
+                 carries the vibrancy; the stripes carry the subpixel
+                 structure as colored modulations *over* the base.
+                 Boundary effect survives — at a yellow→green edge,
+                 the R-stripe column still drops from "bright red over
+                 yellow base" to "near-black over green base." -->
+            <g class="phosphors">
+              <g class="phosphor-base">
+                <use href="#phosphor-arms"/>
+                <use class="hub-segs" href="#phosphor-hub"/>
+              </g>
+              <g filter="url(#extract-r)" mask="url(#stripe-r-mask)" opacity="0.65">
+                <use href="#phosphor-arms"/>
+                <use class="hub-segs" href="#phosphor-hub"/>
+              </g>
+              <g filter="url(#extract-g)" mask="url(#stripe-g-mask)" opacity="0.65">
+                <use href="#phosphor-arms"/>
+                <use class="hub-segs" href="#phosphor-hub"/>
+              </g>
+              <g filter="url(#extract-b)" mask="url(#stripe-b-mask)" opacity="0.65">
+                <use href="#phosphor-arms"/>
+                <use class="hub-segs" href="#phosphor-hub"/>
+              </g>
             </g>
 
             <!-- 2b. beam hot-spots — bloom where the beam dwells longest.
@@ -689,20 +906,24 @@
               <circle cx="100"    cy="100" r="16" fill="#FFFFFF" opacity="0.10"/>
             </g>
 
-            <!-- 2c. aperture grille — thin vertical dark stripes -->
-            <rect x="0" y="0" width="200" height="200" fill="url(#grille)"/>
-
-            <!-- 2d. scanlines — fainter horizontal dim bands -->
+            <!-- 2c. scanlines — fainter horizontal dim bands -->
             <rect x="0" y="0" width="200" height="200" fill="url(#scanlines)"/>
 
-            <!-- 2e. Trinitron damping wires — two horizontal stabilizer
-                 shadows at roughly 1/3 and 2/3 of the screen height.
-                 Stroke width 1 ≈ ~0.85px at 168px display — barely-there
-                 dark lines, the Trinitron tell. -->
-            <line x1="0" y1="68"  x2="200" y2="68"  stroke="#000000" stroke-width="1" opacity="0.62"/>
-            <line x1="0" y1="132" x2="200" y2="132" stroke="#000000" stroke-width="1" opacity="0.62"/>
+            <!-- 2d. Trinitron damping wires — barely-there horizontal
+                 stabilizer shadows, the Trinitron tell. Both wires are
+                 hijacked to play creative roles against the logo:
+                   - upper wire (y=52): tangent to the south edge of the
+                     red distal node, so it cuts the red arm's stem off
+                     from its ball and the silhouette reparses as a
+                     lowercase "i".
+                   - lower wire (y=136): passes exactly through the
+                     centers of the green and blue distal nodes,
+                     bisecting them across their equator.
+                 Stroke width 1 ≈ ~0.85px at 168px display. -->
+            <line x1="0" y1="52"  x2="200" y2="52"  stroke="#000000" stroke-width="1" opacity="0.62"/>
+            <line x1="0" y1="136" x2="200" y2="136" stroke="#000000" stroke-width="1" opacity="0.62"/>
 
-            <!-- 2f. glass front gloss — primary highlight near the top,
+            <!-- 2e. glass front gloss — primary highlight near the top,
                  fainter secondary lower down. Light on a curved tube. -->
             <rect x="0" y="0" width="200" height="200" fill="url(#crt-glass)"/>
           </g>
