@@ -491,6 +491,9 @@
   /* ─── BOTTOM-CENTER ─── 3 items, filling the previously empty stretch
      between the bottom-left cluster and the sneak-preview card */
   .sp-reg { bottom: 88px; left: 24%; width: 32px; height: 32px; }
+  /* countdown numeral uses the page's display font — SVG text font-family
+     can't read CSS vars from an attribute, so it has to come through here. */
+  .sp-reg .leader-num { font-family: var(--font-display); }
   .sp-cross {
     bottom: 96px; left: 42%;
     width: 30px; height: 30px;
@@ -511,9 +514,10 @@
      three "print" marks (sp-check, sp-cross, sp-reg) swap to their
      cinematography equivalents on the CRT layer via .paper-only /
      .crt-only — see the SVG groups in the markup. The cinema marks
-     join the phosphor wash too: sp-reg's cue burn and sp-cross's lens
-     flare bloom in their hues; sp-check (SMPTE bars) skips the halo
-     since it's already multi-hued and just gets a flicker.
+     join the phosphor wash too: sp-reg's countdown leader and
+     sp-cross's lens flare bloom in their hues; sp-check (SMPTE bars)
+     skips the halo since it's already multi-hued and just gets a
+     flicker.
 
      How it works:
        1. Each glowing sprinkle declares its --glow channels (space-
@@ -541,7 +545,7 @@
   .sp-bar-2   { --glow: 0 1 160; }     /* deep-blue bar */
   .sp-stripe  { --glow: 229 4 127; }   /* magenta stripe pill */
   /* cinema-mode marks — glow in their dominant hue on the CRT layer */
-  .sp-reg     { --glow: 254 209 5; }   /* yellow phosphor cue-burn */
+  .sp-reg     { --glow: 254 209 5; }   /* yellow countdown-leader dial */
   .sp-cross   { --glow: 0 168 243; }   /* cyan anamorphic flare */
   /* sp-check renders SMPTE bars at night — multi-hued, no halo set. */
 
@@ -716,14 +720,17 @@
       <line x1="0" y1="15" x2="30" y2="15" stroke="currentColor" stroke-width="2"></line>
     </g>
     <g class="crt-only">
-      <!-- "cigarette burn" reel-change cue: bright spot of projector light
-           coming through a burned hole in the upper-right of the film
-           frame, signaling the projectionist to start the next reel.
-           The faint frame outline gives the corner placement a referent
-           — without it, the burn just reads as "yellow dot near center". -->
-      <rect x="3" y="3" width="24" height="24" rx="0.5"
-            fill="none" stroke="#FED105" stroke-width="0.5" opacity="0.4"></rect>
-      <circle cx="22" cy="9" r="3.5" fill="#FED105"></circle>
+      <!-- Academy countdown leader: the pre-film dial that flashes
+           8-7-6-5-4-3-2 before the picture starts. The ring is the
+           dial face, the radial line is the sweep hand (real ones
+           rotate once per second), and the "3" is the current count.
+           Hand fixed at ~2 o'clock — sweeping it would fight the
+           phosphor-flicker animation already on .sp-reg. -->
+      <circle cx="15" cy="15" r="12" fill="none" stroke="#FED105" stroke-width="1.2"></circle>
+      <line x1="15" y1="15" x2="24" y2="9.5" stroke="#FED105" stroke-width="1.4" stroke-linecap="round"></line>
+      <circle cx="15" cy="15" r="1.3" fill="#FED105"></circle>
+      <text x="15" y="19.5" class="leader-num" font-size="13" font-weight="700"
+            text-anchor="middle" fill="#FED105">3</text>
     </g>
   </svg>
 
