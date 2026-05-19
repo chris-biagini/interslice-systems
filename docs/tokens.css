@@ -198,7 +198,7 @@
    2) Automatic: matches OS via @media (prefers-color-scheme: dark) below,
       but only when the page hasn't been pinned to light via data-theme="light".
    Memphis stamps + borders flip from --ink-0 → --paper-0 (the cream halo
-   used in logo-mark-stamped-on-dark.svg — dark mode's "sticker outline"). */
+   used in logo_RGBW_shadow.svg — dark mode's "sticker outline"). */
 
 :root[data-theme="dark"], .theme-dark {
   color-scheme: dark;
