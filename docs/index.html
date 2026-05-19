@@ -108,6 +108,18 @@
     :root:not([data-theme="light"]) .mark .m-dark  { display: inline; }
   }
 
+  /* generic medium-toggle: .paper-only renders on the CMYK-paper layer,
+     .crt-only renders on the neon-Trinitron night layer. Same activation
+     rules as the logo's .m-light / .m-dark — used by the day/night motto
+     and any other content that should swap between the two media. */
+  .crt-only { display: none; }
+  :root[data-theme="dark"] .paper-only { display: none; }
+  :root[data-theme="dark"] .crt-only  { display: inline; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .paper-only { display: none; }
+    :root:not([data-theme="light"]) .crt-only  { display: inline; }
+  }
+
   /* The perimeter bloom is rendered through a single Gaussian-blur
      filter, so we don't animate individual halos — a premium Trinitron
      is rock-stable, not breathing. The .halos group's opacity is still
@@ -658,7 +670,7 @@
 
   <!-- ============ TOP STRIP ============ -->
   <header class="top">
-    <p class="motto">We're building the future, <em>tomorrow!</em></p>
+    <p class="motto">We're building the future, <em class="paper-only">today!</em><em class="crt-only">tomorrow!</em></p>
   </header>
 
   <!-- ============ BODY: LOGO + WORDMARK + CTA ============ -->
