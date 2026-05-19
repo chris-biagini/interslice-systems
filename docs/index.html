@@ -305,6 +305,67 @@
   .foot__cmyk .y { background: var(--ink-yellow); }
   .foot__cmyk .k { background: var(--fg); }
 
+  /* In dark mode, the CMYK proof dots become RGBW LED indicators.
+     C/M/Y/K maps to its color-wheel complement R/G/B/W (cyan ink
+     absorbs red light, magenta absorbs green, yellow absorbs blue,
+     black absorbs all — so the four dots keep their left-to-right
+     order and just flip subtractive→additive).
+     Hot-spot positions are deliberately varied between the four to
+     suggest manufacturing-tolerance jank, and the chromas lean on
+     late-80s/early-90s indicator-panel character: yellow-green for
+     the "green" LED, slightly desaturated indigo for the "blue"
+     (early blue LEDs were dim), and warm amber for the "white"
+     (white LEDs didn't really exist yet — what you got was an
+     incandescent-yellow indicator). */
+  :root[data-theme="dark"] .foot__cmyk span {
+    border: 1.5px solid rgba(0, 0, 0, 0.5); /* dark plastic bezel */
+  }
+  :root[data-theme="dark"] .foot__cmyk .c { /* C → R LED */
+    background: radial-gradient(circle at 36% 30%,
+      #FFE0D8 0%, #FF3A1F 30%, #DA1604 70%, #780500 100%);
+    box-shadow: 0 0 4px rgba(255, 60, 40, 0.55);
+  }
+  :root[data-theme="dark"] .foot__cmyk .m { /* M → G LED, yellowish */
+    background: radial-gradient(circle at 42% 38%,
+      #ECFFE0 0%, #66D72E 30%, #2DA014 70%, #135004 100%);
+    box-shadow: 0 0 4px rgba(80, 220, 50, 0.45);
+  }
+  :root[data-theme="dark"] .foot__cmyk .y { /* Y → B LED, slightly indigo */
+    background: radial-gradient(circle at 32% 40%,
+      #D8DEFF 0%, #4068D8 30%, #1530A8 70%, #0A1670 100%);
+    box-shadow: 0 0 4px rgba(70, 100, 240, 0.55);
+  }
+  :root[data-theme="dark"] .foot__cmyk .k { /* K → W LED, warm amber */
+    background: radial-gradient(circle at 38% 32%,
+      #FFFEEC 0%, #FFEDA8 30%, #F0C84A 70%, #6A4F00 100%);
+    box-shadow: 0 0 4px rgba(255, 230, 150, 0.5);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .foot__cmyk span {
+      border: 1.5px solid rgba(0, 0, 0, 0.5);
+    }
+    :root:not([data-theme="light"]) .foot__cmyk .c {
+      background: radial-gradient(circle at 36% 30%,
+        #FFE0D8 0%, #FF3A1F 30%, #DA1604 70%, #780500 100%);
+      box-shadow: 0 0 4px rgba(255, 60, 40, 0.55);
+    }
+    :root:not([data-theme="light"]) .foot__cmyk .m {
+      background: radial-gradient(circle at 42% 38%,
+        #ECFFE0 0%, #66D72E 30%, #2DA014 70%, #135004 100%);
+      box-shadow: 0 0 4px rgba(80, 220, 50, 0.45);
+    }
+    :root:not([data-theme="light"]) .foot__cmyk .y {
+      background: radial-gradient(circle at 32% 40%,
+        #D8DEFF 0%, #4068D8 30%, #1530A8 70%, #0A1670 100%);
+      box-shadow: 0 0 4px rgba(70, 100, 240, 0.55);
+    }
+    :root:not([data-theme="light"]) .foot__cmyk .k {
+      background: radial-gradient(circle at 38% 32%,
+        #FFFEEC 0%, #FFEDA8 30%, #F0C84A 70%, #6A4F00 100%);
+      box-shadow: 0 0 4px rgba(255, 230, 150, 0.5);
+    }
+  }
+
   /* ===================== MEMPHIS SPRINKLES =====================
      Per-sprinkle: position + shape + --glow channel (rgb, for the
      phosphor halo) + --flick-p / --flick-d (co-prime period + delay
