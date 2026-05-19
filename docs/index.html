@@ -495,6 +495,8 @@
     bottom: 96px; left: 42%;
     width: 30px; height: 30px;
     transform: rotate(8deg);
+    /* lens flare in dark mode extends past the sprite bounds */
+    overflow: visible;
   }
   /* tri-2 is the only sprinkle that could collide with the .sneak card on
      narrow viewports. Sneak's left edge sits at viewport_right − 384px
@@ -673,12 +675,16 @@
       <line x1="2" y1="28" x2="28" y2="2"  stroke="currentColor" stroke-width="5" stroke-linecap="round"></line>
     </g>
     <g class="crt-only">
-      <!-- anamorphic lens flare: bright horizontal streak with a brighter
-           inner core, a short perpendicular glint, and a starburst point -->
-      <line x1="0"  y1="15" x2="30" y2="15" stroke="#00A8F3" stroke-width="2"   stroke-linecap="round"></line>
-      <line x1="3"  y1="15" x2="27" y2="15" stroke="#FFFFFF" stroke-width="0.8" stroke-linecap="round"></line>
-      <line x1="15" y1="6"  x2="15" y2="24" stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" opacity="0.7"></line>
-      <circle cx="15" cy="15" r="1.8" fill="#FFFFFF"></circle>
+      <!-- anamorphic lens flare: a real anamorphic blooms WIDE — a long
+           horizontal cyan streak that runs well past the bright source,
+           with a faint perpendicular glint and a bright starburst core.
+           The streak extends past the viewBox; .sp-cross gets
+           overflow:visible so it isn't clipped. -->
+      <line x1="-22" y1="15" x2="52" y2="15" stroke="#00A8F3" stroke-width="0.7" stroke-linecap="round" opacity="0.4"></line>
+      <line x1="-10" y1="15" x2="40" y2="15" stroke="#00A8F3" stroke-width="1.4" stroke-linecap="round"></line>
+      <line x1="2"   y1="15" x2="28" y2="15" stroke="#FFFFFF" stroke-width="0.9" stroke-linecap="round"></line>
+      <line x1="15" y1="4"  x2="15" y2="26" stroke="#FFFFFF" stroke-width="0.8" stroke-linecap="round" opacity="0.65"></line>
+      <circle cx="15" cy="15" r="2.2" fill="#FFFFFF"></circle>
     </g>
   </svg>
   <svg class="sprinkle sp-check" viewBox="0 0 36 36" aria-hidden="true">
@@ -710,10 +716,14 @@
       <line x1="0" y1="15" x2="30" y2="15" stroke="currentColor" stroke-width="2"></line>
     </g>
     <g class="crt-only">
-      <!-- "cigarette burn" reel-change cue: a bright dot burned into the
-           upper-right corner of the frame to signal the projectionist -->
-      <circle cx="21" cy="9" r="4.5" fill="#FED105"></circle>
-      <circle cx="21" cy="9" r="7"   fill="none" stroke="#FED105" stroke-width="1" opacity="0.45"></circle>
+      <!-- "cigarette burn" reel-change cue: bright spot of projector light
+           coming through a burned hole in the upper-right of the film
+           frame, signaling the projectionist to start the next reel.
+           The faint frame outline gives the corner placement a referent
+           — without it, the burn just reads as "yellow dot near center". -->
+      <rect x="3" y="3" width="24" height="24" rx="0.5"
+            fill="none" stroke="#FED105" stroke-width="0.5" opacity="0.4"></rect>
+      <circle cx="22" cy="9" r="3.5" fill="#FED105"></circle>
     </g>
   </svg>
 
