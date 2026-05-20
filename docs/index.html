@@ -1088,14 +1088,74 @@
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
 
-  function init() {
+  // Serialize a fragment (the arms or hub group) into a standalone SVG document,
+  // wrap it in a blob URL, and resolve to a loaded HTMLImageElement.
+  function rasterizeFragment(fragmentMarkup) {
+    const doc = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">${fragmentMarkup}</svg>`;
+    const blob = new Blob([doc], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+  }
+
+  // Markup for the two phosphor source groups. Kept inline so the script is
+  // self-contained — and the design system explicitly uses these exact colors.
+  const ARMS_MARKUP = `
+    <g fill="none" stroke-width="24" stroke-linecap="round">
+      <line x1="100" y1="100" x2="100"    y2="28"  stroke="#F32C09"/>
+      <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#019C49"/>
+      <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0001A0"/>
+    </g>
+    <circle cx="100"    cy="28"  r="24" fill="#F32C09"/>
+    <circle cx="37.65"  cy="136" r="24" fill="#019C49"/>
+    <circle cx="162.35" cy="136" r="24" fill="#0001A0"/>`;
+
+  const HUB_MARKUP = `
+    <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#E5047F"/>
+    <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#F32C09"/>
+    <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FED105"/>
+    <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#019C49"/>
+    <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
+    <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>`;
+
+  // Rotation: 36 seconds for 360°, reverse direction (matches the existing
+  // CSS keyframe @ docs/index.html:129 / .hub-segs CSS animation).
+  const ROT_PERIOD_MS = 36 * 1000;
+  function hubAngleDeg(timeMs) {
+    return -(timeMs / ROT_PERIOD_MS) * 360;
+  }
+
+  async function init() {
     const canvas = document.querySelector('canvas.trinitron');
     if (!canvas || !window.Trinitron) return;
 
+    let armsImg, hubImg;
     try {
-      const trinitron = new window.Trinitron(canvas, {
-        // signal callback is wired up in a later task
-      });
+      [armsImg, hubImg] = await Promise.all([
+        rasterizeFragment(ARMS_MARKUP),
+        rasterizeFragment(HUB_MARKUP),
+      ]);
+    } catch (err) {
+      return; // Fall back to SVG implementation
+    }
+
+    function signal(ctx, timeMs) {
+      // ctx is a 200×200-coordinate offscreen 2D context.
+      ctx.drawImage(armsImg, 0, 0, 200, 200);
+      ctx.save();
+      ctx.translate(100, 100);
+      ctx.rotate(hubAngleDeg(timeMs) * Math.PI / 180);
+      ctx.translate(-100, -100);
+      ctx.drawImage(hubImg, 0, 0, 200, 200);
+      ctx.restore();
+    }
+
+    try {
+      const trinitron = new window.Trinitron(canvas, { signal });
       window.__trinitron = trinitron;
 
       if (isDark()) {
@@ -1103,8 +1163,7 @@
         document.documentElement.classList.add('trinitron-active');
       }
     } catch (err) {
-      // Silent fallback — page degrades to the SVG-only dark-mode implementation.
-      // Don't add the .trinitron-active class.
+      // Silent fallback
     }
   }
 
