@@ -92,6 +92,49 @@
     padding: 0 20px;
   }
 
+  /* Trinitron canvas overlay — dark mode only, sits below the .mark SVG */
+  .trinitron {
+    position: absolute;
+    /* Center over the SVG mark, which is 168×168. The canvas is 240×240
+       logical, so it extends ~36px past the silhouette on each side for
+       the bleed halo to live in. */
+    width: 240px;
+    height: 240px;
+    pointer-events: none;
+    z-index: 0;
+    /* Hide by default — only the canvas-active dark-mode paths reveal it. */
+    display: none;
+  }
+  .stack { position: relative; }
+  .stack .mark { position: relative; z-index: 1; }
+
+  /* Show canvas + hide the SVG layers it replaces — when JS has confirmed
+     the renderer is active AND we're in a dark-mode path. */
+  :root.trinitron-active[data-theme="dark"] .trinitron,
+  :root.trinitron-active .trinitron { /* light + OS-dark guard added next rule */
+    display: block;
+  }
+  :root.trinitron-active[data-theme="light"] .trinitron { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root.trinitron-active:not([data-theme="light"]) .trinitron { display: block; }
+  }
+  @media (prefers-color-scheme: light) {
+    :root.trinitron-active:not([data-theme="dark"]) .trinitron { display: none; }
+  }
+
+  /* When canvas is active in dark mode, hide the SVG layers the canvas
+     replaces. Keep scanlines/wires/glass/hotspots (they overlay the canvas). */
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .bleed,
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .phosphors {
+    display: none;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .bleed,
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .phosphors {
+      display: none;
+    }
+  }
+
   /* logo mark, big — inline SVG with light + dark layers */
   .mark {
     width: 168px;
@@ -583,6 +626,7 @@
   <!-- ============ HERO: LOGO + WORDMARK + CTA ============ -->
   <section class="hero">
     <div class="stack">
+      <canvas class="trinitron" width="240" height="240" aria-hidden="true"></canvas>
       <svg class="mark" viewBox="0 0 200 200" width="168" height="168" role="img" aria-label="Interslice mark">
         <defs>
           <!-- ===== PHOSPHOR BLEED filter (additive) =====
@@ -1038,5 +1082,44 @@
   </footer>
 
 </main>
+<script src="trinitron.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  function isDark() {
+    const t = document.documentElement.dataset.theme;
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function init() {
+    const canvas = document.querySelector('canvas.trinitron');
+    if (!canvas || !window.Trinitron) return;
+
+    try {
+      const trinitron = new window.Trinitron(canvas, {
+        // signal callback is wired up in a later task
+      });
+      window.__trinitron = trinitron;
+
+      if (isDark()) {
+        trinitron.start();
+        document.documentElement.classList.add('trinitron-active');
+      }
+    } catch (err) {
+      // Silent fallback — page degrades to the SVG-only dark-mode implementation.
+      // Don't add the .trinitron-active class.
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
 </body>
 </html>
