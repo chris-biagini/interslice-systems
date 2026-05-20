@@ -93,23 +93,14 @@
   }
 
   /* Trinitron canvas overlay — dark mode only, sits below the .mark SVG.
-     Default display: none; only the two dark-mode paths reveal it.
-
-     Sizing & positioning: the canvas's internal pixel buffer is 240×240
-     logical units (= viewSize 200 + bleedRadius margins of 20 each side),
-     but visually we want the *source region* (the 200-unit inner area
-     where the logo is painted) to match the SVG mark's 168×168 CSS size.
-     So the displayed canvas is 168 × (240/200) = 201.6px, and we position
-     it −16.8px above the SVG's flex slot so the canvas's vertical center
-     coincides with the SVG's vertical center. Horizontal centering uses
-     the flex-column's align-items: center.
-
-     If you ever change canvasSize/viewSize in trinitron.js, update the
-     calc() ratio below to match. */
+     We size the canvas so its inner source region (viewSize) matches the
+     SVG mark's 168px box; the surrounding margin holds the bleed halo.
+     --canvas-to-view must equal canvasSize / viewSize from the renderer
+     opts (currently 280/200 = 1.4). */
   .trinitron {
     position: absolute;
     --svg-size: 168px;
-    --canvas-to-view: calc(280 / 200);  /* keep in sync with renderer opts */
+    --canvas-to-view: calc(280 / 200);
     width:  calc(var(--svg-size) * var(--canvas-to-view));
     height: calc(var(--svg-size) * var(--canvas-to-view));
     top:    calc(var(--svg-size) * (1 - var(--canvas-to-view)) / 2);
@@ -129,9 +120,10 @@
     :root.trinitron-active:not([data-theme="light"]) .trinitron { display: block; }
   }
 
-  /* When canvas is active in a dark-mode path, hide the SVG layers the
-     canvas replaces. Keep scanlines/wires/glass/hotspots (they overlay
-     the canvas). Same triple-activation pattern. */
+  /* When canvas is active in a dark-mode path, hide every SVG dark-mode
+     layer — the canvas bakes all of them (phosphors, bleed, scanlines,
+     hotspots, glass gloss) into a single composited signal. Same
+     triple-activation pattern. */
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .bleed,
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .phosphors,
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-scanlines,
@@ -177,10 +169,10 @@
 
   /* In dark mode the central pinwheel rotates slowly: the Trinitron is
      displaying a rotating image, not rotating itself. .hub-segs sits
-     inside #logo-mask and BELOW the aperture grille, scanlines, damping
-     wires, and front-glass gloss in document order — so all those
-     screen-surface artifacts stay fixed in screen space while the
-     colored phosphor underneath turns.
+     inside #logo-mask and BELOW the aperture grille, scanlines, and
+     front-glass gloss in document order — so all those screen-surface
+     artifacts stay fixed in screen space while the colored phosphor
+     underneath turns.
      SVG elements default transform-origin to (0,0); we pin it to
      (100,100), the hub's geometric center in user units. */
   @keyframes hub-spin {
@@ -640,7 +632,7 @@
   <!-- ============ HERO: LOGO + WORDMARK + CTA ============ -->
   <section class="hero">
     <div class="stack">
-      <canvas class="trinitron" width="240" height="240" aria-hidden="true"></canvas>
+      <canvas class="trinitron" aria-hidden="true"></canvas>
       <svg class="mark" viewBox="0 0 200 200" width="168" height="168" role="img" aria-label="Interslice mark">
         <defs>
           <!-- ===== PHOSPHOR BLEED filter (additive) =====
@@ -786,9 +778,7 @@
                  b. faint beam hot-spots (bloom where the beam is
                     most intense — center of each lit shape)
                  c. scanlines — fainter horizontal dim bands
-                 d. two horizontal damping wires (signature Trinitron
-                    stabilizer-wire shadows across the tube face)
-                 e. glass front gloss — light catching the curved face
+                 d. glass front gloss — light catching the curved face
           -->
 
           <!-- RGB extract filters: each zeros out two color channels
@@ -927,7 +917,7 @@
         <!-- =================================================================
              DARK-MODE LAYER — a Trinitron tube inlaid into a frosted-glass
              cutout. The logo's silhouette IS the screen: aperture grille,
-             scanlines, damping wires, and front-glass gloss all clip to
+             scanlines, and front-glass gloss all clip to
              that shape via #logo-mask. Around the silhouette, the colored
              phosphors are duplicated as-is and blurred via #phosphor-bleed;
              the sharp masked screen on top covers the bleed inside the
@@ -957,8 +947,7 @@
                  b. beam hot-spots — bright wash at the center of each
                     lit element where the beam dwells longest
                  c. scanlines — horizontal dim bands
-                 d. two Trinitron damping wires (the Sony signature)
-                 e. glass front gloss
+                 d. glass front gloss
              ================================================================= -->
         <g class="m-dark">
           <!-- 1. PHOSPHOR BLEED — two <use> references to the colored
@@ -1025,20 +1014,11 @@
               <circle cx="100"    cy="100" r="16" fill="#FFFFFF" opacity="0.10"/>
             </g>
 
-            <!-- 2c. scanlines — fainter horizontal dim bands. Hidden when canvas
-                 is active because the canvas bakes scanlines into the stripe render. -->
+            <!-- 2c. scanlines — fainter horizontal dim bands. -->
             <rect class="svg-scanlines" x="0" y="0" width="200" height="200" fill="url(#scanlines)"/>
 
-            <!-- 2d. Trinitron damping wires removed — they were authentic
-                 to the tube but added visual noise the bubble doesn't need.
-                 -->
-
-            <!-- 2e. glass front gloss — primary highlight near the top,
-                 fainter secondary lower down. Hidden when canvas is active
-                 because the canvas bakes the gloss into the signal (the
-                 Trinitron is *displaying* an Aqua-shiny image; gloss must
-                 go through stripes/persistence/halo/scan-band like any
-                 other phosphor content). -->
+            <!-- 2d. glass front gloss — primary highlight near the top,
+                 fainter secondary lower down. Light on a curved tube. -->
             <rect class="svg-glass-gloss" x="0" y="0" width="200" height="200" fill="url(#crt-glass)"/>
           </g>
         </g>
@@ -1137,30 +1117,15 @@
     <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
     <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>`;
 
-  // Aqua-style gloss baked INTO the signal — the Trinitron is displaying
-  // a glossy image, so the highlight goes through cell sampling, stripe
-  // render, persistence, halo, scan-band, etc. The gradient mirrors the
-  // SVG #crt-glass def verbatim (top-bright primary band + faint
-  // secondary lower down).
-  // Aqua-button treatment for the displayed image. Three layered effects
-  // per lobe (the three pinwheel-tip balls and the central hub disc):
-  //
-  //   1. Inner glow — a soft hazy rim that brightens just inside each
-  //      lobe's edge, fading to transparent toward the center. Makes each
-  //      bubble look like a *translucent gel*, not a flat colored disc.
-  //
-  //   2. Top specular shine — a dome-shaped white highlight in the upper
-  //      portion of each lobe. The bright reflection of an overhead light
-  //      source on a glossy gel surface. This is the crisp shine.
-  //
-  //   3. Bottom wet-bead reflection — a thin faint highlight hugging the
-  //      bottom of each lobe. The classic Aqua secondary highlight that
-  //      makes the bubble look freshly licked.
-  //
-  // Source-atop in the signal callback clips all of these to wherever the
-  // colored phosphor already painted — i.e., the bubble silhouette. The
-  // straight arms between balls don't get Aqua treatment (they read as
-  // glass tubes connecting the bubbles, not as bubbles themselves).
+  // Aqua-style gloss for the displayed image — three layered effects per
+  // lobe (three pinwheel-tip balls + central hub disc), composited into
+  // the signal so they go through cell sampling, stripe render,
+  // persistence, halo, and scan-band along with the colored phosphor:
+  //   1. Inner glow — soft hazy rim, lobe reads as translucent gel.
+  //   2. Top specular shine — dome highlight, the crisp overhead reflection.
+  //   3. Bottom wet-bead reflection — thin highlight, "freshly licked."
+  // Source-atop in the signal callback clips them to the bubble
+  // silhouette so the straight arms between balls stay as glass tubes.
   const AQUA_MARKUP = `
     <defs>
       <linearGradient id="aTop" x1="0" y1="0" x2="0" y2="1">
@@ -1222,7 +1187,8 @@
       return; // Fall back to SVG implementation
     }
 
-    // Base painting (arms + rotating hub) is shared by both signal sources.
+    // Base bitmap — arms + rotating hub. Used as the bleed source directly,
+    // and as the substrate that signal() composites the Aqua gloss on top of.
     function paintBase(ctx, timeMs) {
       ctx.drawImage(armsImg, 0, 0, 200, 200);
       ctx.save();
@@ -1233,10 +1199,10 @@
       ctx.restore();
     }
 
-    // Display signal — what the Trinitron's phosphors show. Base colored
-    // phosphor plus the Aqua-button treatment (inner glow + top specular
-    // shine + bottom wet-bead reflection), painted with source-atop so
-    // the highlights conform to the bubble silhouette.
+    // Display signal — base phosphor with the Aqua gloss baked on top,
+    // clipped to the painted silhouette via source-atop. This is the
+    // bitmap the Trinitron renders. The halo derives from paintBase
+    // alone so the specular highlights don't bias the leak upward.
     function signal(ctx, timeMs) {
       paintBase(ctx, timeMs);
       ctx.save();
@@ -1245,75 +1211,30 @@
       ctx.restore();
     }
 
-    // Bleed signal — raw colored phosphor only. Matches the SVG fallback's
-    // halo behavior: the cell-color leaking through the cutout's edges
-    // shouldn't include the displayed image's specular shines. Without
-    // this, the Aqua-whitened tops of each lobe would brighten the bleed
-    // disproportionately upward (a "cone of light above the red ball"
-    // when the red lobe's top is the brightest part of the displayed
-    // image but shouldn't be the brightest source of leak).
-    function bleedSignal(ctx, timeMs) {
-      paintBase(ctx, timeMs);
-    }
-
-    // Approximate silhouette: the three pinwheel-tip balls (r=24 each)
-    // plus the central hub disc (r=34). The arms between them are omitted
-    // — when this is wired up to clip the bleed in a future task, the four
-    // discs will be close enough for the halo's purposes. Pass as
-    // silhouettePath; the renderer wraps it in Path2D and currently just
-    // stores it for future clipping work.
-    const SILHOUETTE_PATH =
-      'M 100 28 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
-      'M 37.65 136 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
-      'M 162.35 136 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
-      'M 100 100 m -34 0 a 34 34 0 1 0 68 0 a 34 34 0 1 0 -68 0';
-
     let trinitron;
     try {
       trinitron = new window.Trinitron(canvas, {
         signal,
-        bleedSignal,
-        silhouettePath: SILHOUETTE_PATH,
-        // Bigger canvas (40-unit margins) to give the halo more room and
-        // a beefier blur radius to match what the SVG #phosphor-bleed
-        // filter does in the no-JS fallback.
+        bleedSignal: paintBase,
+        // canvasSize − viewSize / 2 = 40-unit halo margin per side, ample
+        // room for bleedRadius=13's ~39-unit visible extent.
         canvasSize: [280, 280],
-        // bleedRadius IS the blur stdDev directly. SVG #phosphor-bleed
-        // uses stdDeviation=13 — matching that here keeps the halo tight
-        // and "faithful to the nearest cell" rather than smearing out.
-        // The previous value (45) gave a 96-unit visible extent that
-        // overran the 40-unit canvas margin, clipping the tail and
-        // making the red arm's vertical bleed read as oddly elongated.
+        // stdDev=13 matches the SVG fallback's #phosphor-bleed filter.
         bleedRadius: 13,
-        // Bleed brightness multiplier. 1.625 = +25% over the prior 1.3
-        // baseline (which matched the SVG fallback's feFuncA slope). Goes
-        // through canvas filter brightness(), so saturated cell pixels
-        // clamp at 255 cleanly.
+        // +25% over the SVG fallback's feFuncA slope for a punchier halo.
         bleedIntensity: 1.625,
-        // Tame the convergence stutter — drift was reading as page jitter
-        // rather than as authentic CRT misalignment. Keep a hair of static
-        // offset so close inspection still shows R/B fringing.
+        // Static R/B fringe; drift turned off (read as page jitter, not CRT).
         convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
         convergenceDriftAmplitudePx: 0.0,
-        // Phosphor coupling: light adjacent stripes at this fraction of
-        // their cell value. The live-SVG fallback cheats by painting a
-        // solid colored base under 65%-alpha stripes — without that, pure
-        // stripes deliver only ~1/3 the apparent brightness. coupling=0.55
-        // restores enough brightness/saturation that the logo reads as
-        // vivid phosphor at a glance, while still keeping the per-column
-        // dominant-channel structure visible on close inspection.
+        // Pure stripes deliver only ~1/3 the apparent brightness of a
+        // solid-base phosphor; coupling≈0.55 lets adjacent stripes carry
+        // some of the dominant channel back into the pixel so the logo
+        // reads as vivid phosphor while keeping subpixel structure.
         phosphorCoupling: 0.55,
-        // Tiny blur at draw-time turns hard pixel edges into soft glowing
-        // dots — the difference between "screenshot of an LCD" and "lit
-        // phosphor through curved glass."
+        // Sub-pixel blur softens LCD-sharp pixel edges into lit-phosphor
+        // dots through curved glass.
         phosphorBlurPx: 0.3,
-        // Modest persistence — the longer afterglow was helping with the
-        // rotation sparkle but introduced a visible smear. With box-filter
-        // cell sampling (below) the sparkle is anti-aliased at the source,
-        // so persistence can return to a more conservative value.
         persistence: 0.85,
-        // Bigger hotspot makes the cell centers feel like brightness peaks
-        // rather than barely-perceptible variations.
         hotspot: 0.30,
       });
       window.__trinitron = trinitron;
