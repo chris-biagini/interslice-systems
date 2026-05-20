@@ -63,6 +63,30 @@
       this.signalCtx.imageSmoothingEnabled = true;
       this.signalCtx.imageSmoothingQuality = 'high';
 
+      // Per-channel convergence canvases — each holds the signal drawn at a
+      // sub-pixel offset (browser bilinear handles the resample). The sampler
+      // reads each channel from its own buffer, so convergence becomes a
+      // sub-source-pixel shift baked into the bitmap rather than a
+      // cell-index flip in the sampler. The previous approach
+      // (`(px + rdx) * invCs | 0` in _renderStripes) quantized any sub-cell
+      // offset to whole-cell shifts at one subX position only, producing
+      // sharp 1-cell-wide phosphor ghosts at high-contrast edges instead of
+      // a smooth chromatic fringe. Doing the shift on the source bitmap
+      // also softens the per-column sampler's hard-edge zeroes: the
+      // bilinear AA at the shifted edge gives the columns that used to
+      // read alpha=0 a small contribution.
+      const makeConvCanvas = () => {
+        const c = document.createElement('canvas');
+        c.width = vw; c.height = vh;
+        const cctx = c.getContext('2d', { willReadFrequently: true });
+        cctx.imageSmoothingEnabled = true;
+        cctx.imageSmoothingQuality = 'high';
+        return { canvas: c, ctx: cctx };
+      };
+      this._convR = makeConvCanvas();
+      this._convG = makeConvCanvas();
+      this._convB = makeConvCanvas();
+
       // Cell grid — one cell per cellSize × cellSize source-pixel block
       const cs = this.opts.cellSize;
       this.cellGridW = Math.floor(vw / cs);  // 66 for default (floor(200/3))
@@ -185,26 +209,62 @@
       this.signalCtx.clearRect(0, 0, vw, vh);
       this.opts.signal(this.signalCtx, timeMs);
 
-      // 2. Sample per stripe column, decay against last frame, modulate.
+      // 2. Bake per-channel convergence offsets into three pre-shifted
+      //    copies of the signal. The sampler reads each channel from its
+      //    own copy, so convergence operates at source-pixel resolution.
+      this._applyConvergence(timeMs);
+
+      // 3. Sample per stripe column, decay against last frame, modulate.
       this._sample();
       this._applyPersistence();
       this._applyCellModulations(timeMs);
 
-      // 3. Render the aperture-grille stripes into ImageData → stripeCanvas.
-      this._renderStripes(timeMs);
+      // 4. Render the aperture-grille stripes into ImageData → stripeCanvas.
+      this._renderStripes();
       this.stripeCtx.putImageData(this.stripeImageData, 0, 0);
 
-      // 4. Blur the bleed source canvas. The canvas filter blurs per channel,
+      // 5. Blur the bleed source canvas. The canvas filter blurs per channel,
       //    so a single blur produces the correct per-channel additive halo.
       this._renderBleed();
 
-      // 5. Composite: bleed underneath, stripes on top (optionally softened).
+      // 6. Composite: bleed underneath, stripes on top (optionally softened).
       this.ctx.clearRect(0, 0, cw, ch);
       this.ctx.drawImage(this.bleedCanvas, 0, 0);
       const blur = this.opts.phosphorBlurPx;
       if (blur > 0) this.ctx.filter = `blur(${blur}px)`;
       this.ctx.drawImage(this.stripeCanvas, this.bleedMargin, this.bleedMargin);
       if (blur > 0) this.ctx.filter = 'none';
+    }
+
+    _applyConvergence(timeMs) {
+      // Bake per-channel convergence offsets into three pre-shifted source
+      // bitmaps. drawImage(signal, -dx, -dy) produces dest(X,Y) = signal(X+dx,
+      // Y+dy), which matches the previous sampler's read semantics
+      // ((px + dx) → cell index dx to the left): a positive convergence value
+      // shifts that channel LEFT in the displayed image.
+      //
+      // The browser's bilinear resample at sub-pixel offsets produces a soft
+      // AA fringe, so a 0.25 px convergence value renders as a 0.25-px-wide
+      // color fringe at edges instead of a cell-quantized 1-stripe ghost.
+      const [vw, vh] = this.opts.viewSize;
+      const c = this.opts.convergence;
+      const driftAmp = this.opts.convergenceDriftAmplitudePx;
+      const drift = driftAmp === 0
+        ? 0
+        : driftAmp * Math.sin(2 * Math.PI * (timeMs / 1000) / this.opts.convergenceDriftPeriodSec);
+      // Vertical drift is gentler than horizontal — beam alignment is more
+      // forgiving on the long axis of the tube.
+      const rdx = c.r[0] + drift;
+      const rdy = c.r[1] + drift * 0.6;
+      const bdx = c.b[0] - drift;
+      const bdy = c.b[1] - drift * 0.6;
+
+      this._convR.ctx.clearRect(0, 0, vw, vh);
+      this._convR.ctx.drawImage(this.signalCanvas, -rdx, -rdy);
+      this._convG.ctx.clearRect(0, 0, vw, vh);
+      this._convG.ctx.drawImage(this.signalCanvas, -c.g[0], -c.g[1]);
+      this._convB.ctx.clearRect(0, 0, vw, vh);
+      this._convB.ctx.drawImage(this.signalCanvas, -bdx, -bdy);
     }
 
     _sample() {
@@ -227,8 +287,14 @@
       const colG = this.cellsColG;
       const colB = this.cellsColB;
 
-      const imgData = this.signalCtx.getImageData(0, 0, vw, vh);
-      const px = imgData.data;
+      // Each channel reads from its own pre-shifted source bitmap, so the
+      // convergence offset is a sub-pixel shift baked in upstream of cell
+      // quantization. With matching channels you get identical samples to
+      // the old single-buffer code; with mismatched channels you get a
+      // smooth chromatic fringe at edges.
+      const pxR = this._convR.ctx.getImageData(0, 0, vw, vh).data;
+      const pxG = this._convG.ctx.getImageData(0, 0, vw, vh).data;
+      const pxB = this._convB.ctx.getImageData(0, 0, vw, vh).data;
 
       for (let cy = 0; cy < ch; cy++) {
         for (let cx = 0; cx < cw; cx++) {
@@ -239,24 +305,24 @@
           for (let dy = 0; dy < cs; dy++) {
             const sy = cy * cs + dy;
             const rowBase = sy * vw;
-            // R stripe column (dx=0) — sample all three source channels.
+            // R stripe column (dx=0). Each output channel reads from the
+            // matching per-channel pre-shifted source, with that source's
+            // own alpha weighting (AA fringe in the shifted bitmap is
+            // already at the channel's offset position).
             let pi = (rowBase + cx * cs) * 4;
-            let aw = px[pi + 3] / 255;
-            r0r += px[pi]     * aw;
-            r0g += px[pi + 1] * aw;
-            r0b += px[pi + 2] * aw;
+            r0r += pxR[pi]     * (pxR[pi + 3] / 255);
+            r0g += pxG[pi + 1] * (pxG[pi + 3] / 255);
+            r0b += pxB[pi + 2] * (pxB[pi + 3] / 255);
             // G stripe column (dx=1)
             pi = (rowBase + cx * cs + 1) * 4;
-            aw = px[pi + 3] / 255;
-            g0r += px[pi]     * aw;
-            g0g += px[pi + 1] * aw;
-            g0b += px[pi + 2] * aw;
+            g0r += pxR[pi]     * (pxR[pi + 3] / 255);
+            g0g += pxG[pi + 1] * (pxG[pi + 3] / 255);
+            g0b += pxB[pi + 2] * (pxB[pi + 3] / 255);
             // B stripe column (dx=2)
             pi = (rowBase + cx * cs + 2) * 4;
-            aw = px[pi + 3] / 255;
-            b0r += px[pi]     * aw;
-            b0g += px[pi + 1] * aw;
-            b0b += px[pi + 2] * aw;
+            b0r += pxR[pi]     * (pxR[pi + 3] / 255);
+            b0g += pxG[pi + 1] * (pxG[pi + 3] / 255);
+            b0b += pxB[pi + 2] * (pxB[pi + 3] / 255);
           }
           // Divide by cs (cs source pixels averaged per column), store
           // interleaved as [R, G, B] per cell in each column buffer.
@@ -338,28 +404,13 @@
       prB.set(colB);
     }
 
-    _renderStripes(timeMs) {
+    _renderStripes() {
       const [vw, vh] = this.opts.viewSize;
       const cs = this.opts.cellSize;
       const cw = this.cellGridW;
       const ch = this.cellGridH;
       const out = this.stripeImageData.data;
       const SCAN_DIM_FACTOR = 0.7;
-
-      // Convergence offsets in source-pixel units: static per-channel base
-      // plus a slow sin drift. Vertical drift is gentler than horizontal —
-      // beam alignment is more forgiving on the long axis of the tube.
-      const driftAmp = this.opts.convergenceDriftAmplitudePx;
-      const drift = driftAmp === 0
-        ? 0
-        : driftAmp * Math.sin(2 * Math.PI * (timeMs / 1000) / this.opts.convergenceDriftPeriodSec);
-      const c = this.opts.convergence;
-      const rdx = c.r[0] + drift;
-      const rdy = c.r[1] + drift * 0.6;
-      const gdx = c.g[0];
-      const gdy = c.g[1];
-      const bdx = c.b[0] - drift;
-      const bdy = c.b[1] - drift * 0.6;
 
       // Hoist hot-loop reads out of the 40k-iter inner body.
       const hotspot = this.opts.hotspot;
@@ -381,16 +432,7 @@
         const subY = py - cyBase * cs;
         const scanDim = (subY === cs - 1) ? SCAN_DIM_FACTOR : 1.0;
         const distY = subY - cellCenter; const aDistY = distY < 0 ? -distY : distY;
-
-        // Per-channel sample row index after convergence drift. Inline so
-        // we can do bounds check + index once per pixel instead of via a
-        // sampleCell closure (called 3× per pixel = 120k calls/frame).
-        const rcy = ((py + rdy) * invCs) | 0;
-        const gcy = ((py + gdy) * invCs) | 0;
-        const bcy = ((py + bdy) * invCs) | 0;
-        const rRow = (rcy >= 0 && rcy < ch) ? rcy * cw : -1;
-        const gRow = (gcy >= 0 && gcy < ch) ? gcy * cw : -1;
-        const bRow = (bcy >= 0 && bcy < ch) ? bcy * cw : -1;
+        const rowBase = cyBase * cw;
 
         for (let px = 0; px < vw; px++) {
           const cxBase = (px * invCs) | 0;
@@ -406,24 +448,20 @@
           const hotMod = subDist > 1 ? 1 : 1 + hotspot * (1 - subDist);
 
           // S2 shimmer — stable per-cell brightness noise.
-          const ci = cyBase * cw + cxBase;
+          const ci = rowBase + cxBase;
           const shimMod = 1 + shimmer * shim[ci];
           const totalMod = scanDim * hotMod * shimMod;
 
-          // Per-channel cell sample with convergence offsets applied.
           // subX picks which per-column buffer to read from (R stripe →
-          // colR, G stripe → colG, B stripe → colB); each output channel
-          // independently comes from its convergence-shifted cell, so the
-          // chromatic R/B fringe operates on a different axis than the
-          // stripe selection.
-          const rcx = ((px + rdx) * invCs) | 0;
-          const gcx = ((px + gdx) * invCs) | 0;
-          const bcx = ((px + bdx) * invCs) | 0;
+          // colR, G stripe → colG, B stripe → colB). Convergence is already
+          // baked into the cell buffers (via _applyConvergence's per-channel
+          // pre-shifted source bitmaps), so all three channels read at the
+          // same cell index.
           const cells = subX === 0 ? colR : (subX === 1 ? colG : colB);
-          let sR = 0, sG = 0, sB = 0;
-          if (rRow !== -1 && rcx >= 0 && rcx < cw) sR = cells[(rRow + rcx) * 3];
-          if (gRow !== -1 && gcx >= 0 && gcx < cw) sG = cells[(gRow + gcx) * 3 + 1];
-          if (bRow !== -1 && bcx >= 0 && bcx < cw) sB = cells[(bRow + bcx) * 3 + 2];
+          const ci3 = ci * 3;
+          const sR = cells[ci3];
+          const sG = cells[ci3 + 1];
+          const sB = cells[ci3 + 2];
 
           let r, g, b;
           if (subX === 0)      { r = sR;     g = sG * k; b = sB * k; }
