@@ -134,13 +134,15 @@
      the canvas). Same triple-activation pattern. */
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .bleed,
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .phosphors,
-  :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-scanlines {
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-scanlines,
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-glass-gloss {
     display: none;
   }
   @media (prefers-color-scheme: dark) {
     :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .bleed,
     :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .phosphors,
-    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .svg-scanlines {
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .svg-scanlines,
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .svg-glass-gloss {
       display: none;
     }
   }
@@ -1056,8 +1058,12 @@
             </g>
 
             <!-- 2e. glass front gloss — primary highlight near the top,
-                 fainter secondary lower down. Light on a curved tube. -->
-            <rect x="0" y="0" width="200" height="200" fill="url(#crt-glass)"/>
+                 fainter secondary lower down. Hidden when canvas is active
+                 because the canvas bakes the gloss into the signal (the
+                 Trinitron is *displaying* an Aqua-shiny image; gloss must
+                 go through stripes/persistence/halo/scan-band like any
+                 other phosphor content). -->
+            <rect class="svg-glass-gloss" x="0" y="0" width="200" height="200" fill="url(#crt-glass)"/>
           </g>
         </g>
       </svg>
@@ -1155,6 +1161,24 @@
     <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
     <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>`;
 
+  // Aqua-style gloss baked INTO the signal — the Trinitron is displaying
+  // a glossy image, so the highlight goes through cell sampling, stripe
+  // render, persistence, halo, scan-band, etc. The gradient mirrors the
+  // SVG #crt-glass def verbatim (top-bright primary band + faint
+  // secondary lower down).
+  const GLOSS_MARKUP = `
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.22"/>
+        <stop offset="14%"  stop-color="#FFFFFF" stop-opacity="0.07"/>
+        <stop offset="32%"  stop-color="#FFFFFF" stop-opacity="0"/>
+        <stop offset="58%"  stop-color="#FFFFFF" stop-opacity="0.05"/>
+        <stop offset="74%"  stop-color="#FFFFFF" stop-opacity="0"/>
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="200" height="200" fill="url(#g)"/>`;
+
   // Rotation: 36 seconds for 360°, reverse direction — matches the SVG's
   // @keyframes hub-spin + .hub-segs animation, which drive the no-JS
   // fallback. Keep in sync if you ever retune the period.
@@ -1167,11 +1191,12 @@
     const canvas = document.querySelector('canvas.trinitron');
     if (!canvas || !window.Trinitron) return;
 
-    let armsImg, hubImg;
+    let armsImg, hubImg, glossImg;
     try {
-      [armsImg, hubImg] = await Promise.all([
+      [armsImg, hubImg, glossImg] = await Promise.all([
         rasterizeFragment(ARMS_MARKUP),
         rasterizeFragment(HUB_MARKUP),
+        rasterizeFragment(GLOSS_MARKUP),
       ]);
     } catch (err) {
       return; // Fall back to SVG implementation
@@ -1185,6 +1210,14 @@
       ctx.rotate(hubAngleDeg(timeMs) * Math.PI / 180);
       ctx.translate(-100, -100);
       ctx.drawImage(hubImg, 0, 0, 200, 200);
+      ctx.restore();
+      // Aqua shine — drawn last with source-atop so it only lights the
+      // pixels the signal has already painted (the bubble's silhouette).
+      // Falls off to zero opacity below 32% of the height — the visible
+      // wash is mostly the top half of the logo.
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.drawImage(glossImg, 0, 0, 200, 200);
       ctx.restore();
     }
 
