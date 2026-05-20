@@ -11,6 +11,7 @@
         cellSize: 3,
         bleedRadius: 30,
         silhouettePath: null,
+        persistence: 0.85,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -45,6 +46,9 @@
       this.cellsR = new Float32Array(cellCount);
       this.cellsG = new Float32Array(cellCount);
       this.cellsB = new Float32Array(cellCount);
+      this.prevR = new Float32Array(cellCount);
+      this.prevG = new Float32Array(cellCount);
+      this.prevB = new Float32Array(cellCount);
 
       // Stripe ImageData (source-region-sized) + an intermediate canvas. We
       // putImageData onto the intermediate canvas, then drawImage it onto the
@@ -144,6 +148,9 @@
       // 2. Sample cells
       this._sampleCells();
 
+      // 2.5. Apply persistence (max-blend with decayed previous frame)
+      this._applyPersistence();
+
       // 3. Render stripes into ImageData → stripeCanvas
       this._renderStripes();
       this.stripeCtx.putImageData(this.stripeImageData, 0, 0);
@@ -205,6 +212,26 @@
           this.cellsB[ci] = px[pi + 2];
         }
       }
+    }
+
+    _applyPersistence() {
+      const p = this.opts.persistence;
+      const n = this.cellsR.length;
+      for (let i = 0; i < n; i++) {
+        // Max-blend new frame with decayed previous frame.
+        // Where new > prev*decay, the new frame wins (fresh phosphor).
+        // Where new < prev*decay, the previous frame's decay shows through.
+        const decayedR = this.prevR[i] * p;
+        const decayedG = this.prevG[i] * p;
+        const decayedB = this.prevB[i] * p;
+        if (decayedR > this.cellsR[i]) this.cellsR[i] = decayedR;
+        if (decayedG > this.cellsG[i]) this.cellsG[i] = decayedG;
+        if (decayedB > this.cellsB[i]) this.cellsB[i] = decayedB;
+      }
+      // Store for next frame
+      this.prevR.set(this.cellsR);
+      this.prevG.set(this.cellsG);
+      this.prevB.set(this.cellsB);
     }
 
     _renderStripes() {
