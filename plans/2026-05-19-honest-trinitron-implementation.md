@@ -175,7 +175,8 @@ In `docs/index.html`, just before the closing `</body>` tag, add:
 In `docs/index.html`, locate the inline `<style>` block. Find the `.stack` rule (around line 86) and add canvas + activation rules **immediately after** the `.stack` block. Insert this CSS:
 
 ```css
-  /* Trinitron canvas overlay — dark mode only, sits below the .mark SVG */
+  /* Trinitron canvas overlay — dark mode only, sits below the .mark SVG.
+     Default display: none; only the two dark-mode paths reveal it. */
   .trinitron {
     position: absolute;
     /* Center over the SVG mark, which is 168×168. The canvas is 240×240
@@ -185,28 +186,21 @@ In `docs/index.html`, locate the inline `<style>` block. Find the `.stack` rule 
     height: 240px;
     pointer-events: none;
     z-index: 0;
-    /* Hide by default — only the canvas-active dark-mode paths reveal it. */
     display: none;
   }
-  .stack { position: relative; }
   .stack .mark { position: relative; z-index: 1; }
 
-  /* Show canvas + hide the SVG layers it replaces — when JS has confirmed
-     the renderer is active AND we're in a dark-mode path. */
-  :root.trinitron-active[data-theme="dark"] .trinitron,
-  :root.trinitron-active .trinitron { /* light + OS-dark guard added next rule */
-    display: block;
-  }
-  :root.trinitron-active[data-theme="light"] .trinitron { display: none; }
+  /* Canonical triple-activation pattern (see CLAUDE.md): explicit dark
+     OR (OS-dark AND not pinned-to-light). No light-mode rule needed —
+     display: none is the default. */
+  :root.trinitron-active[data-theme="dark"] .trinitron { display: block; }
   @media (prefers-color-scheme: dark) {
     :root.trinitron-active:not([data-theme="light"]) .trinitron { display: block; }
   }
-  @media (prefers-color-scheme: light) {
-    :root.trinitron-active:not([data-theme="dark"]) .trinitron { display: none; }
-  }
 
-  /* When canvas is active in dark mode, hide the SVG layers the canvas
-     replaces. Keep scanlines/wires/glass/hotspots (they overlay the canvas). */
+  /* When canvas is active in a dark-mode path, hide the SVG layers the
+     canvas replaces. Keep scanlines/wires/glass/hotspots (they overlay
+     the canvas). Same triple-activation pattern. */
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .bleed,
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .phosphors {
     display: none;
