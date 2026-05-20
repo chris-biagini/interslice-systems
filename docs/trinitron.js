@@ -16,6 +16,9 @@
         convergence: { r: [-0.5, -0.5], g: [0.0, 0.0], b: [0.5, 0.5] },
         convergenceDriftAmplitudePx: 1.0,
         convergenceDriftPeriodSec: 60,
+        hotspot: 0.15,
+        shimmer: 0.04,
+        shimmerSeed: 1983,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -53,6 +56,20 @@
       this.prevR = new Float32Array(cellCount);
       this.prevG = new Float32Array(cellCount);
       this.prevB = new Float32Array(cellCount);
+
+      // Shimmer: stable per-cell brightness noise (computed once, never animated).
+      // Derived from a small LCG seeded by shimmerSeed so the pattern is
+      // deterministic across reloads.
+      this.shimmerNoise = new Float32Array(cellCount);
+      let lcg = (this.opts.shimmerSeed || 1983) >>> 0;
+      const lcgNext = () => {
+        lcg = (Math.imul(lcg, 1664525) + 1013904223) >>> 0;
+        return lcg / 0xFFFFFFFF;  // 0..1
+      };
+      for (let i = 0; i < cellCount; i++) {
+        // Centered noise: -1..+1, then scaled by shimmer amplitude in the render step
+        this.shimmerNoise[i] = (lcgNext() * 2 - 1);
+      }
 
       // Stripe ImageData (source-region-sized) + an intermediate canvas. We
       // putImageData onto the intermediate canvas, then drawImage it onto the
@@ -279,17 +296,28 @@
           const subX = px - cxBase * cs;
           const oi = (py * vw + px) * 4;
 
+          // F4 hotspot: cell-center pixel is brighter. Cell center is
+          // (cs/2 | 0, cs/2 | 0) within the cell; "in the row of the center"
+          // gets a small boost; "the exact center pixel" gets the full boost.
+          const cellCenter = cs >> 1;
+          const subDist = Math.abs(subX - cellCenter) + Math.abs(subY - cellCenter);
+          const hotMod = 1 + this.opts.hotspot * Math.max(0, 1 - subDist);
+
+          // S2 shimmer: per-cell stable noise scaled by shimmer amplitude
+          const ci = cyBase * cw + cxBase;
+          const shimMod = 1 + this.opts.shimmer * this.shimmerNoise[ci];
+
+          const totalMod = scanDim * hotMod * shimMod;
+
           let r = 0, g = 0, b = 0;
           if (subX === 0) r = sampleCell(this.cellsR, px, py, rdx, rdy);
           else if (subX === 1) g = sampleCell(this.cellsG, px, py, gdx, gdy);
           else b = sampleCell(this.cellsB, px, py, bdx, bdy);
 
-          out[oi]     = r * scanDim;
-          out[oi + 1] = g * scanDim;
-          out[oi + 2] = b * scanDim;
-          // Conditional alpha — see Task 3 commentary. Dark pixels need
-          // alpha=0 so the bleed shows through; lit pixels need alpha=255
-          // so the sharp stripe overrides the soft bleed.
+          out[oi]     = Math.min(255, r * totalMod);
+          out[oi + 1] = Math.min(255, g * totalMod);
+          out[oi + 2] = Math.min(255, b * totalMod);
+          // Conditional alpha — keep the bleed-show-through behavior from Task 3.
           out[oi + 3] = (r + g + b > 0) ? 255 : 0;
         }
       }
