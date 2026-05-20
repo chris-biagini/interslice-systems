@@ -1229,6 +1229,15 @@
         // Sub-pixel blur softens LCD-sharp pixel edges into lit-phosphor
         // dots through curved glass.
         phosphorBlurPx: 0.3,
+        // Electron-beam spread — isotropic Gaussian blur applied to the
+        // convergence canvases (source pixels). A real Trinitron's spot
+        // has fuzzy edges, so stripe ends and curved silhouettes soften
+        // into adjacent scan lines rather than terminating razor-sharp
+        // mid-phosphor like an LCD. The browser's canvas filter blur
+        // no-ops below ~0.7px, so 0.8 is the smallest value that
+        // visibly takes effect; it softens edges while leaving the
+        // R/G/B stripe triad clearly resolved.
+        beamSpreadPx: 0.8,
         persistence: 0.85,
         hotspot: 0.30,
       });

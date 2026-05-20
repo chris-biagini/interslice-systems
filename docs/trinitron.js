@@ -30,6 +30,18 @@
         // canvas onto the main canvas. Softens the LCD-like sharp pixel
         // edges into something more "lit phosphor through glass."
         phosphorBlurPx: 0.0,
+        // Electron-beam spread, applied as an isotropic Gaussian blur on
+        // the convergence canvases before sampling. A real Trinitron beam
+        // has a fuzzy spot that spreads each scan line into adjacent ones;
+        // without this, abrupt features (the bottom of an arm, the cap of
+        // a curved edge) terminate razor-sharp mid-phosphor like an LCD.
+        // Source has no stripe structure (those are synthesized in the
+        // renderer), so the blur only softens object edges.
+        //
+        // Units are source pixels (the convergence canvases are 1:1 with
+        // viewSize). 0 = digital sharp. Note: Chromium's canvas filter
+        // blur no-ops below ~0.7px, so values under that have no effect.
+        beamSpreadPx: 0.0,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -75,12 +87,17 @@
       // also softens the per-column sampler's hard-edge zeroes: the
       // bilinear AA at the shifted edge gives the columns that used to
       // read alpha=0 a small contribution.
+      const beamSpread = this.opts.beamSpreadPx;
       const makeConvCanvas = () => {
         const c = document.createElement('canvas');
         c.width = vw; c.height = vh;
         const cctx = c.getContext('2d', { willReadFrequently: true });
         cctx.imageSmoothingEnabled = true;
         cctx.imageSmoothingQuality = 'high';
+        // Filter is set once and persists across drawImage calls — composes
+        // with the bilinear sub-pixel resample so we get convergence shift
+        // AND beam spread in a single source-canvas draw per channel.
+        if (beamSpread > 0) cctx.filter = `blur(${beamSpread}px)`;
         return { canvas: c, ctx: cctx };
       };
       this._convR = makeConvCanvas();
