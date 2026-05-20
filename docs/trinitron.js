@@ -296,9 +296,12 @@
           const subX = px - cxBase * cs;
           const oi = (py * vw + px) * 4;
 
-          // F4 hotspot: cell-center pixel is brighter. Cell center is
-          // (cs/2 | 0, cs/2 | 0) within the cell; "in the row of the center"
-          // gets a small boost; "the exact center pixel" gets the full boost.
+          // F4 hotspot: the exact center pixel of each 3×3 cell gets a
+          // brightness boost; every other pixel gets none. Manhattan
+          // distance from (cellCenter, cellCenter) with max(0, 1 - d)
+          // collapses to "1 at the center, 0 elsewhere" for cs=3 —
+          // matches a Trinitron aperture-grille mask hole (bright dot in
+          // the middle, dark at the edges).
           const cellCenter = cs >> 1;
           const subDist = Math.abs(subX - cellCenter) + Math.abs(subY - cellCenter);
           const hotMod = 1 + this.opts.hotspot * Math.max(0, 1 - subDist);
