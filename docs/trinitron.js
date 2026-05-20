@@ -13,6 +13,9 @@
         silhouettePath: null,
         persistence: 0.85,
         perChannelDecay: { r: 1.00, g: 0.94, b: 1.04 },
+        convergence: { r: [-0.5, -0.5], g: [0.0, 0.0], b: [0.5, 0.5] },
+        convergenceDriftAmplitudePx: 1.0,
+        convergenceDriftPeriodSec: 60,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -153,7 +156,7 @@
       this._applyPersistence();
 
       // 3. Render stripes into ImageData → stripeCanvas
-      this._renderStripes();
+      this._renderStripes(timeMs);
       this.stripeCtx.putImageData(this.stripeImageData, 0, 0);
 
       // 4. Render bleed into the three per-channel canvases
@@ -236,44 +239,57 @@
       this.prevB.set(this.cellsB);
     }
 
-    _renderStripes() {
+    _renderStripes(timeMs) {
       const [vw, vh] = this.opts.viewSize;
       const cs = this.opts.cellSize;
       const cw = this.cellGridW;
       const ch = this.cellGridH;
       const out = this.stripeImageData.data;
-
-      // Scanline dim factor for the "off" row of each cell. Cell rows 0..cs-2
-      // are "lit" (factor 1.0); row cs-1 is "dim" (factor 0.7) — that's the
-      // single dim band per cell-row, equivalent to the existing SVG scanline
-      // pattern's 1-of-3 dim rows.
       const SCAN_DIM_FACTOR = 0.7;
 
+      // Convergence offsets in source-pixel units. Static base offsets per
+      // channel, plus a slow sinusoidal drift.
+      const driftAmp = this.opts.convergenceDriftAmplitudePx;
+      const driftPhase = (timeMs / 1000) / this.opts.convergenceDriftPeriodSec;
+      const drift = driftAmp * Math.sin(2 * Math.PI * driftPhase);
+      const c = this.opts.convergence;
+      const rdx = c.r[0] + drift;
+      const rdy = c.r[1] + drift * 0.6;
+      const gdx = c.g[0];
+      const gdy = c.g[1];
+      const bdx = c.b[0] - drift;
+      const bdy = c.b[1] - drift * 0.6;
+
+      const sampleCell = (cells, px, py, dx, dy) => {
+        const cx = ((px + dx) / cs) | 0;
+        const cy = ((py + dy) / cs) | 0;
+        if (cx < 0 || cx >= cw || cy < 0 || cy >= ch) return 0;
+        return cells[cy * cw + cx];
+      };
+
       for (let py = 0; py < vh; py++) {
-        const cy = (py / cs) | 0;
-        if (cy >= ch) continue;
-        const subY = py - cy * cs;
+        const cyBase = (py / cs) | 0;
+        if (cyBase >= ch) continue;
+        const subY = py - cyBase * cs;
         const scanDim = (subY === cs - 1) ? SCAN_DIM_FACTOR : 1.0;
 
         for (let px = 0; px < vw; px++) {
-          const cx = (px / cs) | 0;
-          if (cx >= cw) continue;
-          const subX = px - cx * cs;
-          const ci = cy * cw + cx;
+          const cxBase = (px / cs) | 0;
+          if (cxBase >= cw) continue;
+          const subX = px - cxBase * cs;
           const oi = (py * vw + px) * 4;
 
-          // Stripe assignment by sub-column: 0→R, 1→G, 2→B
           let r = 0, g = 0, b = 0;
-          if (subX === 0) r = this.cellsR[ci];
-          else if (subX === 1) g = this.cellsG[ci];
-          else b = this.cellsB[ci];
+          if (subX === 0) r = sampleCell(this.cellsR, px, py, rdx, rdy);
+          else if (subX === 1) g = sampleCell(this.cellsG, px, py, gdx, gdy);
+          else b = sampleCell(this.cellsB, px, py, bdx, bdy);
 
           out[oi]     = r * scanDim;
           out[oi + 1] = g * scanDim;
           out[oi + 2] = b * scanDim;
-          // Alpha=0 in dark areas so the bleed shows through. Alpha=255 in
-          // lit areas so the sharp stripe color overrides the soft bleed
-          // beneath it.
+          // Conditional alpha — see Task 3 commentary. Dark pixels need
+          // alpha=0 so the bleed shows through; lit pixels need alpha=255
+          // so the sharp stripe overrides the soft bleed.
           out[oi + 3] = (r + g + b > 0) ? 255 : 0;
         }
       }
