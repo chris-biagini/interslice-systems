@@ -1187,9 +1187,12 @@
       return; // Fall back to SVG implementation
     }
 
-    // Base bitmap — arms + rotating hub. Used as the bleed source directly,
-    // and as the substrate that signal() composites the Aqua gloss on top of.
-    function paintBase(ctx, timeMs) {
+    // Display signal — colored phosphor logo (arms + rotating hub) with
+    // the Aqua gloss composited on top via source-atop. This is the one
+    // bitmap the Trinitron renders; the halo derives from the same
+    // bitmap, gloss included, because a real CRT can't selectively leak
+    // some pixels and not others.
+    function signal(ctx, timeMs) {
       ctx.drawImage(armsImg, 0, 0, 200, 200);
       ctx.save();
       ctx.translate(100, 100);
@@ -1197,14 +1200,6 @@
       ctx.translate(-100, -100);
       ctx.drawImage(hubImg, 0, 0, 200, 200);
       ctx.restore();
-    }
-
-    // Display signal — base phosphor with the Aqua gloss baked on top,
-    // clipped to the painted silhouette via source-atop. This is the
-    // bitmap the Trinitron renders. The halo derives from paintBase
-    // alone so the specular highlights don't bias the leak upward.
-    function signal(ctx, timeMs) {
-      paintBase(ctx, timeMs);
       ctx.save();
       ctx.globalCompositeOperation = 'source-atop';
       ctx.drawImage(aquaImg, 0, 0, 200, 200);
@@ -1215,7 +1210,6 @@
     try {
       trinitron = new window.Trinitron(canvas, {
         signal,
-        bleedSignal: paintBase,
         // canvasSize − viewSize / 2 = 40-unit halo margin per side, ample
         // room for bleedRadius=13's ~39-unit visible extent.
         canvasSize: [280, 280],

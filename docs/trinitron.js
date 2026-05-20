@@ -11,11 +11,6 @@
         cellSize: 3,
         bleedRadius: 30,
         bleedIntensity: 1.0,
-        // Optional separate signal source for the bleed/halo. If provided,
-        // the bleed reflects this canvas's content instead of the displayed
-        // signal — useful when the displayed image has effects you *don't*
-        // want appearing in the halo (e.g., specular highlights).
-        bleedSignal: null,
         persistence: 0.85,
         perChannelDecay: { r: 1.00, g: 0.94, b: 1.04 },
         convergence: { r: [-0.5, -0.5], g: [0.0, 0.0], b: [0.5, 0.5] },
@@ -98,27 +93,16 @@
       this.stripeCanvas.height = vh;
       this.stripeCtx = this.stripeCanvas.getContext('2d');
 
-      // Bleed source canvas — the caller's bleedSignal callback (if any)
-      // paints into this each frame; otherwise we bleed from the signal
-      // canvas directly.
-      this.bleedSignalCanvas = document.createElement('canvas');
-      this.bleedSignalCanvas.width = vw;
-      this.bleedSignalCanvas.height = vh;
-      this.bleedSignalCtx = this.bleedSignalCanvas.getContext('2d');
-      this.bleedSignalCtx.imageSmoothingEnabled = false;
-
-      // Bleed canvas — the blurred bleed source, sized to the full canvas
-      // so the blur kernel's extent has room to bloom outward past the
-      // signal's viewSize.
+      // Bleed canvas — the blurred displayed signal, sized to the full
+      // canvas so the blur kernel's extent has room to bloom outward past
+      // the signal's viewSize.
       this.bleedCanvas = document.createElement('canvas');
       this.bleedCanvas.width = cw;
       this.bleedCanvas.height = ch;
       this.bleedCtx = this.bleedCanvas.getContext('2d');
 
-      // The bleed canvas's filter is fixed for the renderer's lifetime
-      // (bleedRadius and bleedIntensity are constructor-only options), so
-      // set it once instead of toggling per frame.
-      this.bleedSource = this.opts.bleedSignal ? this.bleedSignalCanvas : this.signalCanvas;
+      // bleedRadius and bleedIntensity are constructor-only, so set the
+      // filter once instead of toggling per frame.
       const bi = this.opts.bleedIntensity;
       this.bleedCtx.filter =
         `blur(${this.opts.bleedRadius}px)` +
@@ -172,16 +156,11 @@
       const [vw, vh] = this.opts.viewSize;
       const [cw, ch] = this.opts.canvasSize;
 
-      // 1. Caller paints the displayed signal, plus (optionally) a separate
-      //    bleed source. The split lets the halo derive from a cleaner
-      //    bitmap than the display when the displayed image carries effects
-      //    the caller doesn't want in the leak.
+      // 1. Caller paints the displayed signal. The halo and the stripes
+      //    both derive from this one bitmap — a real CRT can't selectively
+      //    leak some pixels and not others.
       this.signalCtx.clearRect(0, 0, vw, vh);
       this.opts.signal(this.signalCtx, timeMs);
-      if (this.opts.bleedSignal) {
-        this.bleedSignalCtx.clearRect(0, 0, vw, vh);
-        this.opts.bleedSignal(this.bleedSignalCtx, timeMs);
-      }
 
       // 2. Sample cells, decay against last frame, then modulate.
       this._sampleCells();
@@ -390,7 +369,7 @@
       // tail will clip at the canvas edge.
       const [cw, ch] = this.opts.canvasSize;
       this.bleedCtx.clearRect(0, 0, cw, ch);
-      this.bleedCtx.drawImage(this.bleedSource, this.bleedMargin, this.bleedMargin);
+      this.bleedCtx.drawImage(this.signalCanvas, this.bleedMargin, this.bleedMargin);
     }
   }
 
