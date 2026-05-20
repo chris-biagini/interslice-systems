@@ -12,6 +12,7 @@
         bleedRadius: 30,
         silhouettePath: null,
         persistence: 0.85,
+        perChannelDecay: { r: 1.00, g: 0.94, b: 1.04 },
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -216,19 +217,20 @@
 
     _applyPersistence() {
       const p = this.opts.persistence;
+      const d = this.opts.perChannelDecay;
+      // Clamp at 0.99 to prevent runaway accumulation
+      const dr = Math.min(0.99, p * d.r);
+      const dg = Math.min(0.99, p * d.g);
+      const db = Math.min(0.99, p * d.b);
       const n = this.cellsR.length;
       for (let i = 0; i < n; i++) {
-        // Max-blend new frame with decayed previous frame.
-        // Where new > prev*decay, the new frame wins (fresh phosphor).
-        // Where new < prev*decay, the previous frame's decay shows through.
-        const decayedR = this.prevR[i] * p;
-        const decayedG = this.prevG[i] * p;
-        const decayedB = this.prevB[i] * p;
+        const decayedR = this.prevR[i] * dr;
+        const decayedG = this.prevG[i] * dg;
+        const decayedB = this.prevB[i] * db;
         if (decayedR > this.cellsR[i]) this.cellsR[i] = decayedR;
         if (decayedG > this.cellsG[i]) this.cellsG[i] = decayedG;
         if (decayedB > this.cellsB[i]) this.cellsB[i] = decayedB;
       }
-      // Store for next frame
       this.prevR.set(this.cellsR);
       this.prevG.set(this.cellsG);
       this.prevB.set(this.cellsB);
