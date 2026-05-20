@@ -35,8 +35,8 @@
 
       // Cell grid — one cell per cellSize × cellSize source-pixel block
       const cs = this.opts.cellSize;
-      this.cellGridW = Math.floor(vw / cs);  // 67 for default
-      this.cellGridH = Math.floor(vh / cs);  // 67 for default
+      this.cellGridW = Math.floor(vw / cs);  // 66 for default (floor(200/3))
+      this.cellGridH = Math.floor(vh / cs);  // 66 for default (floor(200/3))
       const cellCount = this.cellGridW * this.cellGridH;
       this.cellsR = new Float32Array(cellCount);
       this.cellsG = new Float32Array(cellCount);
