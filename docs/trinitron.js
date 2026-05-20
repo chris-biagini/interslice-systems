@@ -462,7 +462,13 @@
         // Smoothing ON for the upscale — that's the "blur from blocks" base.
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.filter = `blur(${Math.round(this.bleedRadius * 0.7)}px)`;
+        // bleedRadius is the blur stdDev directly. Visible extent of a
+        // Gaussian blur is ~3*stdDev, so a value of 13 reaches ~39 logical
+        // units past the silhouette — matches the SVG #phosphor-bleed
+        // filter's far blur. Don't set it larger than the canvas margin
+        // (canvasSize - viewSize)/2 or the blur tail will get clipped at
+        // the canvas edge and the halo will look uneven.
+        ctx.filter = `blur(${this.bleedRadius}px)`;
         ctx.drawImage(this.bleedPaintTmp, margin, margin, vw, vh);
         ctx.filter = 'none';
       };

@@ -1292,11 +1292,17 @@
         // a beefier blur radius to match what the SVG #phosphor-bleed
         // filter does in the no-JS fallback.
         canvasSize: [280, 280],
-        bleedRadius: 45,
-        // Bleed multiplier — tuned to give a halo comparable to the SVG
-        // fallback's #phosphor-bleed filter without the red arm's
-        // disproportionate horizontal-strip glow overpowering everything.
-        bleedIntensity: 1.5,
+        // bleedRadius IS the blur stdDev directly. SVG #phosphor-bleed
+        // uses stdDeviation=13 — matching that here keeps the halo tight
+        // and "faithful to the nearest cell" rather than smearing out.
+        // The previous value (45) gave a 96-unit visible extent that
+        // overran the 40-unit canvas margin, clipping the tail and
+        // making the red arm's vertical bleed read as oddly elongated.
+        bleedRadius: 13,
+        // Bleed brightness multiplier — matches the SVG's feFuncA slope
+        // of 1.3 on the far halo, slightly brightening the per-channel
+        // composite without overpowering the colored phosphor.
+        bleedIntensity: 1.3,
         // Tame the convergence stutter — drift was reading as page jitter
         // rather than as authentic CRT misalignment. Keep a hair of static
         // offset so close inspection still shows R/B fringing.
