@@ -481,7 +481,7 @@ EOF
 **Files:**
 - Modify: `docs/trinitron.js`
 
-This task adds the core "honest Trinitron" behavior: downsample the source signal to a 67×67 cell grid (nearest-neighbor — no smoothing), then for each output pixel, light the R, G, or B stripe of its enclosing cell at the cell's sampled channel intensity. Mid-cell color transitions now snap to cell boundaries.
+This task adds the core "honest Trinitron" behavior: downsample the source signal to a 66×66 cell grid (nearest-neighbor — no smoothing), then for each output pixel, light the R, G, or B stripe of its enclosing cell at the cell's sampled channel intensity. Mid-cell color transitions now snap to cell boundaries.
 
 ### Steps
 
@@ -492,8 +492,8 @@ In `docs/trinitron.js`, locate the constructor. After the `signalCanvas` setup a
 ```js
       // Cell grid — one cell per cellSize × cellSize source-pixel block
       const cs = this.opts.cellSize;
-      this.cellGridW = Math.floor(vw / cs);  // 67 for default
-      this.cellGridH = Math.floor(vh / cs);  // 67 for default
+      this.cellGridW = Math.floor(vw / cs);  // 66 for default (floor(200/3))
+      this.cellGridH = Math.floor(vh / cs);  // 66 for default (floor(200/3))
       const cellCount = this.cellGridW * this.cellGridH;
       this.cellsR = new Float32Array(cellCount);
       this.cellsG = new Float32Array(cellCount);
@@ -689,7 +689,7 @@ git add docs/trinitron.js docs/index.html
 git commit -m "$(cat <<'EOF'
 F1: honest per-cell sampling + RGB stripe rendering
 
-Replace the stripe-mask cheat with nearest-neighbor downsample to a 67x67
+Replace the stripe-mask cheat with nearest-neighbor downsample to a 66x66
 cell grid, then per-output-pixel RGB stripe assignment. Mid-cell color
 transitions snap to cell boundaries the way a real Trinitron phosphor
 stripe does — it can only be uniformly lit at any moment.
