@@ -1029,35 +1029,9 @@
                  is active because the canvas bakes scanlines into the stripe render. -->
             <rect class="svg-scanlines" x="0" y="0" width="200" height="200" fill="url(#scanlines)"/>
 
-            <!-- 2d. Trinitron damping wires — barely-there horizontal
-                 stabilizer shadows, the Trinitron tell. Both wires are
-                 hijacked to play creative roles against the logo:
-                   - upper wire (y=52): tangent to the south edge of the
-                     red distal node, so it cuts the red arm's stem off
-                     from its ball and the silhouette reparses as a
-                     lowercase "i".
-                   - lower wire (y=136): passes exactly through the
-                     centers of the green and blue distal nodes,
-                     bisecting them across their equator.
-                 Each wire is now 3 layers, painted back-to-front:
-                   1. faint cyan diffraction halo (stroke-width 3) — what
-                      you'd photograph blooming off a real damping wire
-                      lit by the phosphor behind it
-                   2. the dim wire itself (stroke-width 1, opacity 0.62)
-                   3. a sub-pixel-thin bright specular core (stroke-width
-                      0.4, opacity 0.5) — the highlight where direct
-                      light catches the wire's leading edge
-                 Stroke width 1 ≈ ~0.85px at 168px display. -->
-            <g class="damping-wire">
-              <line x1="0" y1="52"  x2="200" y2="52"  stroke="#5EE2FF" stroke-width="3"   opacity="0.18"/>
-              <line x1="0" y1="52"  x2="200" y2="52"  stroke="#000000" stroke-width="1"   opacity="0.62"/>
-              <line x1="0" y1="52"  x2="200" y2="52"  stroke="#FFFFFF" stroke-width="0.4" opacity="0.5"/>
-            </g>
-            <g class="damping-wire">
-              <line x1="0" y1="136" x2="200" y2="136" stroke="#5EE2FF" stroke-width="3"   opacity="0.18"/>
-              <line x1="0" y1="136" x2="200" y2="136" stroke="#000000" stroke-width="1"   opacity="0.62"/>
-              <line x1="0" y1="136" x2="200" y2="136" stroke="#FFFFFF" stroke-width="0.4" opacity="0.5"/>
-            </g>
+            <!-- 2d. Trinitron damping wires removed — they were authentic
+                 to the tube but added visual noise the bubble doesn't need.
+                 -->
 
             <!-- 2e. glass front gloss — primary highlight near the top,
                  fainter secondary lower down. Hidden when canvas is active
@@ -1311,10 +1285,11 @@
         // overran the 40-unit canvas margin, clipping the tail and
         // making the red arm's vertical bleed read as oddly elongated.
         bleedRadius: 13,
-        // Bleed brightness multiplier — matches the SVG's feFuncA slope
-        // of 1.3 on the far halo, slightly brightening the per-channel
-        // composite without overpowering the colored phosphor.
-        bleedIntensity: 1.3,
+        // Bleed brightness multiplier. 1.625 = +25% over the prior 1.3
+        // baseline (which matched the SVG fallback's feFuncA slope). Goes
+        // through canvas filter brightness(), so saturated cell pixels
+        // clamp at 255 cleanly.
+        bleedIntensity: 1.625,
         // Tame the convergence stutter — drift was reading as page jitter
         // rather than as authentic CRT misalignment. Keep a hair of static
         // offset so close inspection still shows R/B fringing.
