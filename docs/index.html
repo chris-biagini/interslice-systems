@@ -1168,33 +1168,62 @@
   // render, persistence, halo, scan-band, etc. The gradient mirrors the
   // SVG #crt-glass def verbatim (top-bright primary band + faint
   // secondary lower down).
-  // Aqua gloss baked into the signal — top-to-bottom highlight on the
-  // "displayed image." Matches the SVG-fallback #crt-glass gradient so
-  // the Trinitron is showing the same Aqua-style logo whether the canvas
-  // is active or not.
-  const GLOSS_MARKUP = `
+  // Aqua-button treatment for the displayed image. Three layered effects
+  // per lobe (the three pinwheel-tip balls and the central hub disc):
+  //
+  //   1. Inner glow — a soft hazy rim that brightens just inside each
+  //      lobe's edge, fading to transparent toward the center. Makes each
+  //      bubble look like a *translucent gel*, not a flat colored disc.
+  //
+  //   2. Top specular shine — a dome-shaped white highlight in the upper
+  //      portion of each lobe. The bright reflection of an overhead light
+  //      source on a glossy gel surface. This is the crisp shine.
+  //
+  //   3. Bottom wet-bead reflection — a thin faint highlight hugging the
+  //      bottom of each lobe. The classic Aqua secondary highlight that
+  //      makes the bubble look freshly licked.
+  //
+  // Source-atop in the signal callback clips all of these to wherever the
+  // colored phosphor already painted — i.e., the bubble silhouette. The
+  // straight arms between balls don't get Aqua treatment (they read as
+  // glass tubes connecting the bubbles, not as bubbles themselves).
+  const AQUA_MARKUP = `
     <defs>
-      <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.22"/>
-        <stop offset="14%"  stop-color="#FFFFFF" stop-opacity="0.07"/>
-        <stop offset="32%"  stop-color="#FFFFFF" stop-opacity="0"/>
-        <stop offset="58%"  stop-color="#FFFFFF" stop-opacity="0.05"/>
-        <stop offset="74%"  stop-color="#FFFFFF" stop-opacity="0"/>
+      <linearGradient id="aTop" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.95"/>
+        <stop offset="55%"  stop-color="#FFFFFF" stop-opacity="0.25"/>
         <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
       </linearGradient>
+      <linearGradient id="aBot" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0"/>
+        <stop offset="70%"  stop-color="#FFFFFF" stop-opacity="0"/>
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      </linearGradient>
+      <radialGradient id="aGlow" cx="50%" cy="50%" r="50%">
+        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0"/>
+        <stop offset="60%"  stop-color="#FFFFFF" stop-opacity="0"/>
+        <stop offset="88%"  stop-color="#FFFFFF" stop-opacity="0.12"/>
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.38"/>
+      </radialGradient>
     </defs>
-    <rect x="0" y="0" width="200" height="200" fill="url(#g)"/>`;
 
-  // Beam-dwell hot-spots — the bright concentric shine at the center of
-  // each colored bubble. Previously rendered as an SVG overlay clipped to
-  // the silhouette; now baked into the signal so the shine goes through
-  // cell sampling + stripes + persistence + halo like every other lit
-  // pixel. Positions match the SVG fallback's .hotspots group verbatim.
-  const HOTSPOTS_MARKUP = `
-    <circle cx="100"    cy="28"  r="14" fill="#FFFFFF" opacity="0.55"/>
-    <circle cx="37.65"  cy="136" r="14" fill="#FFFFFF" opacity="0.55"/>
-    <circle cx="162.35" cy="136" r="14" fill="#FFFFFF" opacity="0.55"/>
-    <circle cx="100"    cy="100" r="16" fill="#FFFFFF" opacity="0.30"/>`;
+    <!-- Inner glow per lobe (drawn first, behind specular shines) -->
+    <circle cx="100"    cy="28"  r="24" fill="url(#aGlow)"/>
+    <circle cx="37.65"  cy="136" r="24" fill="url(#aGlow)"/>
+    <circle cx="162.35" cy="136" r="24" fill="url(#aGlow)"/>
+    <circle cx="100"    cy="100" r="34" fill="url(#aGlow)"/>
+
+    <!-- Top specular shine: dome highlight in upper portion of each lobe -->
+    <ellipse cx="100"    cy="21"  rx="17" ry="11" fill="url(#aTop)"/>
+    <ellipse cx="37.65"  cy="129" rx="17" ry="11" fill="url(#aTop)"/>
+    <ellipse cx="162.35" cy="129" rx="17" ry="11" fill="url(#aTop)"/>
+    <ellipse cx="100"    cy="89"  rx="24" ry="15" fill="url(#aTop)"/>
+
+    <!-- Bottom wet-bead reflection: thin highlight at lobe bottom -->
+    <ellipse cx="100"    cy="46"  rx="13" ry="4" fill="url(#aBot)"/>
+    <ellipse cx="37.65"  cy="154" rx="13" ry="4" fill="url(#aBot)"/>
+    <ellipse cx="162.35" cy="154" rx="13" ry="4" fill="url(#aBot)"/>
+    <ellipse cx="100"    cy="125" rx="18" ry="5" fill="url(#aBot)"/>`;
 
   // Rotation: 36 seconds for 360°, reverse direction — matches the SVG's
   // @keyframes hub-spin + .hub-segs animation, which drive the no-JS
@@ -1208,13 +1237,12 @@
     const canvas = document.querySelector('canvas.trinitron');
     if (!canvas || !window.Trinitron) return;
 
-    let armsImg, hubImg, glossImg, hotspotsImg;
+    let armsImg, hubImg, aquaImg;
     try {
-      [armsImg, hubImg, glossImg, hotspotsImg] = await Promise.all([
+      [armsImg, hubImg, aquaImg] = await Promise.all([
         rasterizeFragment(ARMS_MARKUP),
         rasterizeFragment(HUB_MARKUP),
-        rasterizeFragment(GLOSS_MARKUP),
-        rasterizeFragment(HOTSPOTS_MARKUP),
+        rasterizeFragment(AQUA_MARKUP),
       ]);
     } catch (err) {
       return; // Fall back to SVG implementation
@@ -1222,6 +1250,7 @@
 
     function signal(ctx, timeMs) {
       // ctx is a 200×200-coordinate offscreen 2D context.
+      // 1. Base colored phosphor — static arms + rotating hub.
       ctx.drawImage(armsImg, 0, 0, 200, 200);
       ctx.save();
       ctx.translate(100, 100);
@@ -1229,16 +1258,16 @@
       ctx.translate(-100, -100);
       ctx.drawImage(hubImg, 0, 0, 200, 200);
       ctx.restore();
-      // Aqua shine + beam hot-spots — both painted with source-atop so
-      // they only touch pixels the signal has already lit (the bubble's
-      // silhouette). The gloss is a top-down gradient highlight; the hot-
-      // spots are localized bright circles at each ball center / hub
-      // center, simulating where the electron beam dwells longest and
-      // the Aqua-shine specular peaks land on each bubble.
+      // 2. Aqua-button treatment — inner glow + top specular + bottom
+      //    wet-bead reflection, per lobe. source-atop clips to wherever
+      //    the signal is already painted (i.e., the bubble silhouette).
+      //    The hub's Aqua shines stay fixed at the disc's geometric top
+      //    while the petals rotate underneath — different colored petals
+      //    take turns being highlighted as they sweep through the
+      //    highlight zone.
       ctx.save();
       ctx.globalCompositeOperation = 'source-atop';
-      ctx.drawImage(glossImg, 0, 0, 200, 200);
-      ctx.drawImage(hotspotsImg, 0, 0, 200, 200);
+      ctx.drawImage(aquaImg, 0, 0, 200, 200);
       ctx.restore();
     }
 
