@@ -87,31 +87,28 @@
       this._convG = makeConvCanvas();
       this._convB = makeConvCanvas();
 
-      // Cell grid — one cell per cellSize × cellSize source-pixel block
+      // Cell grid — still useful for indexing per-cell shimmer noise (so
+      // the shimmer pattern reads as 3×3 phosphor cells, not per-pixel
+      // static). No longer used for sampling or persistence: rendering is
+      // a single per-output-pixel pass that reads directly from the
+      // per-channel pre-shifted source bitmaps. A real Trinitron aperture
+      // grille is horizontal-only (R/G/B stripe pitch), with continuous
+      // phosphor vertically — so chunking the signal into vertical
+      // 3-pixel cells (as the previous sampler did) wasn't CRT-correct
+      // and was producing visible 3-row "shelves" on every diagonal/curve.
       const cs = this.opts.cellSize;
       this.cellGridW = Math.floor(vw / cs);  // 66 for default (floor(200/3))
       this.cellGridH = Math.floor(vh / cs);  // 66 for default (floor(200/3))
       const cellCount = this.cellGridW * this.cellGridH;
 
-      // Per-column RGB sample buffers. Each cell stores three (R, G, B)
-      // triples — one per stripe column — interleaved as cellsColR[ci*3+ch]
-      // where ch ∈ {0, 1, 2} for R/G/B. The three buffers correspond to
-      // the three stripe columns (subX 0/1/2 in _renderStripes).
-      //
-      // Modeling each column as its own RGB sample is what gives the
-      // aperture grille proper triad behavior at edges: a cell straddling
-      // the rotating hub's perimeter will have three columns with
-      // different alpha-weighted coverage, so the three stripes within
-      // the cell light at different brightnesses. For uniform interior
-      // cells the three buffers end up equal and the coupling formula
-      // in _renderStripes produces a classic Trinitron stripe pattern
-      // with no edge-case branching.
-      this.cellsColR = new Float32Array(cellCount * 3);
-      this.cellsColG = new Float32Array(cellCount * 3);
-      this.cellsColB = new Float32Array(cellCount * 3);
-      this.prevColR  = new Float32Array(cellCount * 3);
-      this.prevColG  = new Float32Array(cellCount * 3);
-      this.prevColB  = new Float32Array(cellCount * 3);
+      // Per-pixel persistence buffers. Snapshot of the previous frame's
+      // smoothed (lerped, pre-modulation) per-channel values, used to
+      // exponential-decay the live signal into the displayed bitmap.
+      // Indexed by linear pixel index = py * vw + px.
+      const pixelCount = vw * vh;
+      this.prevR = new Float32Array(pixelCount);
+      this.prevG = new Float32Array(pixelCount);
+      this.prevB = new Float32Array(pixelCount);
 
       // Shimmer: stable per-cell brightness noise (computed once, never animated).
       // Derived from a small LCG seeded by shimmerSeed so the pattern is
@@ -167,7 +164,7 @@
       if (this._rafHandle != null) return;
       // Zero the persistence trail so a stop/restart (e.g. theme toggle)
       // doesn't leave the last paused frame ghosted into the next session.
-      this.prevColR.fill(0); this.prevColG.fill(0); this.prevColB.fill(0);
+      this.prevR.fill(0); this.prevG.fill(0); this.prevB.fill(0);
       this._startTime = performance.now();
       if (this._reducedMotionMq && this._reducedMotionMq.matches) {
         this._frame(0);
@@ -210,24 +207,23 @@
       this.opts.signal(this.signalCtx, timeMs);
 
       // 2. Bake per-channel convergence offsets into three pre-shifted
-      //    copies of the signal. The sampler reads each channel from its
+      //    copies of the signal. The renderer reads each channel from its
       //    own copy, so convergence operates at source-pixel resolution.
       this._applyConvergence(timeMs);
 
-      // 3. Sample per stripe column, decay against last frame, modulate.
-      this._sample();
-      this._applyPersistence();
-      this._applyCellModulations(timeMs);
-
-      // 4. Render the aperture-grille stripes into ImageData → stripeCanvas.
-      this._renderStripes();
+      // 3. Single per-output-pixel pass: read pre-shifted source, lerp
+      //    against previous frame's smoothed value (persistence), apply
+      //    scan-band, aperture-grille phosphor coupling, hotspot,
+      //    shimmer, and scan-line dim. One loop replaces the earlier
+      //    sample → persistence → modulation → render pipeline.
+      this._renderPixels(timeMs);
       this.stripeCtx.putImageData(this.stripeImageData, 0, 0);
 
-      // 5. Blur the bleed source canvas. The canvas filter blurs per channel,
+      // 4. Blur the bleed source canvas. The canvas filter blurs per channel,
       //    so a single blur produces the correct per-channel additive halo.
       this._renderBleed();
 
-      // 6. Composite: bleed underneath, stripes on top (optionally softened).
+      // 5. Composite: bleed underneath, stripes on top (optionally softened).
       this.ctx.clearRect(0, 0, cw, ch);
       this.ctx.drawImage(this.bleedCanvas, 0, 0);
       const blur = this.opts.phosphorBlurPx;
@@ -267,215 +263,132 @@
       this._convB.ctx.drawImage(this.signalCanvas, -bdx, -bdy);
     }
 
-    _sample() {
-      // For each cell, sample three stripe columns independently. Each
-      // column averages its cs source pixels alpha-weighted and stores a
-      // full (R, G, B) triple. Mirrors a Trinitron's three beams each
-      // aiming through the aperture grille at one stripe position.
-      //
-      // Alpha weighting matters: ImageData is non-premultiplied, so a
-      // half-covered AA fringe pixel reads as (255, 0, 0, 128) for a
-      // half-red edge. Multiplying RGB by alpha/255 makes the column's
-      // contribution proportional to actual coverage, which is what makes
-      // the rotating hub's perimeter render as a smooth coverage gradient
-      // instead of binary-flipping cells as the AA pattern shifts.
+    _renderPixels(timeMs) {
+      // One fused per-output-pixel pass. For each pixel:
+      //   sample (alpha-premultiplied) from each channel's pre-shifted source
+      //   → exponential-decay lerp against previous frame's smoothed value
+      //   → snapshot smoothed into prev[] (BEFORE modulations — live signal
+      //     pulses but trail doesn't)
+      //   → scan-band (cosine sweep), aperture-grille coupling (per subX),
+      //     scan-line dim (last cs-row), hotspot (cell center), shimmer
+      //     (stable per-cell noise)
+      //   → write RGBA into the stripe ImageData.
       const [vw, vh] = this.opts.viewSize;
       const cs = this.opts.cellSize;
       const cw = this.cellGridW;
-      const ch = this.cellGridH;
-      const colR = this.cellsColR;
-      const colG = this.cellsColG;
-      const colB = this.cellsColB;
+      const out = this.stripeImageData.data;
+      const SCAN_DIM_FACTOR = 0.7;
 
-      // Each channel reads from its own pre-shifted source bitmap, so the
-      // convergence offset is a sub-pixel shift baked in upstream of cell
-      // quantization. With matching channels you get identical samples to
-      // the old single-buffer code; with mismatched channels you get a
-      // smooth chromatic fringe at edges.
+      // Pre-shifted source bitmaps, one per channel. Alpha-weighting per
+      // channel matters: ImageData is non-premultiplied, so a half-covered
+      // AA fringe reads as (R, _, _, 128) for a half-red edge — multiplying
+      // by alpha/255 makes contribution proportional to actual coverage,
+      // which keeps the rotating hub's perimeter smooth instead of
+      // staircasing as the AA pattern shifts frame-to-frame.
       const pxR = this._convR.ctx.getImageData(0, 0, vw, vh).data;
       const pxG = this._convG.ctx.getImageData(0, 0, vw, vh).data;
       const pxB = this._convB.ctx.getImageData(0, 0, vw, vh).data;
 
-      for (let cy = 0; cy < ch; cy++) {
-        for (let cx = 0; cx < cw; cx++) {
-          // Nine accumulators: three columns × three channels.
-          let r0r = 0, r0g = 0, r0b = 0;
-          let g0r = 0, g0g = 0, g0b = 0;
-          let b0r = 0, b0g = 0, b0b = 0;
-          for (let dy = 0; dy < cs; dy++) {
-            const sy = cy * cs + dy;
-            const rowBase = sy * vw;
-            // R stripe column (dx=0). Each output channel reads from the
-            // matching per-channel pre-shifted source, with that source's
-            // own alpha weighting (AA fringe in the shifted bitmap is
-            // already at the channel's offset position).
-            let pi = (rowBase + cx * cs) * 4;
-            r0r += pxR[pi]     * (pxR[pi + 3] / 255);
-            r0g += pxG[pi + 1] * (pxG[pi + 3] / 255);
-            r0b += pxB[pi + 2] * (pxB[pi + 3] / 255);
-            // G stripe column (dx=1)
-            pi = (rowBase + cx * cs + 1) * 4;
-            g0r += pxR[pi]     * (pxR[pi + 3] / 255);
-            g0g += pxG[pi + 1] * (pxG[pi + 3] / 255);
-            g0b += pxB[pi + 2] * (pxB[pi + 3] / 255);
-            // B stripe column (dx=2)
-            pi = (rowBase + cx * cs + 2) * 4;
-            b0r += pxR[pi]     * (pxR[pi + 3] / 255);
-            b0g += pxG[pi + 1] * (pxG[pi + 3] / 255);
-            b0b += pxB[pi + 2] * (pxB[pi + 3] / 255);
-          }
-          // Divide by cs (cs source pixels averaged per column), store
-          // interleaved as [R, G, B] per cell in each column buffer.
-          const ci3 = (cy * cw + cx) * 3;
-          const inv = 1 / cs;
-          colR[ci3]     = r0r * inv;
-          colR[ci3 + 1] = r0g * inv;
-          colR[ci3 + 2] = r0b * inv;
-          colG[ci3]     = g0r * inv;
-          colG[ci3 + 1] = g0g * inv;
-          colG[ci3 + 2] = g0b * inv;
-          colB[ci3]     = b0r * inv;
-          colB[ci3 + 1] = b0g * inv;
-          colB[ci3 + 2] = b0b * inv;
-        }
-      }
-    }
-
-    _applyCellModulations(timeMs) {
-      // Scan-band: a cosine envelope sweeps top-to-bottom every
-      // scanBandPeriodSec. Modulates each cell's brightness uniformly (so
-      // the halo derived from these cells also shows the band).
-      // ORDER MATTERS: this runs *after* _applyPersistence has snapshotted
-      // its prev* buffers. If we ran before, the band would smear into the
-      // persistence trail and the sharp top-to-bottom sweep would dissolve
-      // into a lagging vertical gradient. Live signal pulses; trail doesn't.
-      const ch = this.cellGridH;
-      const cw = this.cellGridW;
-      const period = this.opts.scanBandPeriodSec;
-      const strength = this.opts.scanBandStrength;
-      const phase = (timeMs / 1000) / period;
-      const colR = this.cellsColR, colG = this.cellsColG, colB = this.cellsColB;
-
-      for (let cy = 0; cy < ch; cy++) {
-        const mod = 1 + strength * Math.cos(2 * Math.PI * (cy / ch - phase));
-        // Modulate all 9 values per cell (3 columns × 3 channels). The
-        // band is a brightness envelope, so applying it uniformly across
-        // each column's RGB preserves hue while pulsing brightness.
-        for (let cx = 0; cx < cw; cx++) {
-          const i3 = (cy * cw + cx) * 3;
-          colR[i3] *= mod; colR[i3 + 1] *= mod; colR[i3 + 2] *= mod;
-          colG[i3] *= mod; colG[i3 + 1] *= mod; colG[i3 + 2] *= mod;
-          colB[i3] *= mod; colB[i3 + 1] *= mod; colB[i3 + 2] *= mod;
-        }
-      }
-    }
-
-    _applyPersistence() {
-      // Symmetric exponential smoothing: new = prev*decay + live*(1-decay).
-      // Per-channel decay (dr/dg/db) applies to the matching channel within
-      // each cell's three (R, G, B) triples — all three columns share the
-      // same per-channel behavior. Stride-3 inner loop unrolled to keep the
-      // JIT happy.
-      //
-      // First-frame cost: prev is zero on start(), so the image fades in
-      // over ~1/(1-dr) frames (≈7 frames at dr=0.85, ~110ms).
+      // Persistence: per-channel exponential decay. First-frame cost: prev
+      // is zero on start(), so the image fades in over ~1/(1-dr) frames
+      // (≈7 frames at dr=0.85, ~110ms at 60 Hz).
       const p = this.opts.persistence;
       const d = this.opts.perChannelDecay;
       const dr = Math.min(0.99, p * d.r);
       const dg = Math.min(0.99, p * d.g);
       const db = Math.min(0.99, p * d.b);
       const ar = 1 - dr, ag = 1 - dg, ab = 1 - db;
-      const colR = this.cellsColR, colG = this.cellsColG, colB = this.cellsColB;
-      const prR = this.prevColR, prG = this.prevColG, prB = this.prevColB;
-      const n = colR.length;
-      for (let i = 0; i < n; i += 3) {
-        colR[i]     = prR[i]     * dr + colR[i]     * ar;
-        colR[i + 1] = prR[i + 1] * dg + colR[i + 1] * ag;
-        colR[i + 2] = prR[i + 2] * db + colR[i + 2] * ab;
-        colG[i]     = prG[i]     * dr + colG[i]     * ar;
-        colG[i + 1] = prG[i + 1] * dg + colG[i + 1] * ag;
-        colG[i + 2] = prG[i + 2] * db + colG[i + 2] * ab;
-        colB[i]     = prB[i]     * dr + colB[i]     * ar;
-        colB[i + 1] = prB[i + 1] * dg + colB[i + 1] * ag;
-        colB[i + 2] = prB[i + 2] * db + colB[i + 2] * ab;
-      }
-      prR.set(colR);
-      prG.set(colG);
-      prB.set(colB);
-    }
+      const prR = this.prevR, prG = this.prevG, prB = this.prevB;
 
-    _renderStripes() {
-      const [vw, vh] = this.opts.viewSize;
-      const cs = this.opts.cellSize;
-      const cw = this.cellGridW;
-      const ch = this.cellGridH;
-      const out = this.stripeImageData.data;
-      const SCAN_DIM_FACTOR = 0.7;
+      // Scan-band: cosine envelope sweeping top-to-bottom every
+      // scanBandPeriodSec. Per-row (not per-pixel) — same phase across
+      // all pixels in a given y. Applied AFTER persistence snapshot so the
+      // band doesn't smear into the trail (live signal pulses; trail doesn't).
+      const sbStrength = this.opts.scanBandStrength;
+      const sbPhase = (timeMs / 1000) / this.opts.scanBandPeriodSec;
 
-      // Hoist hot-loop reads out of the 40k-iter inner body.
+      // Hot-loop constants.
       const hotspot = this.opts.hotspot;
       const shimmer = this.opts.shimmer;
-      // Coupling spills each stripe-column's per-channel sample into
-      // adjacent stripes. For uniform interior cells the three column
-      // buffers are equal, so the output reads as a classic stripe-modulated
-      // hue. At edges the column buffers diverge and each stripe ends up
-      // with its own brightness — the aperture-grille triad behavior.
+      // Phosphor coupling — imperfect aperture-grille masking lets each
+      // stripe column leak a fraction `k` of the neighboring stripes'
+      // channels. For uniform interior pixels this just brightens the
+      // stripe-modulated hue; at edges where the per-channel pre-shift
+      // produces different alpha-weighted values, the three stripes within
+      // a cell end up at different brightnesses — the aperture-grille
+      // triad behavior, now operating at source-pixel resolution rather
+      // than 3-pixel cell resolution.
       const k = this.opts.phosphorCoupling;
-      const colR = this.cellsColR, colG = this.cellsColG, colB = this.cellsColB;
       const shim = this.shimmerNoise;
       const cellCenter = cs >> 1;
       const invCs = 1 / cs;
 
+      let pi = 0, pix = 0;
       for (let py = 0; py < vh; py++) {
         const cyBase = (py * invCs) | 0;
-        if (cyBase >= ch) continue;
         const subY = py - cyBase * cs;
+        // Scan-line dim: bottom row of each cs-row cell reads as a darker
+        // gap, the visible aperture-grille shadow between phosphor cells.
         const scanDim = (subY === cs - 1) ? SCAN_DIM_FACTOR : 1.0;
-        const distY = subY - cellCenter; const aDistY = distY < 0 ? -distY : distY;
+        const distY = subY - cellCenter;
+        const aDistY = distY < 0 ? -distY : distY;
+        const scanBand = 1 + sbStrength * Math.cos(2 * Math.PI * (py / vh - sbPhase));
         const rowBase = cyBase * cw;
 
         for (let px = 0; px < vw; px++) {
           const cxBase = (px * invCs) | 0;
-          if (cxBase >= cw) continue;
           const subX = px - cxBase * cs;
-          const oi = (py * vw + px) * 4;
 
-          // F4 hotspot — boost the cs×cs cell's exact center pixel; for
+          // Sample alpha-premultiplied per-channel.
+          const sR_raw = pxR[pi]     * (pxR[pi + 3] / 255);
+          const sG_raw = pxG[pi + 1] * (pxG[pi + 3] / 255);
+          const sB_raw = pxB[pi + 2] * (pxB[pi + 3] / 255);
+
+          // Persistence lerp + snapshot (snapshot before any modulation).
+          const lerpR = prR[pix] * dr + sR_raw * ar;
+          const lerpG = prG[pix] * dg + sG_raw * ag;
+          const lerpB = prB[pix] * db + sB_raw * ab;
+          prR[pix] = lerpR;
+          prG[pix] = lerpG;
+          prB[pix] = lerpB;
+
+          // Apply scan-band — pulses the live displayed image but stays
+          // out of the persistence snapshot above.
+          const sR = lerpR * scanBand;
+          const sG = lerpG * scanBand;
+          const sB = lerpB * scanBand;
+
+          // Hotspot — boost the cs×cs cell's exact center pixel; for
           // cs=3 the Manhattan-distance max(0, 1−d) collapses to "1 at the
           // center, 0 elsewhere," matching a Trinitron aperture-grille hole.
-          const distX = subX - cellCenter; const aDistX = distX < 0 ? -distX : distX;
+          const distX = subX - cellCenter;
+          const aDistX = distX < 0 ? -distX : distX;
           const subDist = aDistX + aDistY;
           const hotMod = subDist > 1 ? 1 : 1 + hotspot * (1 - subDist);
 
-          // S2 shimmer — stable per-cell brightness noise.
-          const ci = rowBase + cxBase;
-          const shimMod = 1 + shimmer * shim[ci];
+          // Shimmer — stable per-cell brightness noise. Per-cell, not
+          // per-pixel: per-pixel reads as static, per-cell reads as
+          // phosphor brightness variation.
+          const shimMod = 1 + shimmer * shim[rowBase + cxBase];
           const totalMod = scanDim * hotMod * shimMod;
 
-          // subX picks which per-column buffer to read from (R stripe →
-          // colR, G stripe → colG, B stripe → colB). Convergence is already
-          // baked into the cell buffers (via _applyConvergence's per-channel
-          // pre-shifted source bitmaps), so all three channels read at the
-          // same cell index.
-          const cells = subX === 0 ? colR : (subX === 1 ? colG : colB);
-          const ci3 = ci * 3;
-          const sR = cells[ci3];
-          const sG = cells[ci3 + 1];
-          const sB = cells[ci3 + 2];
-
+          // Phosphor coupling per subX.
           let r, g, b;
           if (subX === 0)      { r = sR;     g = sG * k; b = sB * k; }
           else if (subX === 1) { r = sR * k; g = sG;     b = sB * k; }
           else                 { r = sR * k; g = sG * k; b = sB;     }
 
           r *= totalMod; g *= totalMod; b *= totalMod;
-          out[oi]     = r > 255 ? 255 : r;
-          out[oi + 1] = g > 255 ? 255 : g;
-          out[oi + 2] = b > 255 ? 255 : b;
-          // Graded alpha = brightest sampled channel — lets alpha-weighted
-          // edge cells fade smoothly into the bleed instead of staircasing.
+          out[pi]     = r > 255 ? 255 : r;
+          out[pi + 1] = g > 255 ? 255 : g;
+          out[pi + 2] = b > 255 ? 255 : b;
+          // Graded alpha = brightest scan-banded channel — lets edge
+          // pixels fade smoothly into the bleed instead of staircasing.
           const a = sR > sG ? (sR > sB ? sR : sB) : (sG > sB ? sG : sB);
-          out[oi + 3] = a > 255 ? 255 : a;
+          out[pi + 3] = a > 255 ? 255 : a;
+
+          pi += 4;
+          pix++;
         }
       }
     }
