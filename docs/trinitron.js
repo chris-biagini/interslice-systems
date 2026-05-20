@@ -264,24 +264,42 @@
     }
 
     _sampleCells() {
+      // Box-filter downsample: each cell's value is the average of its
+      // cs×cs source-pixel block (9 pixels at cs=3), not the single
+      // center pixel. This anti-aliases the cell grid against slow-moving
+      // content — when the hub's petal edge crosses a cell boundary by a
+      // fractional pixel between frames, the box-filter average shifts
+      // smoothly instead of binary-flipping the cell on/off. That
+      // eliminates the "sparkle" at the rotating hub's periphery that
+      // nearest-neighbor-at-center sampling produced. Box-filter is also
+      // more faithful to a real Trinitron: the aperture grille samples
+      // a stripe-width of the analog signal, not a single point.
       const [vw, vh] = this.opts.viewSize;
       const cs = this.opts.cellSize;
       const cw = this.cellGridW;
       const ch = this.cellGridH;
-      const half = Math.floor(cs / 2);
+      const cellPx = cs * cs;
 
       const imgData = this.signalCtx.getImageData(0, 0, vw, vh);
       const px = imgData.data;
 
       for (let cy = 0; cy < ch; cy++) {
-        const sy = cy * cs + half;
         for (let cx = 0; cx < cw; cx++) {
-          const sx = cx * cs + half;
-          const pi = (sy * vw + sx) * 4;
+          let sR = 0, sG = 0, sB = 0;
+          for (let dy = 0; dy < cs; dy++) {
+            const sy = cy * cs + dy;
+            for (let dx = 0; dx < cs; dx++) {
+              const sx = cx * cs + dx;
+              const pi = (sy * vw + sx) * 4;
+              sR += px[pi];
+              sG += px[pi + 1];
+              sB += px[pi + 2];
+            }
+          }
           const ci = cy * cw + cx;
-          this.cellsR[ci] = px[pi];
-          this.cellsG[ci] = px[pi + 1];
-          this.cellsB[ci] = px[pi + 2];
+          this.cellsR[ci] = sR / cellPx;
+          this.cellsG[ci] = sG / cellPx;
+          this.cellsB[ci] = sB / cellPx;
         }
       }
     }
@@ -407,10 +425,15 @@
           out[oi]     = Math.min(255, r * totalMod);
           out[oi + 1] = Math.min(255, g * totalMod);
           out[oi + 2] = Math.min(255, b * totalMod);
-          // Alpha=255 if any of the three sampled channels was lit. Use
-          // the raw samples (not r/g/b) so coupling=0 still lights the
-          // pixel correctly when its dominant channel was the lit one.
-          out[oi + 3] = (sR + sG + sB > 0) ? 255 : 0;
+          // Graded alpha — proportional to the brightest sampled channel
+          // (capped at 255). Was binary 0-or-255, which produced a 3px-
+          // staircase silhouette edge where lit cells abruptly met
+          // transparent cells, reading as a "jagged black outline" with
+          // the bleed showing through. Box-filter cell sampling already
+          // gives intermediate brightness for edge cells; using that
+          // brightness as alpha lets the stripes fade smoothly into the
+          // bleed across cell boundaries.
+          out[oi + 3] = Math.min(255, Math.max(sR, sG, sB));
         }
       }
     }

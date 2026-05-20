@@ -135,14 +135,16 @@
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .bleed,
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .phosphors,
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-scanlines,
-  :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-glass-gloss {
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-glass-gloss,
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .hotspots {
     display: none;
   }
   @media (prefers-color-scheme: dark) {
     :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .bleed,
     :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .phosphors,
     :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .svg-scanlines,
-    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .svg-glass-gloss {
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .svg-glass-gloss,
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .hotspots {
       display: none;
     }
   }
@@ -1166,22 +1168,33 @@
   // render, persistence, halo, scan-band, etc. The gradient mirrors the
   // SVG #crt-glass def verbatim (top-bright primary band + faint
   // secondary lower down).
-  // Aqua gloss for the signal — milder than the SVG-fallback gradient
-  // because the canvas pipeline whitens the top through phosphor coupling
-  // anyway, and the SVG's 22% peak read too pink/desaturated after the
-  // coupling math. Top primary band at 12%, faint secondary at 3%.
+  // Aqua gloss baked into the signal — top-to-bottom highlight on the
+  // "displayed image." Matches the SVG-fallback #crt-glass gradient so
+  // the Trinitron is showing the same Aqua-style logo whether the canvas
+  // is active or not.
   const GLOSS_MARKUP = `
     <defs>
       <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.12"/>
-        <stop offset="14%"  stop-color="#FFFFFF" stop-opacity="0.04"/>
+        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.22"/>
+        <stop offset="14%"  stop-color="#FFFFFF" stop-opacity="0.07"/>
         <stop offset="32%"  stop-color="#FFFFFF" stop-opacity="0"/>
-        <stop offset="58%"  stop-color="#FFFFFF" stop-opacity="0.03"/>
+        <stop offset="58%"  stop-color="#FFFFFF" stop-opacity="0.05"/>
         <stop offset="74%"  stop-color="#FFFFFF" stop-opacity="0"/>
         <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
       </linearGradient>
     </defs>
     <rect x="0" y="0" width="200" height="200" fill="url(#g)"/>`;
+
+  // Beam-dwell hot-spots — the bright concentric shine at the center of
+  // each colored bubble. Previously rendered as an SVG overlay clipped to
+  // the silhouette; now baked into the signal so the shine goes through
+  // cell sampling + stripes + persistence + halo like every other lit
+  // pixel. Positions match the SVG fallback's .hotspots group verbatim.
+  const HOTSPOTS_MARKUP = `
+    <circle cx="100"    cy="28"  r="14" fill="#FFFFFF" opacity="0.55"/>
+    <circle cx="37.65"  cy="136" r="14" fill="#FFFFFF" opacity="0.55"/>
+    <circle cx="162.35" cy="136" r="14" fill="#FFFFFF" opacity="0.55"/>
+    <circle cx="100"    cy="100" r="16" fill="#FFFFFF" opacity="0.30"/>`;
 
   // Rotation: 36 seconds for 360°, reverse direction — matches the SVG's
   // @keyframes hub-spin + .hub-segs animation, which drive the no-JS
@@ -1195,12 +1208,13 @@
     const canvas = document.querySelector('canvas.trinitron');
     if (!canvas || !window.Trinitron) return;
 
-    let armsImg, hubImg, glossImg;
+    let armsImg, hubImg, glossImg, hotspotsImg;
     try {
-      [armsImg, hubImg, glossImg] = await Promise.all([
+      [armsImg, hubImg, glossImg, hotspotsImg] = await Promise.all([
         rasterizeFragment(ARMS_MARKUP),
         rasterizeFragment(HUB_MARKUP),
         rasterizeFragment(GLOSS_MARKUP),
+        rasterizeFragment(HOTSPOTS_MARKUP),
       ]);
     } catch (err) {
       return; // Fall back to SVG implementation
@@ -1215,13 +1229,16 @@
       ctx.translate(-100, -100);
       ctx.drawImage(hubImg, 0, 0, 200, 200);
       ctx.restore();
-      // Aqua shine — drawn last with source-atop so it only lights the
-      // pixels the signal has already painted (the bubble's silhouette).
-      // Falls off to zero opacity below 32% of the height — the visible
-      // wash is mostly the top half of the logo.
+      // Aqua shine + beam hot-spots — both painted with source-atop so
+      // they only touch pixels the signal has already lit (the bubble's
+      // silhouette). The gloss is a top-down gradient highlight; the hot-
+      // spots are localized bright circles at each ball center / hub
+      // center, simulating where the electron beam dwells longest and
+      // the Aqua-shine specular peaks land on each bubble.
       ctx.save();
       ctx.globalCompositeOperation = 'source-atop';
       ctx.drawImage(glossImg, 0, 0, 200, 200);
+      ctx.drawImage(hotspotsImg, 0, 0, 200, 200);
       ctx.restore();
     }
 
@@ -1247,7 +1264,10 @@
         // filter does in the no-JS fallback.
         canvasSize: [280, 280],
         bleedRadius: 45,
-        bleedIntensity: 2.2,
+        // Bleed multiplier — tuned to give a halo comparable to the SVG
+        // fallback's #phosphor-bleed filter without the red arm's
+        // disproportionate horizontal-strip glow overpowering everything.
+        bleedIntensity: 1.5,
         // Tame the convergence stutter — drift was reading as page jitter
         // rather than as authentic CRT misalignment. Keep a hair of static
         // offset so close inspection still shows R/B fringing.
@@ -1264,11 +1284,12 @@
         // Tiny blur at draw-time turns hard pixel edges into soft glowing
         // dots — the difference between "screenshot of an LCD" and "lit
         // phosphor through curved glass."
-        phosphorBlurPx: 0.5,
-        // Longer persistence smooths the cell-sampling sparkle at the
-        // rotating hub's periphery — when a petal edge crosses a cell
-        // boundary the trail averages it out instead of flickering.
-        persistence: 0.92,
+        phosphorBlurPx: 0.3,
+        // Modest persistence — the longer afterglow was helping with the
+        // rotation sparkle but introduced a visible smear. With box-filter
+        // cell sampling (below) the sparkle is anti-aliased at the source,
+        // so persistence can return to a more conservative value.
+        persistence: 0.85,
         // Bigger hotspot makes the cell centers feel like brightness peaks
         // rather than barely-perceptible variations.
         hotspot: 0.30,
