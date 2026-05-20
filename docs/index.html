@@ -1206,6 +1206,22 @@
       ctx.restore();
     }
 
+    // Spike A/B: ?mode=cell or ?mode=beam in the URL flips the sampler
+    // and the matched tuning at construction time. Default is 'beam'.
+    const urlMode = new URLSearchParams(window.location.search).get('mode');
+    const samplingMode = (urlMode === 'cell' || urlMode === 'beam') ? urlMode : 'beam';
+    const beamTune = {
+      bleedIntensity: 2.2,
+      phosphorBlurPx: 0.55,
+      persistence: 0.88,
+    };
+    const cellTune = {
+      bleedIntensity: 1.625,
+      phosphorBlurPx: 0.3,
+      persistence: 0.85,
+    };
+    const tune = samplingMode === 'beam' ? beamTune : cellTune;
+
     let trinitron;
     try {
       trinitron = new window.Trinitron(canvas, {
@@ -1215,30 +1231,26 @@
         canvasSize: [280, 280],
         // stdDev=13 matches the SVG fallback's #phosphor-bleed filter.
         bleedRadius: 13,
-        // Beam mode delivers ~half the per-pixel brightness of cell+coupling
-        // mode (only 1 of 3 stripes is lit per saturated cell). Bumped halo
-        // intensity makes up the difference globally; phosphorBlurPx (below)
-        // does the rest by softening the dark gaps between lit stripes.
-        bleedIntensity: 2.2,
+        // Tune varies per sampling mode — beam mode needs more halo +
+        // blur to compensate for pure-stripe brightness loss; cell mode
+        // uses the same values the page shipped with before the spike.
+        bleedIntensity: tune.bleedIntensity,
         // Static R/B fringe; drift turned off (read as page jitter, not CRT).
         convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
         convergenceDriftAmplitudePx: 0.0,
-        // Ignored in beam mode (_renderStripes forces k=0 there); kept as
-        // documentation of the cell-mode value for easy A/B by flipping
-        // samplingMode below.
+        // Pure stripes deliver only ~1/3 the apparent brightness of a
+        // solid-base phosphor; coupling≈0.55 lets adjacent stripes carry
+        // some of the dominant channel back into the pixel so the logo
+        // reads as vivid phosphor while keeping subpixel structure.
+        // (Ignored in beam mode — _renderStripes forces k=0 there.)
         phosphorCoupling: 0.55,
-        // Heavier blur than cell mode: lit and dark stripes are more
-        // extreme in beam mode, so more bleed between them is needed to
-        // read as lit phosphor through glass rather than LCD subpixels.
-        phosphorBlurPx: 0.55,
-        // Beam mode — per-stripe alpha-weighted sampling + symmetric lerp
-        // persistence. Fixes the disk-perimeter flicker that came from
-        // cell-mode averaging discarding alpha and collapsing edge cells
-        // into single-hue blocks. Flip to 'cell' to A/B against the
-        // original pipeline.
-        samplingMode: 'beam',
+        phosphorBlurPx: tune.phosphorBlurPx,
+        // Spike: per-stripe alpha-weighted sampling + symmetric lerp
+        // persistence for proper edge triads and an alpha-aware sampler.
+        // A/B by appending ?mode=cell or ?mode=beam to the URL.
+        samplingMode,
         beamBrightnessBoost: 1.0,
-        persistence: 0.88,
+        persistence: tune.persistence,
         hotspot: 0.30,
       });
       window.__trinitron = trinitron;

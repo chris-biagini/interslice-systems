@@ -65,7 +65,16 @@
       this.signalCanvas.width = vw;
       this.signalCanvas.height = vh;
       this.signalCtx = this.signalCanvas.getContext('2d', { willReadFrequently: true });
-      this.signalCtx.imageSmoothingEnabled = false;
+      // Smoothing ON for the signal canvas — the caller's drawImage of a
+      // rotated bitmap is bilinear-sampled, so AA fringe pixels at the
+      // rotating hub's perimeter get smooth alpha gradients that change
+      // continuously frame-to-frame. With smoothing OFF (the previous
+      // setting), nearest-neighbor rotation snapped fringe pixels to
+      // different source pixels each frame — visible flicker no
+      // downstream sampler could remove. The output canvas keeps
+      // smoothing OFF below; we want sharp phosphor stripes there.
+      this.signalCtx.imageSmoothingEnabled = true;
+      this.signalCtx.imageSmoothingQuality = 'high';
 
       // Cell grid — one cell per cellSize × cellSize source-pixel block
       const cs = this.opts.cellSize;
