@@ -244,6 +244,10 @@
       // N2 scan-band: a cosine envelope sweeps top-to-bottom every
       // scanBandPeriodSec. Modulates each cell's brightness uniformly
       // (so the halo derived from these cells also shows the band).
+      // ORDER MATTERS: this runs *after* _applyPersistence has snapshotted
+      // its prev* buffers. If we ran before, the band would smear into the
+      // persistence trail and the sharp top-to-bottom sweep would dissolve
+      // into a lagging vertical gradient. Live signal pulses; trail doesn't.
       const ch = this.cellGridH;
       const cw = this.cellGridW;
       const period = this.opts.scanBandPeriodSec;
