@@ -1206,19 +1206,6 @@
       ctx.restore();
     }
 
-    // Spike A/B: ?mode=cell or ?mode=beam in the URL flips the sampler.
-    // Tuning is now shared between the two — per-column RGB sampling in
-    // beam mode reproduces cell mode's interior brightness via coupling,
-    // so beam mode no longer needs the bumped halo + blur compensation
-    // the per-channel-only variant required.
-    const urlMode = new URLSearchParams(window.location.search).get('mode');
-    const samplingMode = (urlMode === 'cell' || urlMode === 'beam') ? urlMode : 'beam';
-    const tune = {
-      bleedIntensity: 1.625,
-      phosphorBlurPx: 0.3,
-      persistence: 0.85,
-    };
-
     let trinitron;
     try {
       trinitron = new window.Trinitron(canvas, {
@@ -1228,26 +1215,21 @@
         canvasSize: [280, 280],
         // stdDev=13 matches the SVG fallback's #phosphor-bleed filter.
         bleedRadius: 13,
-        // Tune varies per sampling mode — beam mode needs more halo +
-        // blur to compensate for pure-stripe brightness loss; cell mode
-        // uses the same values the page shipped with before the spike.
-        bleedIntensity: tune.bleedIntensity,
+        // +25% over the SVG fallback's feFuncA slope for a punchier halo.
+        bleedIntensity: 1.625,
         // Static R/B fringe; drift turned off (read as page jitter, not CRT).
         convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
         convergenceDriftAmplitudePx: 0.0,
-        // Pure stripes deliver only ~1/3 the apparent brightness of a
-        // solid-base phosphor; coupling≈0.55 lets adjacent stripes carry
-        // some of the dominant channel back into the pixel so the logo
-        // reads as vivid phosphor while keeping subpixel structure.
-        // (Ignored in beam mode — _renderStripes forces k=0 there.)
+        // Imperfect aperture-grille spill — each stripe column's R/G/B
+        // sample bleeds into its neighbors at this fraction. For uniform
+        // cells this restores the brightness a strict per-stripe render
+        // would lose; for edge cells it preserves the per-column
+        // gradients that come out of the alpha-weighted sampler.
         phosphorCoupling: 0.55,
-        phosphorBlurPx: tune.phosphorBlurPx,
-        // Spike: per-stripe alpha-weighted sampling + symmetric lerp
-        // persistence for proper edge triads and an alpha-aware sampler.
-        // A/B by appending ?mode=cell or ?mode=beam to the URL.
-        samplingMode,
-        beamBrightnessBoost: 1.0,
-        persistence: tune.persistence,
+        // Sub-pixel blur softens LCD-sharp pixel edges into lit-phosphor
+        // dots through curved glass.
+        phosphorBlurPx: 0.3,
+        persistence: 0.85,
         hotspot: 0.30,
       });
       window.__trinitron = trinitron;

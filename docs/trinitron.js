@@ -30,19 +30,6 @@
         // canvas onto the main canvas. Softens the LCD-like sharp pixel
         // edges into something more "lit phosphor through glass."
         phosphorBlurPx: 0.0,
-        // Sampling pipeline. 'cell' averages each cell's 3×3 source block
-        // into one (R,G,B) and then synthesizes stripes from that triple —
-        // simple but collapses per-stripe detail, so edge cells flicker as
-        // single-hue blocks. 'beam' samples each stripe column separately
-        // (one source-pixel-wide vertical slice per stripe, alpha-weighted)
-        // so cellsR/G/B hold per-stripe brightness directly — proper triad
-        // structure at edges, no alpha-ignoring artifact, no need to use
-        // phosphorCoupling to compensate for cell-flattening brightness loss.
-        samplingMode: 'cell',
-        // In beam mode, pure-channel-per-column rendering produces ~1/3 the
-        // average brightness of cell-mode's coupled stripes. Multiplier here
-        // restores apparent brightness; tune alongside bleedIntensity.
-        beamBrightnessBoost: 1.0,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -59,8 +46,8 @@
       this.ctx.imageSmoothingEnabled = false;
 
       // Offscreen signal canvas — caller paints into 200×200 logical coords.
-      // willReadFrequently=true since _sampleCells reads the whole canvas
-      // back every frame.
+      // willReadFrequently=true since _sample reads the whole canvas back
+      // every frame.
       this.signalCanvas = document.createElement('canvas');
       this.signalCanvas.width = vw;
       this.signalCanvas.height = vh;
@@ -81,24 +68,20 @@
       this.cellGridW = Math.floor(vw / cs);  // 66 for default (floor(200/3))
       this.cellGridH = Math.floor(vh / cs);  // 66 for default (floor(200/3))
       const cellCount = this.cellGridW * this.cellGridH;
-      this.cellsR = new Float32Array(cellCount);
-      this.cellsG = new Float32Array(cellCount);
-      this.cellsB = new Float32Array(cellCount);
-      this.prevR = new Float32Array(cellCount);
-      this.prevG = new Float32Array(cellCount);
-      this.prevB = new Float32Array(cellCount);
 
-      // Beam-mode per-column RGB buffers — each cell stores three (R, G, B)
-      // triples, one per stripe column. Layout is interleaved: cellsColR
-      // [ci*3 + ch] where ch is the channel index (0=R, 1=G, 2=B). The
-      // three buffers correspond to the three stripe columns (subX 0/1/2).
+      // Per-column RGB sample buffers. Each cell stores three (R, G, B)
+      // triples — one per stripe column — interleaved as cellsColR[ci*3+ch]
+      // where ch ∈ {0, 1, 2} for R/G/B. The three buffers correspond to
+      // the three stripe columns (subX 0/1/2 in _renderStripes).
       //
-      // The extra storage (9 floats per cell vs the 3 used by cell mode)
-      // is what lets edge cells expose per-stripe brightness gradients
-      // while interior cells render identically to cell mode: when all
-      // three columns sample the same source color, cellsColR/G/B end up
-      // equal and the existing cell-mode coupling formula in
-      // _renderStripes produces the same per-stripe pattern.
+      // Modeling each column as its own RGB sample is what gives the
+      // aperture grille proper triad behavior at edges: a cell straddling
+      // the rotating hub's perimeter will have three columns with
+      // different alpha-weighted coverage, so the three stripes within
+      // the cell light at different brightnesses. For uniform interior
+      // cells the three buffers end up equal and the coupling formula
+      // in _renderStripes produces a classic Trinitron stripe pattern
+      // with no edge-case branching.
       this.cellsColR = new Float32Array(cellCount * 3);
       this.cellsColG = new Float32Array(cellCount * 3);
       this.cellsColB = new Float32Array(cellCount * 3);
@@ -160,7 +143,6 @@
       if (this._rafHandle != null) return;
       // Zero the persistence trail so a stop/restart (e.g. theme toggle)
       // doesn't leave the last paused frame ghosted into the next session.
-      this.prevR.fill(0); this.prevG.fill(0); this.prevB.fill(0);
       this.prevColR.fill(0); this.prevColG.fill(0); this.prevColB.fill(0);
       this._startTime = performance.now();
       if (this._reducedMotionMq && this._reducedMotionMq.matches) {
@@ -203,17 +185,9 @@
       this.signalCtx.clearRect(0, 0, vw, vh);
       this.opts.signal(this.signalCtx, timeMs);
 
-      // 2. Sample cells, decay against last frame, then modulate. Beam
-      //    mode swaps the sampler (per-stripe alpha-weighted) and the
-      //    persistence (symmetric lerp instead of asymmetric max), but
-      //    the rest of the pipeline is shared.
-      if (this.opts.samplingMode === 'beam') {
-        this._sampleBeams();
-        this._applyPersistenceBeam();
-      } else {
-        this._sampleCells();
-        this._applyPersistence();
-      }
+      // 2. Sample per stripe column, decay against last frame, modulate.
+      this._sample();
+      this._applyPersistence();
       this._applyCellModulations(timeMs);
 
       // 3. Render the aperture-grille stripes into ImageData → stripeCanvas.
@@ -233,69 +207,22 @@
       if (blur > 0) this.ctx.filter = 'none';
     }
 
-    _sampleCells() {
-      // Box-filter downsample: each cell's value is the average of its
-      // cs×cs source-pixel block (9 pixels at cs=3), not the single
-      // center pixel. This anti-aliases the cell grid against slow-moving
-      // content — when the hub's petal edge crosses a cell boundary by a
-      // fractional pixel between frames, the box-filter average shifts
-      // smoothly instead of binary-flipping the cell on/off. That
-      // eliminates the "sparkle" at the rotating hub's periphery that
-      // nearest-neighbor-at-center sampling produced. Box-filter is also
-      // more faithful to a real Trinitron: the aperture grille samples
-      // a stripe-width of the analog signal, not a single point.
+    _sample() {
+      // For each cell, sample three stripe columns independently. Each
+      // column averages its cs source pixels alpha-weighted and stores a
+      // full (R, G, B) triple. Mirrors a Trinitron's three beams each
+      // aiming through the aperture grille at one stripe position.
+      //
+      // Alpha weighting matters: ImageData is non-premultiplied, so a
+      // half-covered AA fringe pixel reads as (255, 0, 0, 128) for a
+      // half-red edge. Multiplying RGB by alpha/255 makes the column's
+      // contribution proportional to actual coverage, which is what makes
+      // the rotating hub's perimeter render as a smooth coverage gradient
+      // instead of binary-flipping cells as the AA pattern shifts.
       const [vw, vh] = this.opts.viewSize;
       const cs = this.opts.cellSize;
       const cw = this.cellGridW;
       const ch = this.cellGridH;
-      const cellPx = cs * cs;
-
-      const imgData = this.signalCtx.getImageData(0, 0, vw, vh);
-      const px = imgData.data;
-
-      for (let cy = 0; cy < ch; cy++) {
-        for (let cx = 0; cx < cw; cx++) {
-          let sR = 0, sG = 0, sB = 0;
-          for (let dy = 0; dy < cs; dy++) {
-            const sy = cy * cs + dy;
-            for (let dx = 0; dx < cs; dx++) {
-              const sx = cx * cs + dx;
-              const pi = (sy * vw + sx) * 4;
-              sR += px[pi];
-              sG += px[pi + 1];
-              sB += px[pi + 2];
-            }
-          }
-          const ci = cy * cw + cx;
-          this.cellsR[ci] = sR / cellPx;
-          this.cellsG[ci] = sG / cellPx;
-          this.cellsB[ci] = sB / cellPx;
-        }
-      }
-    }
-
-    _sampleBeams() {
-      // Beam-style per-column RGB sampling: each cell has three stripe
-      // columns, each column samples its cs source pixels (alpha-weighted)
-      // and stores the full (R, G, B) average — three RGB triples per cell.
-      //
-      // Why all three channels per column instead of just the matching one?
-      // The matching-channel-only version (the first beam-mode iteration)
-      // gave proper edge triads but discarded interior brightness: a
-      // saturated red pixel lit only the R stripe (G and B columns saw
-      // red pixels but extracted G=0 and B=0). That read as harsh LCD
-      // structure. Storing the full RGB lets _renderStripes reuse the
-      // existing cell-mode coupling formula, which fills in the dark
-      // stripes for uniform cells (interior matches cell mode exactly)
-      // while keeping per-column gradients at edges (the structural fix).
-      //
-      // Alpha-weighting is preserved: a half-covered AA fringe pixel
-      // contributes half its color value to its column's average.
-      const [vw, vh] = this.opts.viewSize;
-      const cs = this.opts.cellSize;
-      const cw = this.cellGridW;
-      const ch = this.cellGridH;
-      const boost = this.opts.beamBrightnessBoost;
       const colR = this.cellsColR;
       const colG = this.cellsColG;
       const colB = this.cellsColB;
@@ -312,8 +239,7 @@
           for (let dy = 0; dy < cs; dy++) {
             const sy = cy * cs + dy;
             const rowBase = sy * vw;
-            // R stripe column (dx=0) — sample all three source channels,
-            // alpha-weighted.
+            // R stripe column (dx=0) — sample all three source channels.
             let pi = (rowBase + cx * cs) * 4;
             let aw = px[pi + 3] / 255;
             r0r += px[pi]     * aw;
@@ -332,10 +258,10 @@
             b0g += px[pi + 1] * aw;
             b0b += px[pi + 2] * aw;
           }
-          // Divide by cs (3 pixels averaged per column), apply boost,
-          // store interleaved as [R, G, B] per cell in each column buffer.
+          // Divide by cs (cs source pixels averaged per column), store
+          // interleaved as [R, G, B] per cell in each column buffer.
           const ci3 = (cy * cw + cx) * 3;
-          const inv = boost / cs;
+          const inv = 1 / cs;
           colR[ci3]     = r0r * inv;
           colR[ci3 + 1] = r0g * inv;
           colR[ci3 + 2] = r0b * inv;
@@ -350,9 +276,9 @@
     }
 
     _applyCellModulations(timeMs) {
-      // N2 scan-band: a cosine envelope sweeps top-to-bottom every
-      // scanBandPeriodSec. Modulates each cell's brightness uniformly
-      // (so the halo derived from these cells also shows the band).
+      // Scan-band: a cosine envelope sweeps top-to-bottom every
+      // scanBandPeriodSec. Modulates each cell's brightness uniformly (so
+      // the halo derived from these cells also shows the band).
       // ORDER MATTERS: this runs *after* _applyPersistence has snapshotted
       // its prev* buffers. If we ran before, the band would smear into the
       // persistence trail and the sharp top-to-bottom sweep would dissolve
@@ -362,66 +288,28 @@
       const period = this.opts.scanBandPeriodSec;
       const strength = this.opts.scanBandStrength;
       const phase = (timeMs / 1000) / period;
-      const isBeam = this.opts.samplingMode === 'beam';
+      const colR = this.cellsColR, colG = this.cellsColG, colB = this.cellsColB;
 
       for (let cy = 0; cy < ch; cy++) {
         const mod = 1 + strength * Math.cos(2 * Math.PI * (cy / ch - phase));
-        if (isBeam) {
-          // Modulate all 9 values per cell (3 columns × 3 channels). The
-          // band is a brightness envelope, so applying it uniformly across
-          // each column's RGB preserves hue while pulsing brightness.
-          const colR = this.cellsColR, colG = this.cellsColG, colB = this.cellsColB;
-          for (let cx = 0; cx < cw; cx++) {
-            const i3 = (cy * cw + cx) * 3;
-            colR[i3] *= mod; colR[i3 + 1] *= mod; colR[i3 + 2] *= mod;
-            colG[i3] *= mod; colG[i3 + 1] *= mod; colG[i3 + 2] *= mod;
-            colB[i3] *= mod; colB[i3 + 1] *= mod; colB[i3 + 2] *= mod;
-          }
-        } else {
-          for (let cx = 0; cx < cw; cx++) {
-            const ci = cy * cw + cx;
-            this.cellsR[ci] *= mod;
-            this.cellsG[ci] *= mod;
-            this.cellsB[ci] *= mod;
-          }
+        // Modulate all 9 values per cell (3 columns × 3 channels). The
+        // band is a brightness envelope, so applying it uniformly across
+        // each column's RGB preserves hue while pulsing brightness.
+        for (let cx = 0; cx < cw; cx++) {
+          const i3 = (cy * cw + cx) * 3;
+          colR[i3] *= mod; colR[i3 + 1] *= mod; colR[i3 + 2] *= mod;
+          colG[i3] *= mod; colG[i3 + 1] *= mod; colG[i3 + 2] *= mod;
+          colB[i3] *= mod; colB[i3 + 1] *= mod; colB[i3 + 2] *= mod;
         }
       }
     }
 
     _applyPersistence() {
-      const p = this.opts.persistence;
-      const d = this.opts.perChannelDecay;
-      // Clamp at 0.99 to prevent runaway accumulation
-      const dr = Math.min(0.99, p * d.r);
-      const dg = Math.min(0.99, p * d.g);
-      const db = Math.min(0.99, p * d.b);
-      const n = this.cellsR.length;
-      for (let i = 0; i < n; i++) {
-        const decayedR = this.prevR[i] * dr;
-        const decayedG = this.prevG[i] * dg;
-        const decayedB = this.prevB[i] * db;
-        if (decayedR > this.cellsR[i]) this.cellsR[i] = decayedR;
-        if (decayedG > this.cellsG[i]) this.cellsG[i] = decayedG;
-        if (decayedB > this.cellsB[i]) this.cellsB[i] = decayedB;
-      }
-      this.prevR.set(this.cellsR);
-      this.prevG.set(this.cellsG);
-      this.prevB.set(this.cellsB);
-    }
-
-    _applyPersistenceBeam() {
-      // Symmetric exponential smoothing: new value = prev*decay + live*(1-decay).
-      // Cell-mode persistence uses max(prev*decay, new), which preserves peaks
-      // but produces asymmetric flicker — upward pulses appear instantly while
-      // downward ones smooth out. For beam-style per-stripe samples we want
-      // rise and fall to be smoothed equally, since the AA fringe at the disk
-      // perimeter generates symmetric per-frame fluctuations rather than rare
-      // bright transients we'd want to preserve.
-      //
-      // Each cell stores three (R, G, B) triples — one per stripe column.
-      // The per-channel decay (dr/dg/db) applies to the matching channel
-      // within each triple, so all three columns get the same per-channel
-      // behavior. Stride-3 inner unrolled to keep the JIT happy.
+      // Symmetric exponential smoothing: new = prev*decay + live*(1-decay).
+      // Per-channel decay (dr/dg/db) applies to the matching channel within
+      // each cell's three (R, G, B) triples — all three columns share the
+      // same per-channel behavior. Stride-3 inner loop unrolled to keep the
+      // JIT happy.
       //
       // First-frame cost: prev is zero on start(), so the image fades in
       // over ~1/(1-dr) frames (≈7 frames at dr=0.85, ~110ms).
@@ -476,15 +364,12 @@
       // Hoist hot-loop reads out of the 40k-iter inner body.
       const hotspot = this.opts.hotspot;
       const shimmer = this.opts.shimmer;
-      // Coupling is the same in both modes now. In cell mode it spills the
-      // cell's averaged hue into adjacent stripes. In beam mode it spills
-      // each stripe-column's per-channel sample into adjacent stripes —
-      // for uniform interior cells the per-column buffers are equal, so
-      // the result matches cell mode exactly. At edges, the per-column
-      // buffers diverge and each stripe ends up with its own brightness.
+      // Coupling spills each stripe-column's per-channel sample into
+      // adjacent stripes. For uniform interior cells the three column
+      // buffers are equal, so the output reads as a classic stripe-modulated
+      // hue. At edges the column buffers diverge and each stripe ends up
+      // with its own brightness — the aperture-grille triad behavior.
       const k = this.opts.phosphorCoupling;
-      const isBeam = this.opts.samplingMode === 'beam';
-      const cellsR = this.cellsR, cellsG = this.cellsG, cellsB = this.cellsB;
       const colR = this.cellsColR, colG = this.cellsColG, colB = this.cellsColB;
       const shim = this.shimmerNoise;
       const cellCenter = cs >> 1;
@@ -526,25 +411,19 @@
           const totalMod = scanDim * hotMod * shimMod;
 
           // Per-channel cell sample with convergence offsets applied.
-          // In beam mode, subX picks which per-column buffer to read from
-          // (R-stripe column → colR, etc.); the R/G/B channels each still
-          // come from the convergence-shifted cell so the chromatic fringe
-          // works identically. In cell mode, all three reads hit the same
-          // per-cell channel buffer.
+          // subX picks which per-column buffer to read from (R stripe →
+          // colR, G stripe → colG, B stripe → colB); each output channel
+          // independently comes from its convergence-shifted cell, so the
+          // chromatic R/B fringe operates on a different axis than the
+          // stripe selection.
           const rcx = ((px + rdx) * invCs) | 0;
           const gcx = ((px + gdx) * invCs) | 0;
           const bcx = ((px + bdx) * invCs) | 0;
+          const cells = subX === 0 ? colR : (subX === 1 ? colG : colB);
           let sR = 0, sG = 0, sB = 0;
-          if (isBeam) {
-            const cells = subX === 0 ? colR : (subX === 1 ? colG : colB);
-            if (rRow !== -1 && rcx >= 0 && rcx < cw) sR = cells[(rRow + rcx) * 3];
-            if (gRow !== -1 && gcx >= 0 && gcx < cw) sG = cells[(gRow + gcx) * 3 + 1];
-            if (bRow !== -1 && bcx >= 0 && bcx < cw) sB = cells[(bRow + bcx) * 3 + 2];
-          } else {
-            if (rRow !== -1 && rcx >= 0 && rcx < cw) sR = cellsR[rRow + rcx];
-            if (gRow !== -1 && gcx >= 0 && gcx < cw) sG = cellsG[gRow + gcx];
-            if (bRow !== -1 && bcx >= 0 && bcx < cw) sB = cellsB[bRow + bcx];
-          }
+          if (rRow !== -1 && rcx >= 0 && rcx < cw) sR = cells[(rRow + rcx) * 3];
+          if (gRow !== -1 && gcx >= 0 && gcx < cw) sG = cells[(gRow + gcx) * 3 + 1];
+          if (bRow !== -1 && bcx >= 0 && bcx < cw) sB = cells[(bRow + bcx) * 3 + 2];
 
           let r, g, b;
           if (subX === 0)      { r = sR;     g = sG * k; b = sB * k; }
@@ -555,7 +434,7 @@
           out[oi]     = r > 255 ? 255 : r;
           out[oi + 1] = g > 255 ? 255 : g;
           out[oi + 2] = b > 255 ? 255 : b;
-          // Graded alpha = brightest sampled channel — lets box-filtered
+          // Graded alpha = brightest sampled channel — lets alpha-weighted
           // edge cells fade smoothly into the bleed instead of staircasing.
           const a = sR > sG ? (sR > sB ? sR : sB) : (sG > sB ? sG : sB);
           out[oi + 3] = a > 255 ? 255 : a;
