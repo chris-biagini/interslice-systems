@@ -119,12 +119,14 @@
      canvas replaces. Keep scanlines/wires/glass/hotspots (they overlay
      the canvas). Same triple-activation pattern. */
   :root.trinitron-active[data-theme="dark"] .mark .m-dark .bleed,
-  :root.trinitron-active[data-theme="dark"] .mark .m-dark .phosphors {
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .phosphors,
+  :root.trinitron-active[data-theme="dark"] .mark .m-dark .svg-scanlines {
     display: none;
   }
   @media (prefers-color-scheme: dark) {
     :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .bleed,
-    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .phosphors {
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .phosphors,
+    :root.trinitron-active:not([data-theme="light"]) .mark .m-dark .svg-scanlines {
       display: none;
     }
   }
@@ -1005,8 +1007,9 @@
               <circle cx="100"    cy="100" r="16" fill="#FFFFFF" opacity="0.10"/>
             </g>
 
-            <!-- 2c. scanlines — fainter horizontal dim bands -->
-            <rect x="0" y="0" width="200" height="200" fill="url(#scanlines)"/>
+            <!-- 2c. scanlines — fainter horizontal dim bands. Hidden when canvas
+                 is active because the canvas bakes scanlines into the stripe render. -->
+            <rect class="svg-scanlines" x="0" y="0" width="200" height="200" fill="url(#scanlines)"/>
 
             <!-- 2d. Trinitron damping wires — barely-there horizontal
                  stabilizer shadows, the Trinitron tell. Both wires are
