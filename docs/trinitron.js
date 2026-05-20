@@ -62,8 +62,9 @@
       // Bleed: render cell grid as R/G/B-tinted intermediate at full canvas
       // resolution, then gaussian-blur each. We allocate three offscreen
       // canvases sized to the full canvas (so the blur kernel doesn't
-      // truncate at the source region's edge).
-      this.bleedRadius = this.opts.bleedRadius != null ? this.opts.bleedRadius : 30;
+      // truncate at the source region's edge). bleedRadius is already
+      // defaulted via Object.assign above; no second guard needed.
+      this.bleedRadius = this.opts.bleedRadius;
 
       // willReadFrequently=true on the bleed channel canvases since _frame
       // calls getImageData on each every frame to merge them.
@@ -82,10 +83,15 @@
       this.bleedBCanvas.height = ch;
       this.bleedBCtx = this.bleedBCanvas.getContext('2d', { willReadFrequently: true });
 
-      // ImageData for painting cell grids into the bleed canvases
-      this.cellPaintW = this.cellGridW;
-      this.cellPaintH = this.cellGridH;
-      this.cellPaintImageData = this.bleedRCtx.createImageData(this.cellPaintW, this.cellPaintH);
+      // ImageData for painting cell grids into the bleed canvases, plus a
+      // tiny tmp canvas + cached context that we putImageData onto and then
+      // drawImage-upscale from. All sized to the cell grid (66×66 by
+      // default) — fixed at construction, never resized.
+      this.cellPaintImageData = this.bleedRCtx.createImageData(this.cellGridW, this.cellGridH);
+      this.bleedPaintTmp = document.createElement('canvas');
+      this.bleedPaintTmp.width = this.cellGridW;
+      this.bleedPaintTmp.height = this.cellGridH;
+      this.bleedPaintTmpCtx = this.bleedPaintTmp.getContext('2d');
 
       // Bleed merge canvas: holds the per-channel-merged RGB image at
       // canvas-logical resolution (cw × ch). We putImageData into this
@@ -236,9 +242,9 @@
           out[oi]     = r * scanDim;
           out[oi + 1] = g * scanDim;
           out[oi + 2] = b * scanDim;
-          // Alpha=0 in dark areas so the bleed (to be added in Task 4) shows
-          // through. Alpha=255 in lit areas so the sharp stripe color
-          // overrides the soft bleed beneath it.
+          // Alpha=0 in dark areas so the bleed shows through. Alpha=255 in
+          // lit areas so the sharp stripe color overrides the soft bleed
+          // beneath it.
           out[oi + 3] = (r + g + b > 0) ? 255 : 0;
         }
       }
@@ -248,13 +254,12 @@
       const [vw, vh] = this.opts.viewSize;
       const [cw, ch] = this.opts.canvasSize;
       const margin = this.bleedMargin;
-      const cellsX = this.cellGridW;
-      const cellsY = this.cellGridH;
 
-      // Paint cells into a small ImageData (cellGridW × cellGridH).
-      // R-channel: store R intensity in all three channels (so the upscale
-      // is a single grayscale-ish source representing R brightness).
-      // Repeat for G and B.
+      // For each channel: paint that channel's cell array into the shared
+      // ImageData (storing v in R, G, B so the upscale stays a faithful
+      // grayscale source), put it onto our pre-allocated tmp canvas, then
+      // drawImage-upscale with smoothing + a blur filter onto the channel's
+      // bleed canvas.
       const paintChannel = (cells, ctx) => {
         const pd = this.cellPaintImageData.data;
         for (let i = 0, j = 0; i < cells.length; i++, j += 4) {
@@ -264,22 +269,13 @@
           pd[j + 2] = v;
           pd[j + 3] = 255;
         }
-        // Paint into a temporary 1×1-per-cell-block area, then drawImage with
-        // scaling to enlarge it across the bleed canvas.
+        this.bleedPaintTmpCtx.putImageData(this.cellPaintImageData, 0, 0);
         ctx.clearRect(0, 0, cw, ch);
-        // Use a temp canvas to upscale via drawImage
-        const tmp = this._bleedPaintTmp || (this._bleedPaintTmp = document.createElement('canvas'));
-        if (tmp.width !== cellsX || tmp.height !== cellsY) {
-          tmp.width = cellsX;
-          tmp.height = cellsY;
-        }
-        const tmpCtx = tmp.getContext('2d');
-        tmpCtx.putImageData(this.cellPaintImageData, 0, 0);
         // Smoothing ON for the upscale — that's the "blur from blocks" base.
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.filter = `blur(${Math.round(this.bleedRadius * 0.7)}px)`;
-        ctx.drawImage(tmp, margin, margin, vw, vh);
+        ctx.drawImage(this.bleedPaintTmp, margin, margin, vw, vh);
         ctx.filter = 'none';
       };
 

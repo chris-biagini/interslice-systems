@@ -1158,11 +1158,12 @@
       ctx.restore();
     }
 
-    // SVG silhouette path: same shape as #logo-mask in the SVG defs.
-    // Compose three thick stroke paths (arms) + three balls + the pinwheel
-    // outer hexagon, expressed as a single path commands string.
-    // For now, use a single union approximated as the bounding boxes;
-    // refine later if needed.
+    // Approximate silhouette: the three pinwheel-tip balls (r=24 each)
+    // plus the central hub disc (r=34). The arms between them are omitted
+    // — when this is wired up to clip the bleed in a future task, the four
+    // discs will be close enough for the halo's purposes. Pass as
+    // silhouettePath; the renderer wraps it in Path2D and currently just
+    // stores it for future clipping work.
     const SILHOUETTE_PATH =
       'M 100 28 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
       'M 37.65 136 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
