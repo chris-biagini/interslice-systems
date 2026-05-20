@@ -1021,9 +1021,25 @@
                    - lower wire (y=136): passes exactly through the
                      centers of the green and blue distal nodes,
                      bisecting them across their equator.
+                 Each wire is now 3 layers, painted back-to-front:
+                   1. faint cyan diffraction halo (stroke-width 3) — what
+                      you'd photograph blooming off a real damping wire
+                      lit by the phosphor behind it
+                   2. the dim wire itself (stroke-width 1, opacity 0.62)
+                   3. a sub-pixel-thin bright specular core (stroke-width
+                      0.4, opacity 0.5) — the highlight where direct
+                      light catches the wire's leading edge
                  Stroke width 1 ≈ ~0.85px at 168px display. -->
-            <line x1="0" y1="52"  x2="200" y2="52"  stroke="#000000" stroke-width="1" opacity="0.62"/>
-            <line x1="0" y1="136" x2="200" y2="136" stroke="#000000" stroke-width="1" opacity="0.62"/>
+            <g class="damping-wire">
+              <line x1="0" y1="52"  x2="200" y2="52"  stroke="#5EE2FF" stroke-width="3"   opacity="0.18"/>
+              <line x1="0" y1="52"  x2="200" y2="52"  stroke="#000000" stroke-width="1"   opacity="0.62"/>
+              <line x1="0" y1="52"  x2="200" y2="52"  stroke="#FFFFFF" stroke-width="0.4" opacity="0.5"/>
+            </g>
+            <g class="damping-wire">
+              <line x1="0" y1="136" x2="200" y2="136" stroke="#5EE2FF" stroke-width="3"   opacity="0.18"/>
+              <line x1="0" y1="136" x2="200" y2="136" stroke="#000000" stroke-width="1"   opacity="0.62"/>
+              <line x1="0" y1="136" x2="200" y2="136" stroke="#FFFFFF" stroke-width="0.4" opacity="0.5"/>
+            </g>
 
             <!-- 2e. glass front gloss — primary highlight near the top,
                  fainter secondary lower down. Light on a curved tube. -->
