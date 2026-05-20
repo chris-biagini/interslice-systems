@@ -30,6 +30,19 @@
         // canvas onto the main canvas. Softens the LCD-like sharp pixel
         // edges into something more "lit phosphor through glass."
         phosphorBlurPx: 0.0,
+        // Sampling pipeline. 'cell' averages each cell's 3×3 source block
+        // into one (R,G,B) and then synthesizes stripes from that triple —
+        // simple but collapses per-stripe detail, so edge cells flicker as
+        // single-hue blocks. 'beam' samples each stripe column separately
+        // (one source-pixel-wide vertical slice per stripe, alpha-weighted)
+        // so cellsR/G/B hold per-stripe brightness directly — proper triad
+        // structure at edges, no alpha-ignoring artifact, no need to use
+        // phosphorCoupling to compensate for cell-flattening brightness loss.
+        samplingMode: 'cell',
+        // In beam mode, pure-channel-per-column rendering produces ~1/3 the
+        // average brightness of cell-mode's coupled stripes. Multiplier here
+        // restores apparent brightness; tune alongside bleedIntensity.
+        beamBrightnessBoost: 1.0,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -162,9 +175,17 @@
       this.signalCtx.clearRect(0, 0, vw, vh);
       this.opts.signal(this.signalCtx, timeMs);
 
-      // 2. Sample cells, decay against last frame, then modulate.
-      this._sampleCells();
-      this._applyPersistence();
+      // 2. Sample cells, decay against last frame, then modulate. Beam
+      //    mode swaps the sampler (per-stripe alpha-weighted) and the
+      //    persistence (symmetric lerp instead of asymmetric max), but
+      //    the rest of the pipeline is shared.
+      if (this.opts.samplingMode === 'beam') {
+        this._sampleBeams();
+        this._applyPersistenceBeam();
+      } else {
+        this._sampleCells();
+        this._applyPersistence();
+      }
       this._applyCellModulations(timeMs);
 
       // 3. Render the aperture-grille stripes into ImageData → stripeCanvas.
@@ -225,6 +246,57 @@
       }
     }
 
+    _sampleBeams() {
+      // Beam-style sampling: each stripe column within a cell is sampled
+      // SEPARATELY from its own source-pixel column, and only that column's
+      // ASSIGNED channel contributes — column 0 → R, column 1 → G,
+      // column 2 → B. This mirrors how a real Trinitron's three beams aim
+      // through the aperture grille at three independent stripe positions.
+      //
+      // Two consequences:
+      //   1. At edges (e.g. the rotating disk's perimeter) the three
+      //      stripes within a cell get DIFFERENT brightnesses because they
+      //      sample different source columns — proper triad behavior
+      //      instead of cell-mode's single-hue block.
+      //   2. Alpha is honored. A half-covered AA fringe pixel contributes
+      //      half its color value, not the full value cell-mode would
+      //      record. This kills the alpha-ignoring flicker source.
+      const [vw, vh] = this.opts.viewSize;
+      const cs = this.opts.cellSize;
+      const cw = this.cellGridW;
+      const ch = this.cellGridH;
+      const boost = this.opts.beamBrightnessBoost;
+
+      const imgData = this.signalCtx.getImageData(0, 0, vw, vh);
+      const px = imgData.data;
+
+      for (let cy = 0; cy < ch; cy++) {
+        for (let cx = 0; cx < cw; cx++) {
+          let sR = 0, sG = 0, sB = 0;
+          // Walk the cs rows of this cell; sample one pixel per stripe
+          // column per row, alpha-weighted, channel-filtered.
+          for (let dy = 0; dy < cs; dy++) {
+            const sy = cy * cs + dy;
+            const rowBase = sy * vw;
+            // R stripe column (dx=0) → R channel only
+            let pi = (rowBase + cx * cs) * 4;
+            sR += px[pi]     * (px[pi + 3] / 255);
+            // G stripe column (dx=1) → G channel only
+            pi = (rowBase + cx * cs + 1) * 4;
+            sG += px[pi + 1] * (px[pi + 3] / 255);
+            // B stripe column (dx=2) → B channel only
+            pi = (rowBase + cx * cs + 2) * 4;
+            sB += px[pi + 2] * (px[pi + 3] / 255);
+          }
+          // Divide by cs (not cs*cs) since each stripe averaged cs pixels.
+          const ci = cy * cw + cx;
+          this.cellsR[ci] = (sR / cs) * boost;
+          this.cellsG[ci] = (sG / cs) * boost;
+          this.cellsB[ci] = (sB / cs) * boost;
+        }
+      }
+    }
+
     _applyCellModulations(timeMs) {
       // N2 scan-band: a cosine envelope sweeps top-to-bottom every
       // scanBandPeriodSec. Modulates each cell's brightness uniformly
@@ -271,6 +343,33 @@
       this.prevB.set(this.cellsB);
     }
 
+    _applyPersistenceBeam() {
+      // Symmetric exponential smoothing: new value = prev*decay + live*(1-decay).
+      // Cell-mode persistence uses max(prev*decay, new), which preserves peaks
+      // but produces asymmetric flicker — upward pulses appear instantly while
+      // downward ones smooth out. For beam-style per-stripe samples we want
+      // rise and fall to be smoothed equally, since the AA fringe at the disk
+      // perimeter generates symmetric per-frame fluctuations rather than rare
+      // bright transients we'd want to preserve.
+      //
+      // First-frame cost: prev is zero on start(), so the image fades in over
+      // ~1/(1-dr) frames (≈7 frames at dr=0.85, ~110ms). Reads as a CRT warm-up.
+      const p = this.opts.persistence;
+      const d = this.opts.perChannelDecay;
+      const dr = Math.min(0.99, p * d.r);
+      const dg = Math.min(0.99, p * d.g);
+      const db = Math.min(0.99, p * d.b);
+      const n = this.cellsR.length;
+      for (let i = 0; i < n; i++) {
+        this.cellsR[i] = this.prevR[i] * dr + this.cellsR[i] * (1 - dr);
+        this.cellsG[i] = this.prevG[i] * dg + this.cellsG[i] * (1 - dg);
+        this.cellsB[i] = this.prevB[i] * db + this.cellsB[i] * (1 - db);
+      }
+      this.prevR.set(this.cellsR);
+      this.prevG.set(this.cellsG);
+      this.prevB.set(this.cellsB);
+    }
+
     _renderStripes(timeMs) {
       const [vw, vh] = this.opts.viewSize;
       const cs = this.opts.cellSize;
@@ -297,7 +396,11 @@
       // Hoist hot-loop reads out of the 40k-iter inner body.
       const hotspot = this.opts.hotspot;
       const shimmer = this.opts.shimmer;
-      const k = this.opts.phosphorCoupling;
+      // Beam mode forces coupling to 0: cellsR/G/B are already per-stripe
+      // samples, so cross-channel mixing would re-collapse the triad we
+      // sampled separately. In cell mode, coupling compensates for the
+      // cell→stripe brightness loss as before.
+      const k = (this.opts.samplingMode === 'beam') ? 0 : this.opts.phosphorCoupling;
       const cellsR = this.cellsR, cellsG = this.cellsG, cellsB = this.cellsB;
       const shim = this.shimmerNoise;
       const cellCenter = cs >> 1;

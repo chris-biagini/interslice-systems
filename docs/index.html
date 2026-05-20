@@ -1215,20 +1215,30 @@
         canvasSize: [280, 280],
         // stdDev=13 matches the SVG fallback's #phosphor-bleed filter.
         bleedRadius: 13,
-        // +25% over the SVG fallback's feFuncA slope for a punchier halo.
-        bleedIntensity: 1.625,
+        // Beam mode delivers ~half the per-pixel brightness of cell+coupling
+        // mode (only 1 of 3 stripes is lit per saturated cell). Bumped halo
+        // intensity makes up the difference globally; phosphorBlurPx (below)
+        // does the rest by softening the dark gaps between lit stripes.
+        bleedIntensity: 2.2,
         // Static R/B fringe; drift turned off (read as page jitter, not CRT).
         convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
         convergenceDriftAmplitudePx: 0.0,
-        // Pure stripes deliver only ~1/3 the apparent brightness of a
-        // solid-base phosphor; coupling≈0.55 lets adjacent stripes carry
-        // some of the dominant channel back into the pixel so the logo
-        // reads as vivid phosphor while keeping subpixel structure.
+        // Ignored in beam mode (_renderStripes forces k=0 there); kept as
+        // documentation of the cell-mode value for easy A/B by flipping
+        // samplingMode below.
         phosphorCoupling: 0.55,
-        // Sub-pixel blur softens LCD-sharp pixel edges into lit-phosphor
-        // dots through curved glass.
-        phosphorBlurPx: 0.3,
-        persistence: 0.85,
+        // Heavier blur than cell mode: lit and dark stripes are more
+        // extreme in beam mode, so more bleed between them is needed to
+        // read as lit phosphor through glass rather than LCD subpixels.
+        phosphorBlurPx: 0.55,
+        // Beam mode — per-stripe alpha-weighted sampling + symmetric lerp
+        // persistence. Fixes the disk-perimeter flicker that came from
+        // cell-mode averaging discarding alpha and collapsing edge cells
+        // into single-hue blocks. Flip to 'cell' to A/B against the
+        // original pipeline.
+        samplingMode: 'beam',
+        beamBrightnessBoost: 1.0,
+        persistence: 0.88,
         hotspot: 0.30,
       });
       window.__trinitron = trinitron;
