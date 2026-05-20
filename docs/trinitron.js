@@ -12,6 +12,12 @@
         bleedRadius: 30,
         bleedIntensity: 1.0,
         silhouettePath: null,
+        // Optional separate signal source for the bleed/halo. If provided,
+        // the bleed reflects this canvas's content instead of the main
+        // signal — useful when the displayed image has effects that you
+        // *don't* want appearing in the halo (e.g., specular shines on
+        // an Aqua-button treatment should not appear in the leak).
+        bleedSignal: null,
         persistence: 0.85,
         perChannelDecay: { r: 1.00, g: 0.94, b: 1.04 },
         convergence: { r: [-0.5, -0.5], g: [0.0, 0.0], b: [0.5, 0.5] },
@@ -101,50 +107,32 @@
       this.stripeCanvas.height = vh;
       this.stripeCtx = this.stripeCanvas.getContext('2d');
 
-      // Bleed: render cell grid as R/G/B-tinted intermediate at full canvas
-      // resolution, then gaussian-blur each. We allocate three offscreen
-      // canvases sized to the full canvas (so the blur kernel doesn't
-      // truncate at the source region's edge). bleedRadius is already
-      // defaulted via Object.assign above; no second guard needed.
+      // Bleed: blur a separate "bleed source" canvas onto the bleed
+      // canvas, then drawImage onto the output. The bleed source is
+      // typically the same colored phosphor that drives the cell-grid
+      // sampling, but without any display-only embellishments (e.g., the
+      // Aqua-button treatment), so the halo reflects the raw phosphor
+      // leak — not the displayed image's specular shines.
       this.bleedRadius = this.opts.bleedRadius;
 
-      // willReadFrequently=true on the bleed channel canvases since _frame
-      // calls getImageData on each every frame to merge them.
-      this.bleedRCanvas = document.createElement('canvas');
-      this.bleedRCanvas.width = cw;
-      this.bleedRCanvas.height = ch;
-      this.bleedRCtx = this.bleedRCanvas.getContext('2d', { willReadFrequently: true });
+      // Bleed source canvas — the caller's bleedSignal callback (if any)
+      // paints into this each frame. If no bleedSignal is provided, the
+      // renderer falls back to bleeding from the main signal canvas
+      // (which means any Aqua-type effects bake into the halo too).
+      this.bleedSignalCanvas = document.createElement('canvas');
+      this.bleedSignalCanvas.width = vw;
+      this.bleedSignalCanvas.height = vh;
+      this.bleedSignalCtx = this.bleedSignalCanvas.getContext('2d');
+      this.bleedSignalCtx.imageSmoothingEnabled = false;
 
-      this.bleedGCanvas = document.createElement('canvas');
-      this.bleedGCanvas.width = cw;
-      this.bleedGCanvas.height = ch;
-      this.bleedGCtx = this.bleedGCanvas.getContext('2d', { willReadFrequently: true });
-
-      this.bleedBCanvas = document.createElement('canvas');
-      this.bleedBCanvas.width = cw;
-      this.bleedBCanvas.height = ch;
-      this.bleedBCtx = this.bleedBCanvas.getContext('2d', { willReadFrequently: true });
-
-      // ImageData for painting cell grids into the bleed canvases, plus a
-      // tiny tmp canvas + cached context that we putImageData onto and then
-      // drawImage-upscale from. All sized to the cell grid (66×66 by
-      // default) — fixed at construction, never resized.
-      this.cellPaintImageData = this.bleedRCtx.createImageData(this.cellGridW, this.cellGridH);
-      this.bleedPaintTmp = document.createElement('canvas');
-      this.bleedPaintTmp.width = this.cellGridW;
-      this.bleedPaintTmp.height = this.cellGridH;
-      this.bleedPaintTmpCtx = this.bleedPaintTmp.getContext('2d');
-
-      // Bleed merge canvas: holds the per-channel-merged RGB image at
-      // canvas-logical resolution (cw × ch). We putImageData into this
-      // intermediate, then drawImage onto the main output — that way the
-      // main ctx's dpr scale transform is respected (putImageData would
-      // ignore it and only fill the top-left cw × ch device pixels).
-      this.bleedMergeCanvas = document.createElement('canvas');
-      this.bleedMergeCanvas.width = cw;
-      this.bleedMergeCanvas.height = ch;
-      this.bleedMergeCtx = this.bleedMergeCanvas.getContext('2d');
-      this.bleedMergeImageData = this.bleedMergeCtx.createImageData(cw, ch);
+      // Bleed canvas — the blurred bleed source, full canvas size with
+      // margin for the blur kernel's extent. drawImage'd onto the main
+      // ctx (which has the dpr scale transform), so the bleed extends
+      // across the displayed canvas region correctly.
+      this.bleedCanvas = document.createElement('canvas');
+      this.bleedCanvas.width = cw;
+      this.bleedCanvas.height = ch;
+      this.bleedCtx = this.bleedCanvas.getContext('2d');
 
       // Silhouette path (for clipping the bleed). Pre-create a Path2D from
       // the SVG path string if provided. Default null = no silhouette clip.
@@ -198,65 +186,40 @@
       const [vw, vh] = this.opts.viewSize;
       const [cw, ch] = this.opts.canvasSize;
 
-      // 1. Capture signal
+      // 1. Capture the display signal — what the Trinitron shows on its
+      //    phosphors, including any Aqua / specular treatments.
       this.signalCtx.clearRect(0, 0, vw, vh);
       this.opts.signal(this.signalCtx, timeMs);
 
-      // 2. Sample cells
+      // 1b. If the caller provided a separate bleed source, paint it. This
+      //     lets the halo reflect the raw colored phosphor without the
+      //     display's Aqua specular shines bleeding into the leak.
+      if (this.opts.bleedSignal) {
+        this.bleedSignalCtx.clearRect(0, 0, vw, vh);
+        this.opts.bleedSignal(this.bleedSignalCtx, timeMs);
+      }
+
+      // 2. Sample cells from the display signal
       this._sampleCells();
 
-      // 2.5. Apply persistence (max-blend with decayed previous frame)
+      // 2.5. Persistence + scan-band modulations on the cell values
       this._applyPersistence();
-
-      // 2.7. Apply cell modulations (N2 scan-band — affects both stripes and bleed)
       this._applyCellModulations(timeMs);
 
       // 3. Render stripes into ImageData → stripeCanvas
       this._renderStripes(timeMs);
       this.stripeCtx.putImageData(this.stripeImageData, 0, 0);
 
-      // 4. Render bleed into the three per-channel canvases
+      // 4. Compute the bleed by blurring the bleed source canvas. One blur,
+      //    one drawImage — the renderer no longer needs the per-channel
+      //    extraction + cherry-pick that the cell-grid bleed required.
+      //    Browser's canvas filter blurs per-channel under the hood, so a
+      //    single blur produces the correct per-channel falloff.
       this._renderBleed();
 
-      // 5. Composite to output: bleed first, then stripes on top
+      // 5. Composite to output: clear, bleed underneath, stripes on top.
       this.ctx.clearRect(0, 0, cw, ch);
-
-      // Bleed: merge three per-channel blurred canvases into a single RGB
-      // image. Each source canvas was painted with v in all of R/G/B
-      // (grayscale) and blurred — so rPix[i], rPix[i+1], rPix[i+2] are equal
-      // per pixel of the R-blur. We cherry-pick channel-by-channel to build
-      // the merged result, then putImageData into an intermediate canvas
-      // (which has no scale transform), and finally drawImage onto the main
-      // output so the dpr scale is respected.
-      const bd = this.bleedMergeImageData.data;
-      const rPix = this.bleedRCtx.getImageData(0, 0, cw, ch).data;
-      const gPix = this.bleedGCtx.getImageData(0, 0, cw, ch).data;
-      const bPix = this.bleedBCtx.getImageData(0, 0, cw, ch).data;
-      const bi = this.opts.bleedIntensity;
-      for (let i = 0; i < bd.length; i += 4) {
-        // Each channel is scaled by bleedIntensity (cheat for visibility —
-        // real CRTs are dim, portfolio demos want a strong glow).
-        const r = Math.min(255, rPix[i]     * bi);
-        const g = Math.min(255, gPix[i + 1] * bi);
-        const b = Math.min(255, bPix[i + 2] * bi);
-        bd[i]     = r;
-        bd[i + 1] = g;
-        bd[i + 2] = b;
-        // Alpha = brightness of the most-lit channel at this pixel. Dark
-        // (zero) bleed pixels stay transparent so the page bg shows through.
-        bd[i + 3] = Math.max(r, g, b);
-      }
-      this.bleedMergeCtx.putImageData(this.bleedMergeImageData, 0, 0);
-      // drawImage respects the dpr scale on this.ctx, so the cw × ch bleed
-      // image gets stretched to fill the full canvas correctly.
-      this.ctx.drawImage(this.bleedMergeCanvas, 0, 0);
-
-      // Stripes on top via drawImage (NOT putImageData — drawImage respects
-      // alpha so dark stripe pixels let the bleed show through; putImageData
-      // would overwrite and erase the bleed in source-region-but-unlit areas).
-      // Apply phosphorBlurPx if set — softens the hard pixel edges into a
-      // more "lit-phosphor-through-glass" look without obscuring the cell
-      // quantization. Reset filter after so it doesn't bleed into other ops.
+      this.ctx.drawImage(this.bleedCanvas, 0, 0);
       const blur = this.opts.phosphorBlurPx;
       if (blur > 0) this.ctx.filter = `blur(${blur}px)`;
       this.ctx.drawImage(this.stripeCanvas, this.bleedMargin, this.bleedMargin);
@@ -442,40 +405,28 @@
       const [vw, vh] = this.opts.viewSize;
       const [cw, ch] = this.opts.canvasSize;
       const margin = this.bleedMargin;
+      // Source: bleedSignalCanvas if the caller supplied a bleedSignal,
+      // otherwise fall back to the main signal (which means any display-
+      // only effects will bleed into the halo too).
+      const source = this.opts.bleedSignal ? this.bleedSignalCanvas : this.signalCanvas;
 
-      // For each channel: paint that channel's cell array into the shared
-      // ImageData (storing v in R, G, B so the upscale stays a faithful
-      // grayscale source), put it onto our pre-allocated tmp canvas, then
-      // drawImage-upscale with smoothing + a blur filter onto the channel's
-      // bleed canvas.
-      const paintChannel = (cells, ctx) => {
-        const pd = this.cellPaintImageData.data;
-        for (let i = 0, j = 0; i < cells.length; i++, j += 4) {
-          const v = cells[i];
-          pd[j]     = v;
-          pd[j + 1] = v;
-          pd[j + 2] = v;
-          pd[j + 3] = 255;
-        }
-        this.bleedPaintTmpCtx.putImageData(this.cellPaintImageData, 0, 0);
-        ctx.clearRect(0, 0, cw, ch);
-        // Smoothing ON for the upscale — that's the "blur from blocks" base.
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        // bleedRadius is the blur stdDev directly. Visible extent of a
-        // Gaussian blur is ~3*stdDev, so a value of 13 reaches ~39 logical
-        // units past the silhouette — matches the SVG #phosphor-bleed
-        // filter's far blur. Don't set it larger than the canvas margin
-        // (canvasSize - viewSize)/2 or the blur tail will get clipped at
-        // the canvas edge and the halo will look uneven.
-        ctx.filter = `blur(${this.bleedRadius}px)`;
-        ctx.drawImage(this.bleedPaintTmp, margin, margin, vw, vh);
-        ctx.filter = 'none';
-      };
-
-      paintChannel(this.cellsR, this.bleedRCtx);
-      paintChannel(this.cellsG, this.bleedGCtx);
-      paintChannel(this.cellsB, this.bleedBCtx);
+      // One blur, one drawImage. The canvas filter applies the Gaussian
+      // per-channel (so R bleeds out as red, G as green, B as blue —
+      // exactly the per-channel additive falloff the SVG #phosphor-bleed
+      // filter computes via feColorMatrix + feGaussianBlur + feBlend
+      // screen-blend). brightness() boosts the result by bleedIntensity.
+      //
+      // bleedRadius IS the blur stdDev — visible extent is ~3*stdDev, so a
+      // value of 13 reaches ~39 logical units past the silhouette. Keep
+      // bleedRadius ≤ (canvasSize - viewSize)/2 or the tail will clip at
+      // the canvas edge and the halo will look uneven (asymmetric).
+      this.bleedCtx.clearRect(0, 0, cw, ch);
+      const bi = this.opts.bleedIntensity;
+      this.bleedCtx.filter =
+        `blur(${this.bleedRadius}px)` +
+        (bi !== 1 ? ` brightness(${bi})` : '');
+      this.bleedCtx.drawImage(source, margin, margin);
+      this.bleedCtx.filter = 'none';
     }
   }
 

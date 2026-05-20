@@ -1248,9 +1248,8 @@
       return; // Fall back to SVG implementation
     }
 
-    function signal(ctx, timeMs) {
-      // ctx is a 200×200-coordinate offscreen 2D context.
-      // 1. Base colored phosphor — static arms + rotating hub.
+    // Base painting (arms + rotating hub) is shared by both signal sources.
+    function paintBase(ctx, timeMs) {
       ctx.drawImage(armsImg, 0, 0, 200, 200);
       ctx.save();
       ctx.translate(100, 100);
@@ -1258,17 +1257,29 @@
       ctx.translate(-100, -100);
       ctx.drawImage(hubImg, 0, 0, 200, 200);
       ctx.restore();
-      // 2. Aqua-button treatment — inner glow + top specular + bottom
-      //    wet-bead reflection, per lobe. source-atop clips to wherever
-      //    the signal is already painted (i.e., the bubble silhouette).
-      //    The hub's Aqua shines stay fixed at the disc's geometric top
-      //    while the petals rotate underneath — different colored petals
-      //    take turns being highlighted as they sweep through the
-      //    highlight zone.
+    }
+
+    // Display signal — what the Trinitron's phosphors show. Base colored
+    // phosphor plus the Aqua-button treatment (inner glow + top specular
+    // shine + bottom wet-bead reflection), painted with source-atop so
+    // the highlights conform to the bubble silhouette.
+    function signal(ctx, timeMs) {
+      paintBase(ctx, timeMs);
       ctx.save();
       ctx.globalCompositeOperation = 'source-atop';
       ctx.drawImage(aquaImg, 0, 0, 200, 200);
       ctx.restore();
+    }
+
+    // Bleed signal — raw colored phosphor only. Matches the SVG fallback's
+    // halo behavior: the cell-color leaking through the cutout's edges
+    // shouldn't include the displayed image's specular shines. Without
+    // this, the Aqua-whitened tops of each lobe would brighten the bleed
+    // disproportionately upward (a "cone of light above the red ball"
+    // when the red lobe's top is the brightest part of the displayed
+    // image but shouldn't be the brightest source of leak).
+    function bleedSignal(ctx, timeMs) {
+      paintBase(ctx, timeMs);
     }
 
     // Approximate silhouette: the three pinwheel-tip balls (r=24 each)
@@ -1287,6 +1298,7 @@
     try {
       trinitron = new window.Trinitron(canvas, {
         signal,
+        bleedSignal,
         silhouettePath: SILHOUETTE_PATH,
         // Bigger canvas (40-unit margins) to give the halo more room and
         // a beefier blur radius to match what the SVG #phosphor-bleed
