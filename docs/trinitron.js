@@ -19,6 +19,8 @@
         hotspot: 0.15,
         shimmer: 0.04,
         shimmerSeed: 1983,
+        scanBandPeriodSec: 7,
+        scanBandStrength: 0.08,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -172,6 +174,9 @@
       // 2.5. Apply persistence (max-blend with decayed previous frame)
       this._applyPersistence();
 
+      // 2.7. Apply cell modulations (N2 scan-band — affects both stripes and bleed)
+      this._applyCellModulations(timeMs);
+
       // 3. Render stripes into ImageData → stripeCanvas
       this._renderStripes(timeMs);
       this.stripeCtx.putImageData(this.stripeImageData, 0, 0);
@@ -231,6 +236,27 @@
           this.cellsR[ci] = px[pi];
           this.cellsG[ci] = px[pi + 1];
           this.cellsB[ci] = px[pi + 2];
+        }
+      }
+    }
+
+    _applyCellModulations(timeMs) {
+      // N2 scan-band: a cosine envelope sweeps top-to-bottom every
+      // scanBandPeriodSec. Modulates each cell's brightness uniformly
+      // (so the halo derived from these cells also shows the band).
+      const ch = this.cellGridH;
+      const cw = this.cellGridW;
+      const period = this.opts.scanBandPeriodSec;
+      const strength = this.opts.scanBandStrength;
+      const phase = (timeMs / 1000) / period;
+
+      for (let cy = 0; cy < ch; cy++) {
+        const mod = 1 + strength * Math.cos(2 * Math.PI * (cy / ch - phase));
+        for (let cx = 0; cx < cw; cx++) {
+          const ci = cy * cw + cx;
+          this.cellsR[ci] *= mod;
+          this.cellsG[ci] *= mod;
+          this.cellsB[ci] *= mod;
         }
       }
     }
