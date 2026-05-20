@@ -10,6 +10,7 @@
         canvasSize: [240, 240],
         cellSize: 3,
         bleedRadius: 30,
+        bleedIntensity: 1.0,
         silhouettePath: null,
         persistence: 0.85,
         perChannelDecay: { r: 1.00, g: 0.94, b: 1.04 },
@@ -21,6 +22,15 @@
         shimmerSeed: 1983,
         scanBandPeriodSec: 7,
         scanBandStrength: 0.08,
+        // Phosphor coupling: imperfect aperture-grille masking lets the
+        // electron beam excite ADJACENT stripes a little. 0 = pure stripe
+        // (one channel per pixel, dim); higher values = brighter, softer
+        // phosphor with less aggressive subpixel banding.
+        phosphorCoupling: 0.0,
+        // Post-stripe blur (CSS px), applied when drawImage'ing the stripe
+        // canvas onto the main canvas. Softens the LCD-like sharp pixel
+        // edges into something more "lit phosphor through glass."
+        phosphorBlurPx: 0.0,
         signal: () => {},
         respectReducedMotion: true,
       }, opts);
@@ -222,13 +232,19 @@
       const rPix = this.bleedRCtx.getImageData(0, 0, cw, ch).data;
       const gPix = this.bleedGCtx.getImageData(0, 0, cw, ch).data;
       const bPix = this.bleedBCtx.getImageData(0, 0, cw, ch).data;
+      const bi = this.opts.bleedIntensity;
       for (let i = 0; i < bd.length; i += 4) {
-        bd[i]     = rPix[i];     // R from R-blur
-        bd[i + 1] = gPix[i + 1]; // G from G-blur
-        bd[i + 2] = bPix[i + 2]; // B from B-blur
+        // Each channel is scaled by bleedIntensity (cheat for visibility —
+        // real CRTs are dim, portfolio demos want a strong glow).
+        const r = Math.min(255, rPix[i]     * bi);
+        const g = Math.min(255, gPix[i + 1] * bi);
+        const b = Math.min(255, bPix[i + 2] * bi);
+        bd[i]     = r;
+        bd[i + 1] = g;
+        bd[i + 2] = b;
         // Alpha = brightness of the most-lit channel at this pixel. Dark
         // (zero) bleed pixels stay transparent so the page bg shows through.
-        bd[i + 3] = Math.max(rPix[i], gPix[i + 1], bPix[i + 2]);
+        bd[i + 3] = Math.max(r, g, b);
       }
       this.bleedMergeCtx.putImageData(this.bleedMergeImageData, 0, 0);
       // drawImage respects the dpr scale on this.ctx, so the cw × ch bleed
@@ -238,7 +254,13 @@
       // Stripes on top via drawImage (NOT putImageData — drawImage respects
       // alpha so dark stripe pixels let the bleed show through; putImageData
       // would overwrite and erase the bleed in source-region-but-unlit areas).
+      // Apply phosphorBlurPx if set — softens the hard pixel edges into a
+      // more "lit-phosphor-through-glass" look without obscuring the cell
+      // quantization. Reset filter after so it doesn't bleed into other ops.
+      const blur = this.opts.phosphorBlurPx;
+      if (blur > 0) this.ctx.filter = `blur(${blur}px)`;
       this.ctx.drawImage(this.stripeCanvas, this.bleedMargin, this.bleedMargin);
+      if (blur > 0) this.ctx.filter = 'none';
     }
 
     _sampleCells() {
@@ -366,16 +388,29 @@
 
           const totalMod = scanDim * hotMod * shimMod;
 
-          let r = 0, g = 0, b = 0;
-          if (subX === 0) r = sampleCell(this.cellsR, px, py, rdx, rdy);
-          else if (subX === 1) g = sampleCell(this.cellsG, px, py, gdx, gdy);
-          else b = sampleCell(this.cellsB, px, py, bdx, bdy);
+          // Phosphor coupling: real Trinitron aperture grilles don't
+          // perfectly mask the electron beam — adjacent stripes pick up
+          // some bleed. We sample all three channels every pixel and let
+          // the non-dominant ones contribute at `coupling` of their cell
+          // value. coupling=0 → pure stripe (one channel per pixel, dim
+          // and LCD-like); coupling≈0.3 → brighter, softer, more like a
+          // real lit phosphor.
+          const sR = sampleCell(this.cellsR, px, py, rdx, rdy);
+          const sG = sampleCell(this.cellsG, px, py, gdx, gdy);
+          const sB = sampleCell(this.cellsB, px, py, bdx, bdy);
+          const k = this.opts.phosphorCoupling;
+          let r, g, b;
+          if (subX === 0)      { r = sR;     g = sG * k; b = sB * k; }
+          else if (subX === 1) { r = sR * k; g = sG;     b = sB * k; }
+          else                 { r = sR * k; g = sG * k; b = sB;     }
 
           out[oi]     = Math.min(255, r * totalMod);
           out[oi + 1] = Math.min(255, g * totalMod);
           out[oi + 2] = Math.min(255, b * totalMod);
-          // Conditional alpha — keep the bleed-show-through behavior from Task 3.
-          out[oi + 3] = (r + g + b > 0) ? 255 : 0;
+          // Alpha=255 if any of the three sampled channels was lit. Use
+          // the raw samples (not r/g/b) so coupling=0 still lights the
+          // pixel correctly when its dominant channel was the lit one.
+          out[oi + 3] = (sR + sG + sB > 0) ? 255 : 0;
         }
       }
     }

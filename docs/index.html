@@ -109,7 +109,7 @@
   .trinitron {
     position: absolute;
     --svg-size: 168px;
-    --canvas-to-view: calc(240 / 200);  /* keep in sync with renderer opts */
+    --canvas-to-view: calc(280 / 200);  /* keep in sync with renderer opts */
     width:  calc(var(--svg-size) * var(--canvas-to-view));
     height: calc(var(--svg-size) * var(--canvas-to-view));
     top:    calc(var(--svg-size) * (1 - var(--canvas-to-view)) / 2);
@@ -1166,13 +1166,17 @@
   // render, persistence, halo, scan-band, etc. The gradient mirrors the
   // SVG #crt-glass def verbatim (top-bright primary band + faint
   // secondary lower down).
+  // Aqua gloss for the signal — milder than the SVG-fallback gradient
+  // because the canvas pipeline whitens the top through phosphor coupling
+  // anyway, and the SVG's 22% peak read too pink/desaturated after the
+  // coupling math. Top primary band at 12%, faint secondary at 3%.
   const GLOSS_MARKUP = `
     <defs>
       <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.22"/>
-        <stop offset="14%"  stop-color="#FFFFFF" stop-opacity="0.07"/>
+        <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.12"/>
+        <stop offset="14%"  stop-color="#FFFFFF" stop-opacity="0.04"/>
         <stop offset="32%"  stop-color="#FFFFFF" stop-opacity="0"/>
-        <stop offset="58%"  stop-color="#FFFFFF" stop-opacity="0.05"/>
+        <stop offset="58%"  stop-color="#FFFFFF" stop-opacity="0.03"/>
         <stop offset="74%"  stop-color="#FFFFFF" stop-opacity="0"/>
         <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
       </linearGradient>
@@ -1238,6 +1242,36 @@
       trinitron = new window.Trinitron(canvas, {
         signal,
         silhouettePath: SILHOUETTE_PATH,
+        // Bigger canvas (40-unit margins) to give the halo more room and
+        // a beefier blur radius to match what the SVG #phosphor-bleed
+        // filter does in the no-JS fallback.
+        canvasSize: [280, 280],
+        bleedRadius: 45,
+        bleedIntensity: 2.2,
+        // Tame the convergence stutter — drift was reading as page jitter
+        // rather than as authentic CRT misalignment. Keep a hair of static
+        // offset so close inspection still shows R/B fringing.
+        convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
+        convergenceDriftAmplitudePx: 0.0,
+        // Phosphor coupling: light adjacent stripes at this fraction of
+        // their cell value. The live-SVG fallback cheats by painting a
+        // solid colored base under 65%-alpha stripes — without that, pure
+        // stripes deliver only ~1/3 the apparent brightness. coupling=0.55
+        // restores enough brightness/saturation that the logo reads as
+        // vivid phosphor at a glance, while still keeping the per-column
+        // dominant-channel structure visible on close inspection.
+        phosphorCoupling: 0.55,
+        // Tiny blur at draw-time turns hard pixel edges into soft glowing
+        // dots — the difference between "screenshot of an LCD" and "lit
+        // phosphor through curved glass."
+        phosphorBlurPx: 0.5,
+        // Longer persistence smooths the cell-sampling sparkle at the
+        // rotating hub's periphery — when a petal edge crosses a cell
+        // boundary the trail averages it out instead of flickering.
+        persistence: 0.92,
+        // Bigger hotspot makes the cell centers feel like brightness peaks
+        // rather than barely-perceptible variations.
+        hotspot: 0.30,
       });
       window.__trinitron = trinitron;
     } catch (err) {
