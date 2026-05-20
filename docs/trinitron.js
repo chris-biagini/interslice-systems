@@ -139,13 +139,20 @@
         ? new Path2D(this.opts.silhouettePath)
         : null;
 
+      this._wasStartedByUser = false;
+      this._setupReducedMotionListener();
       this._rafHandle = null;
       this._startTime = null;
     }
 
     start() {
+      this._wasStartedByUser = true;
       if (this._rafHandle != null) return;
       this._startTime = performance.now();
+      if (this._reducedMotionMq && this._reducedMotionMq.matches) {
+        this._frame(0);
+        return;
+      }
       const tick = (now) => {
         this._frame(now - this._startTime);
         this._rafHandle = requestAnimationFrame(tick);
@@ -158,6 +165,18 @@
         cancelAnimationFrame(this._rafHandle);
         this._rafHandle = null;
       }
+    }
+
+    _setupReducedMotionListener() {
+      if (!this.opts.respectReducedMotion) return;
+      const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this._reducedMotionMq = mq;
+      this._reducedMotionHandler = () => {
+        if (mq.matches) this.stop();
+        else if (this._wasStartedByUser) this.start();
+      };
+      if (mq.addEventListener) mq.addEventListener('change', this._reducedMotionHandler);
+      else if (mq.addListener) mq.addListener(this._reducedMotionHandler);
     }
 
     _frame(timeMs) {

@@ -1186,20 +1186,41 @@
       'M 162.35 136 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
       'M 100 100 m -34 0 a 34 34 0 1 0 68 0 a 34 34 0 1 0 -68 0';
 
+    let trinitron;
     try {
-      const trinitron = new window.Trinitron(canvas, {
+      trinitron = new window.Trinitron(canvas, {
         signal,
         silhouettePath: SILHOUETTE_PATH,
       });
       window.__trinitron = trinitron;
+    } catch (err) {
+      return; // Silent fallback to SVG
+    }
 
+    function syncWithTheme() {
       if (isDark()) {
         trinitron.start();
         document.documentElement.classList.add('trinitron-active');
+      } else {
+        trinitron.stop();
+        document.documentElement.classList.remove('trinitron-active');
       }
-    } catch (err) {
-      // Silent fallback
     }
+
+    syncWithTheme();
+
+    // Re-sync when OS preference changes
+    const colorMq = window.matchMedia('(prefers-color-scheme: dark)');
+    const colorHandler = () => syncWithTheme();
+    if (colorMq.addEventListener) colorMq.addEventListener('change', colorHandler);
+    else if (colorMq.addListener) colorMq.addListener(colorHandler);
+
+    // Re-sync when data-theme changes (manual toggle via DevTools or future UI)
+    const themeObserver = new MutationObserver(syncWithTheme);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
   }
 
   if (document.readyState === 'loading') {
