@@ -1158,8 +1158,22 @@
       ctx.restore();
     }
 
+    // SVG silhouette path: same shape as #logo-mask in the SVG defs.
+    // Compose three thick stroke paths (arms) + three balls + the pinwheel
+    // outer hexagon, expressed as a single path commands string.
+    // For now, use a single union approximated as the bounding boxes;
+    // refine later if needed.
+    const SILHOUETTE_PATH =
+      'M 100 28 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
+      'M 37.65 136 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
+      'M 162.35 136 m -24 0 a 24 24 0 1 0 48 0 a 24 24 0 1 0 -48 0 ' +
+      'M 100 100 m -34 0 a 34 34 0 1 0 68 0 a 34 34 0 1 0 -68 0';
+
     try {
-      const trinitron = new window.Trinitron(canvas, { signal });
+      const trinitron = new window.Trinitron(canvas, {
+        signal,
+        silhouettePath: SILHOUETTE_PATH,
+      });
       window.__trinitron = trinitron;
 
       if (isDark()) {
