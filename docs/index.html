@@ -93,14 +93,28 @@
   }
 
   /* Trinitron canvas overlay — dark mode only, sits below the .mark SVG.
-     Default display: none; only the two dark-mode paths reveal it. */
+     Default display: none; only the two dark-mode paths reveal it.
+
+     Sizing & positioning: the canvas's internal pixel buffer is 240×240
+     logical units (= viewSize 200 + bleedRadius margins of 20 each side),
+     but visually we want the *source region* (the 200-unit inner area
+     where the logo is painted) to match the SVG mark's 168×168 CSS size.
+     So the displayed canvas is 168 × (240/200) = 201.6px, and we position
+     it −16.8px above the SVG's flex slot so the canvas's vertical center
+     coincides with the SVG's vertical center. Horizontal centering uses
+     the flex-column's align-items: center.
+
+     If you ever change canvasSize/viewSize in trinitron.js, update the
+     calc() ratio below to match. */
   .trinitron {
     position: absolute;
-    /* Center over the SVG mark, which is 168×168. The canvas is 240×240
-       logical, so it extends ~36px past the silhouette on each side for
-       the bleed halo to live in. */
-    width: 240px;
-    height: 240px;
+    --svg-size: 168px;
+    --canvas-to-view: calc(240 / 200);  /* keep in sync with renderer opts */
+    width:  calc(var(--svg-size) * var(--canvas-to-view));
+    height: calc(var(--svg-size) * var(--canvas-to-view));
+    top:    calc(var(--svg-size) * (1 - var(--canvas-to-view)) / 2);
+    left: 50%;
+    transform: translateX(-50%);
     pointer-events: none;
     z-index: 0;
     display: none;

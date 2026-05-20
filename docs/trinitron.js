@@ -30,8 +30,13 @@
       const [vw, vh] = this.opts.viewSize;
       this.canvas.width = cw * dpr;
       this.canvas.height = ch * dpr;
-      this.canvas.style.width = cw + 'px';
-      this.canvas.style.height = ch + 'px';
+      // NOTE: display size is now CSS's job, not the renderer's. The page
+      // knows where the canvas should sit and how big it should look; the
+      // renderer only owns the backing pixel buffer. If you instantiate
+      // Trinitron without a CSS rule sizing the canvas element, you'll get
+      // the browser's default — which on HiDPI displays will be wrong
+      // (the canvas will render at its device-pixel dimensions). Always
+      // size .trinitron via CSS.
       this.ctx.scale(dpr, dpr);
       this.ctx.imageSmoothingEnabled = false;
 
