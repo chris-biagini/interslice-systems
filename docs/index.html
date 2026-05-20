@@ -1122,8 +1122,9 @@
     <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
     <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>`;
 
-  // Rotation: 36 seconds for 360°, reverse direction (matches the existing
-  // CSS keyframe @ docs/index.html:129 / .hub-segs CSS animation).
+  // Rotation: 36 seconds for 360°, reverse direction — matches the SVG's
+  // @keyframes hub-spin + .hub-segs animation, which drive the no-JS
+  // fallback. Keep in sync if you ever retune the period.
   const ROT_PERIOD_MS = 36 * 1000;
   function hubAngleDeg(timeMs) {
     return -(timeMs / ROT_PERIOD_MS) * 360;
