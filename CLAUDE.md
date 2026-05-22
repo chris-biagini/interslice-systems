@@ -17,7 +17,7 @@ The maintainer (Chris) frames this as a long-term "tender of documents" repo. To
 ## File layout
 
 - `docs/index.html` — the entire page. All page-specific CSS is **inlined** in one `<style>` block. One `<script src="trinitron.js">` tag and one inline `<script>` block at the bottom — the only JS on the site (see "CSS-first, with one documented JS exception" below).
-- `docs/trinitron.js` — canvas-based phosphor renderer. Load-bearing for the dark-mode logo and the IS-2200 sneak-preview screen (see "Trinitron renderer" below).
+- `docs/trinitron.js` — phosphor renderer (CPU canvas path + WebGL2 GPU path). Load-bearing for the dark-mode logo and the IS-2200 hero screen (see "Trinitron renderer" below).
 - `docs/tokens.css` — the canonical design-token sheet (colors, type, semantic vars). Imported by `index.html`. Anything reusable across future documents belongs here.
 - `docs/logo_CMYK*.svg`, `docs/logo_RGBW*.svg` — the two-media logo (see "Two media" below).
 - `docs/CNAME` — Pages custom-domain config.
@@ -71,9 +71,11 @@ The one place JS *is* load-bearing is the Trinitron phosphor renderer (see next 
 Two consumers in `docs/index.html`:
 
 - **The dark-mode logo** (`canvas.trinitron`): signal is a rasterized SVG of the rotating arms + petals. Gated on `<html>` carrying `trinitron-active` so the SVG can render unchanged in light mode and the canvas overlays it in dark mode. A `MutationObserver` on `data-theme` toggles `start()` / `stop()` to drop animation cost on the off path.
-- **The IS-2200 sneak-preview screen** (`canvas.mcrt__crt`): signal is `fillText` of six lines of VT323 in CRT-palette colors plus a blinking cursor. Theme-invariant — the CRT-hardware sub-palette doesn't flip with theme, so it runs in both modes. A visually-hidden `.mcrt__a11y` mirror gives screen readers real text; the canvas paint is sighted-only.
+- **The IS-2200 hero screen** (`canvas.mcrt__crt`): signal is `fillText` of VT323 terminal lines in CRT-palette colors plus a blinking cursor at native 640×480 VGA (1280×960 canvas with `cellSize: 2`). Theme-invariant — runs in both modes. A visually-hidden `.mcrt__a11y` mirror gives screen readers real text; the canvas paint is sighted-only.
 
-The renderer is *option-driven*: same code, different look. The logo runs with `cellSize: 3`, big halo, slow persistence; the IS-2200 runs with `cellSize: 2`, no halo (`bleedIntensity: 0`), tight persistence, sharper convergence.
+The renderer is *option-driven*: same code, different look. The logo runs on the **CPU path** with `cellSize: 3`, big halo, slow persistence. The IS-2200 uses `renderer: 'auto'` — WebGL2 GPU pipeline when available, automatic CPU fallback on context-creation failure.
+
+The IS-2200 GPU pipeline is a three-pass setup (signal upload → phosphor/persistence → composite) plus three auxiliary bloom passes. All 18 effects are togglable at runtime via `window.__trinitron.effects`. The master A/B toggle (GPU on vs. raw signal bypass) is wired to a lower-left easter-egg power-button sticker on the Memphis frame; clicking it calls `setMasterMode()`. Add `?debug=1` to the URL to expose a per-effect override panel in the top-right corner. The spec and implementation plan live in `specs/2026-05-22-is2200-gpu-trinitron-design.md` and `plans/2026-05-22-is2200-gpu-trinitron-implementation.md`.
 
 There are two memory entries about deliberate aesthetic choices in this renderer — gap-mask striations bleeding into the halo, and the per-cell hotspot/shimmer texture. Both are "leave it alone, this is the look I want" entries. Don't refactor either away as accidental.
 
@@ -104,4 +106,4 @@ Standing authorization to commit and push at reasonable points without asking ea
 
 Type-checking and grep don't catch broken layouts. For CSS/visual edits, open the page in a browser and check both themes — toggle via `<html data-theme="dark">` / `data-theme="light">` in DevTools, and verify the OS-preference path still works by removing the attribute entirely.
 
-For Trinitron-renderer edits the same rule applies, plus: open the page, check that both consumers (the dark-mode logo and the IS-2200 screen) still look correct, and verify the start/stop wiring on theme toggle (`window.__trinitron` is exposed for poking in DevTools).
+For Trinitron-renderer edits the same rule applies, plus: open the page, check that both consumers (the dark-mode logo and the IS-2200 screen) still look correct, and verify the start/stop wiring on theme toggle. DevTools handles: `window.__trinitronLogo` (dark-mode logo, CPU renderer) and `window.__trinitron` (IS-2200, GPU renderer — also exposes `.effects` and `.setMasterMode()`).

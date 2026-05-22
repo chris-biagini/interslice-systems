@@ -1,11 +1,320 @@
 (function () {
   'use strict';
 
+  function compileShader(gl, type, source) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, source);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(sh);
+      gl.deleteShader(sh);
+      throw new Error('Shader compile failed: ' + log);
+    }
+    return sh;
+  }
+
+  function linkProgram(gl, vs, fs) {
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      const log = gl.getProgramInfoLog(prog);
+      gl.deleteProgram(prog);
+      throw new Error('Program link failed: ' + log);
+    }
+    return prog;
+  }
+
+  // Shared vertex shader: full-screen triangle that covers the viewport
+  // after clipping. Saves one vertex vs a quad and avoids the diagonal
+  // seam in some GPU drivers' interpolation. The explicit layout
+  // location is load-bearing — every program below relies on aPos
+  // being at attribute 0 (matches the VAO setup in _initGpu).
+  const FULLSCREEN_VS = `#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUv;
+void main() {
+  vUv = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+  // Phosphor fragment shader — Task 9: hotspot, cell shimmer, row shimmer,
+  // beam spread. Full phosphor pass.
+  // MRT: slot 0 = phosphor output, slot 1 = persistence next-frame.
+  const PHOSPHOR_FS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uSignal;
+uniform sampler2D uPersistencePrev;
+uniform vec2 uViewSize;
+uniform vec2 uCellSize;
+uniform float uPhosphorCoupling;
+uniform float uPersistence;
+uniform vec2 uConvergenceR;
+uniform vec2 uConvergenceG;
+uniform vec2 uConvergenceB;
+uniform float uHotspot;
+uniform float uCellShimmerAmp;
+uniform float uRowShimmerAmp;
+uniform uint uShimmerSeed;
+uniform float uBeamSpreadPx;
+uniform float uStripeEnabled;
+uniform float uCouplingEnabled;
+uniform float uPersistenceEnabled;
+uniform float uConvergenceEnabled;
+uniform float uHotspotEnabled;
+uniform float uCellShimmerEnabled;
+uniform float uRowShimmerEnabled;
+uniform float uBeamSpreadEnabled;
+
+layout(location = 0) out vec4 oPhosphor;
+layout(location = 1) out vec4 oPersistenceNext;
+
+// Deterministic LCG hash → [0,1].
+float lcg(uint seed) {
+  uint x = 1664525u * seed + 1013904223u;
+  return float(x) * (1.0 / 4294967296.0);
+}
+
+// Beam spread: isotropic 2D Gaussian via a 9-tap "plus" kernel
+// (5 taps along Y, 4 additional taps along X with the center shared).
+// CPU path applies cctx.filter = blur(spreadPx) which is an
+// isotropic 2D blur — earlier Y-only approximation here was wrong.
+vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPx) {
+  if (spreadPx < 0.7) return texture(tex, uv);  // sub-pixel-blur no-ops
+  float dx = spreadPx / uViewSize.x;
+  float dy = spreadPx / uViewSize.y;
+  // 1D Gaussian weights for sigma ≈ spreadPx (normalized to sum 1):
+  // center 0.252, ±1σ 0.226 each, ±2σ 0.148 each → sum ≈ 1.0.
+  // Applied separably along each axis with the center shared
+  // gives a 9-tap "plus" kernel that approximates the 2D blur.
+  vec4 sum = texture(tex, uv)                                * 0.252;
+  sum     += texture(tex, uv + vec2(0.0, -1.0 * dy))          * 0.226;
+  sum     += texture(tex, uv + vec2(0.0,  1.0 * dy))          * 0.226;
+  sum     += texture(tex, uv + vec2(0.0, -2.0 * dy))          * 0.148;
+  sum     += texture(tex, uv + vec2(0.0,  2.0 * dy))          * 0.148;
+  sum     += texture(tex, uv + vec2(-1.0 * dx, 0.0))          * 0.226;
+  sum     += texture(tex, uv + vec2( 1.0 * dx, 0.0))          * 0.226;
+  sum     += texture(tex, uv + vec2(-2.0 * dx, 0.0))          * 0.148;
+  sum     += texture(tex, uv + vec2( 2.0 * dx, 0.0))          * 0.148;
+  // Sum of weights = 0.252 + 4*0.226 + 4*0.148 = 1.748. Normalize.
+  return sum / 1.748;
+}
+
+void main() {
+  vec2 dR = (uConvergenceR / uViewSize) * uConvergenceEnabled;
+  vec2 dG = (uConvergenceG / uViewSize) * uConvergenceEnabled;
+  vec2 dB = (uConvergenceB / uViewSize) * uConvergenceEnabled;
+
+  float beamSpread = uBeamSpreadPx * uBeamSpreadEnabled;
+  float sR = sampleBeamSpread(uSignal, vUv + dR, beamSpread).r;
+  float sG = sampleBeamSpread(uSignal, vUv + dG, beamSpread).g;
+  float sB = sampleBeamSpread(uSignal, vUv + dB, beamSpread).b;
+  float sA = sampleBeamSpread(uSignal, vUv, beamSpread).a;
+  vec4 live = vec4(sR, sG, sB, sA);
+
+  vec4 prev = texture(uPersistencePrev, vUv);
+  float dr = uPersistence * uPersistenceEnabled;
+  vec4 lerped = prev * dr + live * (1.0 - dr);
+
+  // Store pre-stripe value so weights don't compound across frames.
+  oPersistenceNext = lerped;
+
+  vec2 px = vUv * uViewSize;
+  int subX = int(mod(px.x, uCellSize.x));
+  int subY = int(mod(px.y, uCellSize.y));
+
+  // Stripe weights. General layout: subX=0→R primary, 1→G, 2→B,
+  // anything else → gap (only coupling). Works for cs=2 (R+G, no B
+  // primary — B via coupling only, matches original IS-2200 identity),
+  // cs=3 (R+G+B triad, no gap — matches dark-mode logo), cs=4
+  // (R+G+B+gap — proper aperture grille with darkened gap column).
+  float coupling = uPhosphorCoupling * uCouplingEnabled;
+  vec3 weights = vec3(coupling, coupling, coupling);
+  if (subX == 0) weights.r = 1.0;
+  else if (subX == 1) weights.g = 1.0;
+  else if (subX == 2) weights.b = 1.0;
+  // subX >= 3: stays at coupling (gap column for cs=4+)
+  weights = mix(vec3(1.0), weights, uStripeEnabled);
+
+  // Per-cell hotspot — vertically extended phosphor "dot."
+  // X is narrow (only the center column of each cell gets any
+  // boost) so the hotspot aligns with the phosphor stripe.
+  // Y fades linearly across the cell height: full boost at the
+  // center row, dropping to ~50% at the cell edges. The result
+  // reads as a soft vertical streak rather than a single bright
+  // pixel — matches how an aperture-grille phosphor "slot" lights
+  // up along its length.
+  int centerInt = int(uCellSize.x) / 2;
+  int dx = abs(subX - centerInt);
+  int dy = abs(subY - centerInt);
+  float xMask = float(dx == 0);
+  // Y falloff: 2× steeper than the cell-spanning soft version
+  // (1 - dy/cellSize.y). Half the spread → drops to 0 by the cell
+  // edge for small cells (cs=3,4) while still giving the center
+  // row a softer streak than the single-pixel original.
+  float yFall = max(0.0, 1.0 - 2.0 * float(dy) / uCellSize.y);
+  float hotBoost = 1.0 + uHotspot * xMask * yFall;
+  float hotMul = mix(1.0, hotBoost, uHotspotEnabled);
+
+  // Per-cell shimmer: stable hash by cell index.
+  vec2 cellCoord = floor(px / uCellSize);
+  uint cellGridW = uint(uViewSize.x / uCellSize.x);
+  uint cellIdx = uint(cellCoord.y) * cellGridW + uint(cellCoord.x);
+  float cellShim = 1.0 + uCellShimmerAmp * (2.0 * lcg(cellIdx + uShimmerSeed) - 1.0);
+  cellShim = mix(1.0, cellShim, uCellShimmerEnabled);
+
+  // Per-row shimmer. Multiplies by a large prime to stride row seeds
+  // well clear of the cell-shimmer seed domain — otherwise the row at
+  // y=N hashes identically to cell (N, 0) and the two shimmers
+  // correlate at the top band.
+  float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(uint(cellCoord.y) * 4099u + uShimmerSeed) - 1.0);
+  rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
+
+  float cellMod = hotMul * cellShim * rowShim;
+  vec3 stripeOut = lerped.rgb * weights * cellMod;
+  oPhosphor = vec4(stripeOut, lerped.a);
+}`;
+
+  const COMPOSITE_FS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uPhosphor;
+uniform sampler2D uGloss;
+uniform sampler2D uVignette;
+uniform sampler2D uGapMask;
+uniform sampler2D uBloom;
+uniform vec2 uCanvasSize;
+uniform float uCurvature;
+uniform float uBloomStrength;
+uniform float uBrightness;
+uniform float uStripeFraction;
+uniform float uStripeMargin;
+uniform float uOpaqueBackground;
+uniform float uCurvatureEnabled;
+uniform float uGlossEnabled;
+uniform float uVignetteEnabled;
+uniform float uGapMaskEnabled;
+uniform float uBloomEnabled;
+out vec4 oColor;
+
+vec2 curveUv(vec2 uv, float cAmt) {
+  vec2 c = uv - 0.5;
+  float r2 = dot(c, c);
+  vec2 warped = c * (1.0 + cAmt * r2 * 4.0);
+  return warped + 0.5;
+}
+
+void main() {
+  float curvAmt = uCurvature * uCurvatureEnabled;
+  vec2 sampleUv = curveUv(vUv, curvAmt);
+  if (sampleUv.x < 0.0 || sampleUv.x > 1.0 ||
+      sampleUv.y < 0.0 || sampleUv.y > 1.0) {
+    // Out of bounds (e.g. curvature corners): transparent, not
+    // opaque black. Page background shows through.
+    oColor = vec4(0.0);
+    return;
+  }
+
+  // Remap to stripe-region UV: the phosphor texture occupies the
+  // central (viewSize * stripeUpscale) / canvasSize fraction of the
+  // canvas, with bleed-margin space on each side. Matches the CPU
+  // path's drawImage(stripeCanvas, bleedMargin, bleedMargin, ...).
+  vec2 stripeUv = (sampleUv - vec2(uStripeMargin)) / uStripeFraction;
+  bool inStripe = stripeUv.x >= 0.0 && stripeUv.x <= 1.0 &&
+                  stripeUv.y >= 0.0 && stripeUv.y <= 1.0;
+
+  vec3 color = vec3(0.0);
+  // Canvas alpha tracks the silhouette mask (phos.a) — sharp edge,
+  // softened only by the upstream beam-spread blur on the signal.
+  // When opaqueBackground=true (e.g., IS-2200 CRT screen), the
+  // uniform mix below forces alpha to 1 regardless.
+  float alpha = 0.0;
+  if (inStripe) {
+    vec4 phos = texture(uPhosphor, stripeUv);
+    color = phos.rgb;
+    alpha = phos.a;
+    vec4 bloom = texture(uBloom, stripeUv);
+    color += bloom.rgb * uBloomStrength * uBloomEnabled;
+  }
+
+  vec4 gloss = texture(uGloss, sampleUv);
+  color += vec3(gloss.a) * uGlossEnabled;
+
+  vec4 vig = texture(uVignette, sampleUv);
+  color *= mix(1.0, vig.r, uVignetteEnabled);
+
+  vec4 gap = texture(uGapMask, vec2(sampleUv.x, 0.0));
+  color *= mix(1.0, gap.r, uGapMaskEnabled);
+
+  color *= uBrightness;
+
+  // opaqueBackground=true → canvas is always fully opaque (IS-2200
+  // CRT screen). false → alpha follows the silhouette+bloom mask
+  // (logo on transparent page background).
+  float finalAlpha = mix(alpha, 1.0, uOpaqueBackground);
+  oColor = vec4(color, finalAlpha);
+}`;
+
+  const BLOOM_THRESHOLD_FS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uPhosphor;
+uniform float uThreshold;
+out vec4 oColor;
+void main() {
+  vec4 c = texture(uPhosphor, vUv);
+  float luma = max(c.r, max(c.g, c.b));
+  float overshoot = max(0.0, luma - uThreshold);
+  oColor = vec4(c.rgb * overshoot, c.a);
+}`;
+
+  const BLOOM_BLUR_H_FS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTex;
+uniform vec2 uTexSize;
+out vec4 oColor;
+void main() {
+  vec2 px = 1.0 / uTexSize;
+  vec4 sum = texture(uTex, vUv) * 0.227027;
+  sum += texture(uTex, vUv + vec2( px.x * 1.0, 0.0)) * 0.194594;
+  sum += texture(uTex, vUv + vec2(-px.x * 1.0, 0.0)) * 0.194594;
+  sum += texture(uTex, vUv + vec2( px.x * 2.0, 0.0)) * 0.121622;
+  sum += texture(uTex, vUv + vec2(-px.x * 2.0, 0.0)) * 0.121622;
+  sum += texture(uTex, vUv + vec2( px.x * 3.0, 0.0)) * 0.054054;
+  sum += texture(uTex, vUv + vec2(-px.x * 3.0, 0.0)) * 0.054054;
+  sum += texture(uTex, vUv + vec2( px.x * 4.0, 0.0)) * 0.016216;
+  sum += texture(uTex, vUv + vec2(-px.x * 4.0, 0.0)) * 0.016216;
+  oColor = sum;
+}`;
+
+  const BLOOM_BLUR_V_FS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTex;
+uniform vec2 uTexSize;
+out vec4 oColor;
+void main() {
+  vec2 px = 1.0 / uTexSize;
+  vec4 sum = texture(uTex, vUv) * 0.227027;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 1.0)) * 0.194594;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 1.0)) * 0.194594;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 2.0)) * 0.121622;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 2.0)) * 0.121622;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 3.0)) * 0.054054;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 3.0)) * 0.054054;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 4.0)) * 0.016216;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 4.0)) * 0.016216;
+  oColor = sum;
+}`;
+
   class Trinitron {
     constructor(canvasEl, opts) {
       this.canvas = canvasEl;
-      this.ctx = canvasEl.getContext('2d');
       this.opts = Object.assign({
+        renderer: 'cpu',     // 'cpu' | 'gpu' | 'auto' — 'auto' tries gpu, falls back to cpu
         viewSize: [200, 200],
         canvasSize: [240, 240],
         // Cell pitch in source pixels. cs=3 keeps the shipped contiguous-
@@ -92,10 +401,104 @@
         // Units are source pixels. Chromium's canvas filter blur no-ops
         // below ~0.7 px, so values under that have no effect.
         beamSpreadPx: 0.0,
+        // Barrel-distortion strength for the composite glass pass.
+        // 0 = flat panel. Default 0 (CPU path doesn't use this).
+        curvature: 0,
+        bloomThreshold: 0.6,
+        bloomStrength: 1.0,
         signal: () => {},
         respectReducedMotion: true,
+        // Whether the GPU path should create a sibling 2D canvas
+        // for master-mode bypass rendering. Required when a UI
+        // element (e.g., the IS-2200 power sticker) calls
+        // setMasterMode(false). Skip when there's no toggle UI.
+        bypassCanvas: true,
+        // Whether the GPU path should create the ?debug=1 effect-
+        // toggle overlay. Only one Trinitron per page should claim
+        // it; secondary instances opt out.
+        debugOverlay: true,
+        // When true (default), canvas pixels are always opaque —
+        // the canvas fills its parent's background and effects like
+        // vignette/gap mask are visible across the entire surface.
+        // When false, canvas alpha tracks the phosphor silhouette
+        // (plus the bloom feather), so the canvas reads as a
+        // cut-out of the page background. The IS-2200 wants opaque
+        // (it's a CRT screen sitting in a card); the dark-mode logo
+        // wants transparent (the logo floats on the page).
+        opaqueBackground: true,
       }, opts);
 
+      // Per-effect runtime toggles. Mutable; setters take effect on
+      // the next frame. The default subset (stripeProfile, coupling,
+      // persistence, hotspot, beamSpread) is the minimum that reads
+      // as a CRT without piling on effects that fight each other or
+      // pull focus from the content. Callers can pass any subset via
+      // opts.effects to flip individual defaults.
+      this.effects = Object.assign({
+        // Phosphor pass — five effects on, four off.
+        stripeProfile: true,
+        phosphorCoupling: true,
+        convergence: false,
+        convergenceDrift: false,
+        persistence: true,
+        perCellHotspot: true,
+        perCellShimmer: false,
+        perRowShimmer: false,
+        beamSpread: true,
+        // Composite pass — both off (selectiveBloom interacts oddly
+        // with the stripe profile; gapMask is broken at the current
+        // sampling resolution, see commit history).
+        selectiveBloom: false,
+        gapMask: false,
+        // Glass — all off; curvature warps the stripe pattern and
+        // gloss/vignette obscure the phosphor character on the
+        // small physical sizes we're working with.
+        curvature: false,
+        gloss: false,
+        vignette: false,
+        // Slow modulators — both off by default; warmup is a one-shot
+        // brightness ramp that callers can re-enable if they want the
+        // tube-warming-up moment.
+        warmup: false,
+        breathing: false,
+      }, opts.effects || {});
+
+      // Try GPU init if requested.
+      this._mode = null;  // 'cpu' | 'gpu' — populated by init
+      if (this.opts.renderer === 'gpu' || this.opts.renderer === 'auto') {
+        try {
+          this._initGpu();
+          this._mode = 'gpu';
+        } catch (err) {
+          if (this.opts.renderer === 'gpu') throw err;
+          // 'auto': fall through to CPU.
+          console.warn('Trinitron: WebGL2 unavailable, falling back to CPU.', err);
+        }
+      }
+
+      if (this._mode === null) {
+        this._initCpu();
+        this._mode = 'cpu';
+      }
+
+      // Master A/B initial state. Default on. Read from localStorage so the
+      // user's last choice persists across reloads.
+      this._masterOn = true;
+      try {
+        const stored = localStorage.getItem('interslice-systems:is2200:crt-mode');
+        if (stored === 'off') this._masterOn = false;
+      } catch (e) {
+        // Default to on if storage unavailable.
+      }
+
+      this._wasStartedByUser = false;
+      this._setupReducedMotionListener();
+      this._rafHandle = null;
+      this._startTime = null;
+    }
+
+    _initCpu() {
+      this.ctx = this.canvas.getContext('2d');
       const dpr = window.devicePixelRatio || 1;
       const [cw, ch] = this.opts.canvasSize;
       const [vw, vh] = this.opts.viewSize;
@@ -358,11 +761,681 @@
       } else {
         this.gapMaskCanvas = null;
       }
+    }
 
-      this._wasStartedByUser = false;
-      this._setupReducedMotionListener();
-      this._rafHandle = null;
-      this._startTime = null;
+    _initGpu() {
+      const gl = this.canvas.getContext('webgl2', {
+        alpha: true,
+        antialias: false,
+        preserveDrawingBuffer: false,
+        // Output straight-alpha (R, G, B, A), not premultiplied
+        // (R*A, G*A, B*A, A). With the default premultipliedAlpha:true,
+        // the browser would dim the feathered-edge bloom by an extra
+        // factor of A during display compositing — color and alpha
+        // both ~0.3 in the bleed region multiply to ~0.09, invisible.
+        premultipliedAlpha: false,
+      });
+      if (!gl) throw new Error('WebGL2 unavailable');
+
+      // Float textures for persistence (no extension needed in WebGL2).
+      // EXT_color_buffer_float lets us render TO float — required because
+      // the phosphor/persistence attachments are RGBA32F.
+      // Check BEFORE mutating this.* so 'auto' can cleanly fall back to CPU.
+      const cbf = gl.getExtension('EXT_color_buffer_float');
+      if (!cbf) throw new Error('EXT_color_buffer_float unavailable');
+      // OES_texture_float_linear lets us sample RGBA32F textures with
+      // LINEAR filtering in a shader. Without it, `texture(uPhosphor, ...)`
+      // in the composite pass silently returns vec4(0) — no GL error,
+      // just a black phosphor read — because LINEAR on a float texture
+      // is "texture-incomplete" in WebGL2. The phosphor and persistence
+      // textures use LINEAR (Task 9 consistency fix), so this extension
+      // is load-bearing. Check before mutating this.* so 'auto' can
+      // cleanly fall back to CPU.
+      const tfl = gl.getExtension('OES_texture_float_linear');
+      if (!tfl) throw new Error('OES_texture_float_linear unavailable');
+
+      this._gl = gl;
+
+      const dpr = window.devicePixelRatio || 1;
+      const [cw, ch] = this.opts.canvasSize;
+      this.canvas.width = cw * dpr;
+      this.canvas.height = ch * dpr;
+
+      const [vw, vh] = this.opts.viewSize;
+
+      // Stripe-region geometry: the phosphor texture occupies the
+      // central `min(viewSize * stripeUpscale, canvasSize)` canvas
+      // pixels, matching the CPU path's `drawImage(stripeCanvas,
+      // bleedMargin, bleedMargin, vw*stripeUpscale, vh*stripeUpscale)`.
+      // When viewSize*stripeUpscale ≥ canvasSize (e.g., the IS-2200's
+      // 1280-source / 640-canvas config), stripeFraction = 1 and
+      // there's no margin — phosphor fills the canvas. Otherwise the
+      // margin is reserved for the bleed halo.
+      const su = Math.max(1, Math.floor(this.opts.stripeUpscale || 1));
+      const stripeRegionPx = Math.min(vw * su, cw);
+      this._stripeFraction = stripeRegionPx / cw;
+      this._stripeMargin = (1 - this._stripeFraction) / 2;
+
+      // Full-screen triangle VAO. aPos is at location 0 via the
+      // layout qualifier in FULLSCREEN_VS.
+      const tri = new Float32Array([-1, -1, 3, -1, -1, 3]);
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      this._vbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, this._vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, tri, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.bindVertexArray(null);
+      this._vao = vao;
+
+      // Signal canvas — caller's signal callback paints into this 2D
+      // canvas each frame; we upload it as a texture below.
+      // No ctx.scale here — GPU pipeline works in clip space.
+      this._signalCanvas = document.createElement('canvas');
+      this._signalCanvas.width = vw;
+      this._signalCanvas.height = vh;
+      this._signalCtx = this._signalCanvas.getContext('2d', { willReadFrequently: false });
+      this._signalCtx.imageSmoothingEnabled = true;
+      this._signalCtx.imageSmoothingQuality = 'high';
+
+      this._texSignal = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this._texSignal);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, vw, vh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // Persistence ping-pong textures (RGBA32F). Persistence textures
+      // are LINEAR so convergence-shifted reads in the phosphor pass
+      // produce chromatic-fringe blending consistent with the signal
+      // sample. The phosphor output texture is NEAREST so the composite
+      // pass's upscale (canvas backing ≫ viewSize) tiles each phosphor
+      // source pixel as a sharp block — matches the CPU path's
+      // imageSmoothingEnabled=false drawImage. LINEAR on this texture
+      // averaged adjacent stripes and the per-cell hotspot into mush.
+      const makeFloatTex = (w, h, filter) => {
+        const t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return t;
+      };
+      this._texPersistA = makeFloatTex(vw, vh, gl.LINEAR);
+      this._texPersistB = makeFloatTex(vw, vh, gl.LINEAR);
+      this._texPhosphor = makeFloatTex(vw, vh, gl.NEAREST);
+
+      // Two pre-configured FBOs for the phosphor pass. Both write the
+      // phosphor output to _texPhosphor; they differ only in which
+      // persistence texture is bound at COLOR_ATTACHMENT1. We swap
+      // between them each frame for ping-pong, avoiding per-frame
+      // framebufferTexture2D / drawBuffers calls.
+      this._fboPhosphorWithB = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithB);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._texPhosphor, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this._texPersistB, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+
+      this._fboPhosphorWithA = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithA);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._texPhosphor, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this._texPersistA, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      // Ping-pong orientation. The flag describes the CURRENT frame
+      // (before the end-of-frame flip):
+      //   false → render this frame into _texPersistB; next frame's
+      //           persistence INPUT (sampled by the shader) is
+      //           _texPersistA (the previously-written one).
+      //   true  → render into _texPersistA; next frame's input is
+      //           _texPersistB.
+      // Equivalently: the SAMPLER input is always the texture NOT
+      // attached to the currently-bound FBO. Task 8 wires this up.
+      this._pingPongFlip = false;
+
+      // Programs land in later tasks. Track them here for cleanup.
+      this._programs = [];
+
+      // Phosphor program. aPos is at attribute location 0 via the
+      // `layout(location = 0)` qualifier in FULLSCREEN_VS, matching the
+      // VAO setup above.
+      const phVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
+      const phFs = compileShader(gl, gl.FRAGMENT_SHADER, PHOSPHOR_FS);
+      this._progPhosphor = linkProgram(gl, phVs, phFs);
+      gl.detachShader(this._progPhosphor, phVs);
+      gl.detachShader(this._progPhosphor, phFs);
+      gl.deleteShader(phVs);
+      gl.deleteShader(phFs);
+      this._programs.push(this._progPhosphor);
+
+      // Uniform locations (cache once).
+      this._uPhosphor = {
+        signal:               gl.getUniformLocation(this._progPhosphor, 'uSignal'),
+        persistencePrev:      gl.getUniformLocation(this._progPhosphor, 'uPersistencePrev'),
+        viewSize:             gl.getUniformLocation(this._progPhosphor, 'uViewSize'),
+        cellSize:             gl.getUniformLocation(this._progPhosphor, 'uCellSize'),
+        phosphorCoupling:     gl.getUniformLocation(this._progPhosphor, 'uPhosphorCoupling'),
+        persistence:          gl.getUniformLocation(this._progPhosphor, 'uPersistence'),
+        convergenceR:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceR'),
+        convergenceG:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceG'),
+        convergenceB:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceB'),
+        stripeEnabled:        gl.getUniformLocation(this._progPhosphor, 'uStripeEnabled'),
+        couplingEnabled:      gl.getUniformLocation(this._progPhosphor, 'uCouplingEnabled'),
+        persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
+        convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
+        hotspot:              gl.getUniformLocation(this._progPhosphor, 'uHotspot'),
+        cellShimmerAmp:       gl.getUniformLocation(this._progPhosphor, 'uCellShimmerAmp'),
+        rowShimmerAmp:        gl.getUniformLocation(this._progPhosphor, 'uRowShimmerAmp'),
+        shimmerSeed:          gl.getUniformLocation(this._progPhosphor, 'uShimmerSeed'),
+        beamSpreadPx:         gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadPx'),
+        hotspotEnabled:       gl.getUniformLocation(this._progPhosphor, 'uHotspotEnabled'),
+        cellShimmerEnabled:   gl.getUniformLocation(this._progPhosphor, 'uCellShimmerEnabled'),
+        rowShimmerEnabled:    gl.getUniformLocation(this._progPhosphor, 'uRowShimmerEnabled'),
+        beamSpreadEnabled:    gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadEnabled'),
+      };
+
+      const cmpVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
+      const cmpFs = compileShader(gl, gl.FRAGMENT_SHADER, COMPOSITE_FS);
+      this._progComposite = linkProgram(gl, cmpVs, cmpFs);
+      gl.detachShader(this._progComposite, cmpVs);
+      gl.detachShader(this._progComposite, cmpFs);
+      gl.deleteShader(cmpVs);
+      gl.deleteShader(cmpFs);
+      this._programs.push(this._progComposite);
+
+      this._uComposite = {
+        phosphor:          gl.getUniformLocation(this._progComposite, 'uPhosphor'),
+        gloss:             gl.getUniformLocation(this._progComposite, 'uGloss'),
+        vignette:          gl.getUniformLocation(this._progComposite, 'uVignette'),
+        gapMask:           gl.getUniformLocation(this._progComposite, 'uGapMask'),
+        canvasSize:        gl.getUniformLocation(this._progComposite, 'uCanvasSize'),
+        curvature:         gl.getUniformLocation(this._progComposite, 'uCurvature'),
+        curvatureEnabled:  gl.getUniformLocation(this._progComposite, 'uCurvatureEnabled'),
+        glossEnabled:      gl.getUniformLocation(this._progComposite, 'uGlossEnabled'),
+        vignetteEnabled:   gl.getUniformLocation(this._progComposite, 'uVignetteEnabled'),
+        gapMaskEnabled:    gl.getUniformLocation(this._progComposite, 'uGapMaskEnabled'),
+        stripeFraction:    gl.getUniformLocation(this._progComposite, 'uStripeFraction'),
+        stripeMargin:      gl.getUniformLocation(this._progComposite, 'uStripeMargin'),
+        opaqueBackground:  gl.getUniformLocation(this._progComposite, 'uOpaqueBackground'),
+      };
+      this._uComposite.bloom         = gl.getUniformLocation(this._progComposite, 'uBloom');
+      this._uComposite.bloomStrength = gl.getUniformLocation(this._progComposite, 'uBloomStrength');
+      this._uComposite.bloomEnabled  = gl.getUniformLocation(this._progComposite, 'uBloomEnabled');
+      this._uComposite.brightness    = gl.getUniformLocation(this._progComposite, 'uBrightness');
+
+      // Bloom programs.
+      const bthVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
+      const bthFs = compileShader(gl, gl.FRAGMENT_SHADER, BLOOM_THRESHOLD_FS);
+      this._progBloomThresh = linkProgram(gl, bthVs, bthFs);
+      gl.detachShader(this._progBloomThresh, bthVs);
+      gl.detachShader(this._progBloomThresh, bthFs);
+      gl.deleteShader(bthVs);
+      gl.deleteShader(bthFs);
+      this._programs.push(this._progBloomThresh);
+      this._uBloomThresh = {
+        phosphor:  gl.getUniformLocation(this._progBloomThresh, 'uPhosphor'),
+        threshold: gl.getUniformLocation(this._progBloomThresh, 'uThreshold'),
+      };
+
+      const bhVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
+      const bhFs = compileShader(gl, gl.FRAGMENT_SHADER, BLOOM_BLUR_H_FS);
+      this._progBloomH = linkProgram(gl, bhVs, bhFs);
+      gl.detachShader(this._progBloomH, bhVs);
+      gl.detachShader(this._progBloomH, bhFs);
+      gl.deleteShader(bhVs);
+      gl.deleteShader(bhFs);
+      this._programs.push(this._progBloomH);
+      this._uBloomH = {
+        tex:     gl.getUniformLocation(this._progBloomH, 'uTex'),
+        texSize: gl.getUniformLocation(this._progBloomH, 'uTexSize'),
+      };
+
+      const bvVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
+      const bvFs = compileShader(gl, gl.FRAGMENT_SHADER, BLOOM_BLUR_V_FS);
+      this._progBloomV = linkProgram(gl, bvVs, bvFs);
+      gl.detachShader(this._progBloomV, bvVs);
+      gl.detachShader(this._progBloomV, bvFs);
+      gl.deleteShader(bvVs);
+      gl.deleteShader(bvFs);
+      this._programs.push(this._progBloomV);
+      this._uBloomV = {
+        tex:     gl.getUniformLocation(this._progBloomV, 'uTex'),
+        texSize: gl.getUniformLocation(this._progBloomV, 'uTexSize'),
+      };
+
+      // Half-res bloom textures + FBOs.
+      const bw = Math.max(1, vw >> 1);
+      const bh = Math.max(1, vh >> 1);
+      this._bloomW = bw;
+      this._bloomH = bh;
+      const makeRGBA8Tex = (w, h) => {
+        const t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return t;
+      };
+      this._texBloomA = makeRGBA8Tex(bw, bh);
+      this._texBloomB = makeRGBA8Tex(bw, bh);
+      this._fboBloomA = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboBloomA);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._texBloomA, 0);
+      this._fboBloomB = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboBloomB);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._texBloomB, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      this._buildStaticTextures();
+
+      // Bypass mode draws the signal canvas directly to the visible
+      // canvas via a separate 2D context. WebGL2 already owns this.canvas,
+      // so we use a hidden secondary canvas overlaid via CSS and toggle
+      // between them via display:none / display:block.
+      // Skipped when opts.bypassCanvas is false (e.g., for the dark-mode
+      // logo, which has no master-mode toggle UI and would have its
+      // bypass canvas mis-positioned by the .trinitron absolute layout).
+      if (this.opts.bypassCanvas) {
+        this._bypassCanvas = document.createElement('canvas');
+        this._bypassCanvas.width = this.canvas.width;
+        this._bypassCanvas.height = this.canvas.height;
+        this._bypassCanvas.style.cssText = this.canvas.style.cssText;
+        this._bypassCanvas.className = this.canvas.className;
+        this._bypassCanvas.style.position = 'absolute';
+        this._bypassCanvas.style.top = '0';
+        this._bypassCanvas.style.left = '0';
+        this._bypassCanvas.style.display = this._masterOn ? 'none' : 'block';
+        this._bypassCtx = this._bypassCanvas.getContext('2d');
+        this._bypassCtx.imageSmoothingEnabled = false;
+        // Mount alongside the WebGL canvas. Parent must be position:relative
+        // (or position:absolute/fixed) for absolute positioning to anchor
+        // correctly; ensure that.
+        if (this.canvas.parentElement) {
+          const parent = this.canvas.parentElement;
+          if (getComputedStyle(parent).position === 'static') {
+            parent.style.position = 'relative';
+          }
+          parent.appendChild(this._bypassCanvas);
+        }
+      }
+
+      // Frame counter for diagnostics.
+      this._frameCount = 0;
+
+      this._initDebugOverlay();
+    }
+
+    _initDebugOverlay() {
+      // Only build the panel when ?debug=1 is in the URL AND this
+      // instance was constructed with debugOverlay:true (default).
+      // Secondary instances on the same page should opt out so the
+      // primary instance's panel isn't overlapped.
+      if (!this.opts.debugOverlay) return;
+      const params = new URLSearchParams(location.search);
+      if (params.get('debug') !== '1') return;
+
+      const panel = document.createElement('div');
+      panel.style.cssText = `
+        position: fixed; top: 12px; right: 12px; z-index: 9999;
+        background: rgba(0,0,0,0.85); color: #fff;
+        font: 11px/1.4 monospace; padding: 12px 14px;
+        border: 1px solid #555; border-radius: 4px;
+        max-width: 240px; max-height: 80vh; overflow: auto;
+      `;
+      panel.innerHTML = `<div style="font-weight:700;margin-bottom:8px;">__trinitron debug</div>`;
+
+      // FPS readout.
+      const fpsEl = document.createElement('div');
+      fpsEl.style.cssText = 'margin-bottom:10px;color:#5EE2FF;';
+      fpsEl.textContent = 'fps: --';
+      panel.appendChild(fpsEl);
+      this._debugFps = fpsEl;
+      this._debugFpsLast = performance.now();
+      this._debugFpsFrames = 0;
+
+      // Effect checkboxes.
+      const keys = Object.keys(this.effects);
+      for (const key of keys) {
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0;';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!this.effects[key];
+        cb.addEventListener('change', () => { this.effects[key] = cb.checked; });
+        row.appendChild(cb);
+        const lbl = document.createElement('span');
+        lbl.textContent = key;
+        row.appendChild(lbl);
+        panel.appendChild(row);
+      }
+
+      document.body.appendChild(panel);
+      this._debugPanel = panel;
+    }
+
+    _destroyGpu() {
+      const gl = this._gl;
+      if (!gl) return;
+      for (const p of (this._programs || [])) gl.deleteProgram(p);
+      if (this._vao) gl.deleteVertexArray(this._vao);
+      if (this._vbo) gl.deleteBuffer(this._vbo);
+      if (this._texSignal)   gl.deleteTexture(this._texSignal);
+      if (this._texPersistA) gl.deleteTexture(this._texPersistA);
+      if (this._texPersistB) gl.deleteTexture(this._texPersistB);
+      if (this._texPhosphor) gl.deleteTexture(this._texPhosphor);
+      if (this._fboPhosphorWithA) gl.deleteFramebuffer(this._fboPhosphorWithA);
+      if (this._fboPhosphorWithB) gl.deleteFramebuffer(this._fboPhosphorWithB);
+      if (this._texGloss)    gl.deleteTexture(this._texGloss);
+      if (this._texVignette) gl.deleteTexture(this._texVignette);
+      if (this._texGapMask)  gl.deleteTexture(this._texGapMask);
+      if (this._texBloomA) gl.deleteTexture(this._texBloomA);
+      if (this._texBloomB) gl.deleteTexture(this._texBloomB);
+      if (this._fboBloomA) gl.deleteFramebuffer(this._fboBloomA);
+      if (this._fboBloomB) gl.deleteFramebuffer(this._fboBloomB);
+      if (this._bypassCanvas && this._bypassCanvas.parentNode) {
+        this._bypassCanvas.parentNode.removeChild(this._bypassCanvas);
+      }
+      this._bypassCanvas = null;
+      this._bypassCtx = null;
+      this._gl = null;
+      if (this._debugPanel && this._debugPanel.parentNode) {
+        this._debugPanel.parentNode.removeChild(this._debugPanel);
+      }
+      this._debugPanel = null;
+      this._debugFps = null;
+    }
+
+    _buildStaticTextures() {
+      const gl = this._gl;
+      const [vw, vh] = this.opts.viewSize;
+
+      // GLOSS: upper-left elliptical highlight on a 256×256 LUT. Soft
+      // bright ellipse positioned at (80, 64) — virtual light source
+      // above-left of the screen.
+      const glossCanvas = document.createElement('canvas');
+      glossCanvas.width = 256;
+      glossCanvas.height = 256;
+      const gctx = glossCanvas.getContext('2d');
+      const grad = gctx.createRadialGradient(80, 64, 0, 80, 64, 200);
+      grad.addColorStop(0,   'rgba(255,255,255,0.18)');
+      grad.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+      grad.addColorStop(1,   'rgba(255,255,255,0)');
+      gctx.fillStyle = grad;
+      gctx.fillRect(0, 0, 256, 256);
+      this._texGloss = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this._texGloss);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, glossCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // VIGNETTE: radial darkening from center toward corners, 128×128.
+      // White center → darker edge alpha. Composite multiplies by this
+      // texture's red channel so the corners dim ~18%.
+      const vigCanvas = document.createElement('canvas');
+      vigCanvas.width = 128;
+      vigCanvas.height = 128;
+      const vctx = vigCanvas.getContext('2d');
+      vctx.fillStyle = 'white';
+      vctx.fillRect(0, 0, 128, 128);
+      const vgrad = vctx.createRadialGradient(64, 64, 40, 64, 64, 92);
+      vgrad.addColorStop(0,   'rgba(0,0,0,0)');
+      vgrad.addColorStop(1,   'rgba(0,0,0,0.18)');
+      vctx.fillStyle = vgrad;
+      vctx.fillRect(0, 0, 128, 128);
+      this._texVignette = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this._texVignette);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vigCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // GAP MASK: vertical-line pattern at twice the source resolution.
+      // Period 2 canvas-px → every other column 25% dim. Tile vertically
+      // via WRAP_T REPEAT (no per-row variation needed). The 4-px height
+      // keeps the texture tiny.
+      const gapW = vw * 2;
+      const gapH = 4;
+      const gapCanvas = document.createElement('canvas');
+      gapCanvas.width = gapW;
+      gapCanvas.height = gapH;
+      const gpctx = gapCanvas.getContext('2d');
+      gpctx.fillStyle = 'white';
+      gpctx.fillRect(0, 0, gapW, gapH);
+      gpctx.fillStyle = 'rgba(0,0,0,0.25)';
+      for (let x = 1; x < gapW; x += 2) {
+        gpctx.fillRect(x, 0, 1, gapH);
+      }
+      this._texGapMask = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this._texGapMask);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, gapCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    }
+
+    _renderGpu(timeMs) {
+      const gl = this._gl;
+      if (!gl) return;  // raced with destroy()
+
+      // Paint signal first (caller's callback fills the 2D canvas).
+      const [vw, vh] = this.opts.viewSize;
+      this._signalCtx.clearRect(0, 0, vw, vh);
+      this.opts.signal(this._signalCtx, timeMs);
+
+      // Bypass mode only triggers if both the user toggled it off AND
+      // this instance owns a bypass canvas. Instances constructed with
+      // bypassCanvas:false ignore _masterOn and always render via GPU.
+      if (!this._masterOn && this._bypassCanvas) {
+        this._bypassCanvas.style.display = 'block';
+        this.canvas.style.visibility = 'hidden';
+        this._bypassCtx.clearRect(0, 0, this._bypassCanvas.width, this._bypassCanvas.height);
+        this._bypassCtx.drawImage(
+          this._signalCanvas,
+          0, 0, vw, vh,
+          0, 0, this._bypassCanvas.width, this._bypassCanvas.height
+        );
+        this._frameCount++;
+        return;
+      }
+
+      // Master mode "on": show WebGL canvas, hide bypass (if present).
+      if (this._bypassCanvas) this._bypassCanvas.style.display = 'none';
+      this.canvas.style.visibility = 'visible';
+
+      // Slow modulators driven by time. All amplitudes are tiny so the
+      // effects coexist quietly with the content. Compound multiplicatively
+      // into the final brightness uniform; convergence drift modulates the
+      // per-channel UV offsets.
+
+      // 1. Warmup curve: 0 → 1 over the first ~1.2s after start or since
+      //    the last master-mode "on" toggle.
+      const warmupDur = 1200; // ms
+      const tWarm = timeMs - (this._warmupStartMs || 0);
+      let warmupFactor = 1.0;
+      if (this.effects.warmup && tWarm < warmupDur) {
+        const k = Math.max(0, Math.min(1, tWarm / warmupDur));
+        warmupFactor = k * k * (3.0 - 2.0 * k); // smoothstep
+      }
+
+      // 2. Breathing: 0.3 Hz, ±2% brightness modulation.
+      let breathFactor = 1.0;
+      if (this.effects.breathing) {
+        breathFactor = 1.0 + 0.02 * Math.sin(timeMs * 0.0006 * Math.PI * 2.0);
+      }
+
+      this._brightness = warmupFactor * breathFactor;
+
+      // 3. Convergence drift: 0.1 Hz, ±0.05 px on top of base convergence.
+      //    R and B drift opposite; G stays stable (matches real CRT
+      //    behavior where the green gun is the reference).
+      this._convergenceDriftPx = 0.0;
+      if (this.effects.convergenceDrift) {
+        this._convergenceDriftPx = 0.05 * Math.sin(timeMs * 0.0002 * Math.PI * 2.0);
+      }
+
+      // Upload the 2D canvas to the signal texture. FLIP_Y accounts for
+      // the difference between canvas's top-left origin and WebGL's
+      // bottom-left origin, so sampling uSignal at vUv = (x, y) returns
+      // the canvas pixel at (x, y) with origin top-left.
+      gl.bindTexture(gl.TEXTURE_2D, this._texSignal);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this._signalCanvas);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+      // Bind the pre-configured FBO matching current ping-pong orientation.
+      const fbo = this._pingPongFlip ? this._fboPhosphorWithA : this._fboPhosphorWithB;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, vw, vh);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.useProgram(this._progPhosphor);
+      gl.bindVertexArray(this._vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._texSignal);
+      gl.uniform1i(this._uPhosphor.signal, 0);
+
+      // New uniforms for stripe profile.
+      gl.uniform2f(this._uPhosphor.viewSize, vw, vh);
+      gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
+      gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
+      gl.uniform1f(this._uPhosphor.stripeEnabled,   this.effects.stripeProfile     ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.couplingEnabled, this.effects.phosphorCoupling  ? 1 : 0);
+
+      // Trust opts defaults from Object.assign — don't override an
+      // explicit 0 (= no persistence) or convergence: false (= disabled).
+      gl.uniform1f(this._uPhosphor.persistence, this.opts.persistence);
+
+      const c = this.opts.convergence;
+      const drift = this._convergenceDriftPx;
+      gl.uniform2f(this._uPhosphor.convergenceR, c.r[0] - drift, c.r[1]);
+      gl.uniform2f(this._uPhosphor.convergenceG, c.g[0],         c.g[1]);
+      gl.uniform2f(this._uPhosphor.convergenceB, c.b[0] + drift, c.b[1]);
+
+      gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence ? 1 : 0);
+
+      gl.uniform1f(this._uPhosphor.hotspot,         this.opts.hotspot);
+      gl.uniform1f(this._uPhosphor.cellShimmerAmp,  this.opts.cellShimmer);
+      gl.uniform1f(this._uPhosphor.rowShimmerAmp,   this.opts.rowShimmer);
+      gl.uniform1ui(this._uPhosphor.shimmerSeed,    this.opts.shimmerSeed);
+      gl.uniform1f(this._uPhosphor.beamSpreadPx,    this.opts.beamSpreadPx);
+      gl.uniform1f(this._uPhosphor.hotspotEnabled,     this.effects.perCellHotspot  ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.cellShimmerEnabled, this.effects.perCellShimmer  ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer   ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread      ? 1 : 0);
+
+      // Bind persistence-prev (the texture NOT in the currently-bound FBO).
+      const persistPrev = this._pingPongFlip ? this._texPersistB : this._texPersistA;
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, persistPrev);
+      gl.uniform1i(this._uPhosphor.persistencePrev, 1);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      // Flip ping-pong orientation for next frame.
+      this._pingPongFlip = !this._pingPongFlip;
+
+      // Bloom passes (skip entirely when disabled — real CPU savings).
+      if (this.effects.selectiveBloom) {
+        // 3a. Threshold: phosphor → bloomA.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboBloomA);
+        gl.viewport(0, 0, this._bloomW, this._bloomH);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(this._progBloomThresh);
+        gl.bindVertexArray(this._vao);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this._texPhosphor);
+        gl.uniform1i(this._uBloomThresh.phosphor, 0);
+        gl.uniform1f(this._uBloomThresh.threshold, this.opts.bloomThreshold);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+        // 3b. Horizontal Gaussian: bloomA → bloomB.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboBloomB);
+        gl.useProgram(this._progBloomH);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this._texBloomA);
+        gl.uniform1i(this._uBloomH.tex, 0);
+        gl.uniform2f(this._uBloomH.texSize, this._bloomW, this._bloomH);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+        // 3c. Vertical Gaussian: bloomB → bloomA.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboBloomA);
+        gl.useProgram(this._progBloomV);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this._texBloomB);
+        gl.uniform1i(this._uBloomV.tex, 0);
+        gl.uniform2f(this._uBloomV.texSize, this._bloomW, this._bloomH);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        // Final bloom output sits in _texBloomA.
+      }
+
+      // Composite pass — bind default framebuffer, sample phosphor texture.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.useProgram(this._progComposite);
+      gl.uniform2f(this._uComposite.canvasSize, this.canvas.width, this.canvas.height);
+      gl.uniform1f(this._uComposite.curvature, this.opts.curvature);
+      gl.uniform1f(this._uComposite.curvatureEnabled, this.effects.curvature ? 1 : 0);
+      gl.uniform1f(this._uComposite.glossEnabled,     this.effects.gloss ? 1 : 0);
+      gl.uniform1f(this._uComposite.vignetteEnabled,  this.effects.vignette ? 1 : 0);
+      gl.uniform1f(this._uComposite.gapMaskEnabled,   this.effects.gapMask ? 1 : 0);
+      gl.uniform1f(this._uComposite.bloomStrength, this.opts.bloomStrength);
+      gl.uniform1f(this._uComposite.bloomEnabled,  this.effects.selectiveBloom ? 1 : 0);
+      gl.uniform1f(this._uComposite.brightness,    this._brightness ?? 1.0);
+      gl.uniform1f(this._uComposite.stripeFraction, this._stripeFraction);
+      gl.uniform1f(this._uComposite.stripeMargin,   this._stripeMargin);
+      gl.uniform1f(this._uComposite.opaqueBackground, this.opts.opaqueBackground ? 1 : 0);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._texPhosphor);
+      gl.uniform1i(this._uComposite.phosphor, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this._texGloss);
+      gl.uniform1i(this._uComposite.gloss, 1);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this._texVignette);
+      gl.uniform1i(this._uComposite.vignette, 2);
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, this._texGapMask);
+      gl.uniform1i(this._uComposite.gapMask, 3);
+
+      // Bind bloom texture at unit 4.
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, this._texBloomA);
+      gl.uniform1i(this._uComposite.bloom, 4);
+
+      gl.bindVertexArray(this._vao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      this._frameCount++;
+
+      if (this._debugFps) {
+        this._debugFpsFrames++;
+        const now = performance.now();
+        if (now - this._debugFpsLast >= 500) {
+          const fps = Math.round(this._debugFpsFrames * 1000 / (now - this._debugFpsLast));
+          this._debugFps.textContent = `fps: ${fps}`;
+          this._debugFpsFrames = 0;
+          this._debugFpsLast = now;
+        }
+      }
     }
 
     start() {
@@ -370,14 +1443,37 @@
       if (this._rafHandle != null) return;
       // Zero the persistence trail so a stop/restart (e.g. theme toggle)
       // doesn't leave the last paused frame ghosted into the next session.
-      this.prevR.fill(0); this.prevG.fill(0); this.prevB.fill(0); this.prevA.fill(0);
+      if (this._mode === 'cpu') {
+        this.prevR.fill(0); this.prevG.fill(0); this.prevB.fill(0); this.prevA.fill(0);
+      } else if (this._mode === 'gpu' && this._gl) {
+        // Clear both persistence textures by binding each FBO and
+        // clearing all attachments. MUST use clearBufferfv for
+        // RGBA32F attachments — `gl.clear()` on float color buffers
+        // is undefined per the WebGL2 spec and produces NaN on some
+        // drivers, which then propagates forever through the
+        // persistence lerp (NaN * anything = NaN) and poisons every
+        // subsequent frame to black.
+        const gl = this._gl;
+        const zeros = new Float32Array([0, 0, 0, 0]);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithA);
+        gl.clearBufferfv(gl.COLOR, 0, zeros);  // phosphor attachment
+        gl.clearBufferfv(gl.COLOR, 1, zeros);  // persistence A
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithB);
+        gl.clearBufferfv(gl.COLOR, 0, zeros);  // phosphor attachment
+        gl.clearBufferfv(gl.COLOR, 1, zeros);  // persistence B
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      }
+      this._warmupStartMs = 0;  // warmup begins at timeMs = 0 since startTime
       this._startTime = performance.now();
       if (this._reducedMotionMq && this._reducedMotionMq.matches) {
-        this._frame(0);
+        if (this._mode === 'cpu') this._frame(0);
+        else if (this._mode === 'gpu') this._renderGpu(0);
         return;
       }
       const tick = (now) => {
-        this._frame(now - this._startTime);
+        const t = now - this._startTime;
+        if (this._mode === 'cpu') this._frame(t);
+        else if (this._mode === 'gpu') this._renderGpu(t);
         this._rafHandle = requestAnimationFrame(tick);
       };
       this._rafHandle = requestAnimationFrame(tick);
@@ -388,6 +1484,39 @@
         cancelAnimationFrame(this._rafHandle);
         this._rafHandle = null;
       }
+    }
+
+    // Master A/B mode. true = CRT effects on, false = bypass to raw signal.
+    // localStorage-persisted. Today it just tracks state; Task 15 wires
+    // it to actually bypass the GPU pipeline.
+    setMasterMode(on) {
+      const wasOn = this._masterOn;
+      this._masterOn = !!on;
+      if (this._masterOn && !wasOn) {
+        // Reset warmup so the "on" transition feels like turning the tube on.
+        this._warmupStartMs = performance.now() - (this._startTime || performance.now());
+      }
+      try {
+        localStorage.setItem(
+          'interslice-systems:is2200:crt-mode',
+          this._masterOn ? 'on' : 'off'
+        );
+      } catch (e) {
+        // localStorage may be unavailable (private mode, etc.). State
+        // still tracks in-memory for this session.
+      }
+    }
+
+    destroy() {
+      this.stop();
+      if (this._reducedMotionMq && this._reducedMotionHandler) {
+        if (this._reducedMotionMq.removeEventListener) {
+          this._reducedMotionMq.removeEventListener('change', this._reducedMotionHandler);
+        } else if (this._reducedMotionMq.removeListener) {
+          this._reducedMotionMq.removeListener(this._reducedMotionHandler);
+        }
+      }
+      if (this._mode === 'gpu') this._destroyGpu();
     }
 
     _setupReducedMotionListener() {

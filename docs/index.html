@@ -235,16 +235,16 @@
   .hero .cta-wrap { margin-top: 64px; }
 
   /* ===================== SNEAK PREVIEW CARD ===================== */
-  .sneak-row {
+  .is2200-hero {
+    display: flex;
+    justify-content: center;
+    padding: 32px 0 24px;
     position: relative;
     z-index: 3;
-    display: flex;
-    justify-content: flex-end;
-    padding: 0 8px 12px 0;
   }
   .sneak {
     position: relative;
-    width: 352px;
+    width: 660px;            /* was 352px */
     transform: rotate(1.5deg);
   }
   .sneak__tape {
@@ -277,6 +277,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    position: relative;
   }
   /* cyan offset shadow doubles as a phosphor wash in CRT mode */
   :root[data-theme="dark"] .sneak__card {
@@ -422,9 +423,7 @@
      The .sprinkle base class (absolute positioning, the shared halo
      filter, the gated flicker animation) lives in tokens.css.
 
-     Visual weight is spread across all eight page zones; the
-     bottom-right forbidden zone (~65–100% h × 0–24% from right) is
-     reserved for the .sneak preview card. */
+     Visual weight is spread across all eight page zones. */
 
   /* ─── TOP-LEFT ─── */
   .sp-squig-1 {
@@ -481,7 +480,7 @@
     --glow: 229 4 127; --flick-p: 5.4s; --flick-d: -0.6s;
   }
 
-  /* ─── MID-RIGHT ─── both ABOVE the sneak preview's top edge */
+  /* ─── MID-RIGHT ─── */
   .sp-ring {
     top: 32%; right: 3.5%; width: 44px; height: 44px;
     border: 3px solid var(--border); border-radius: 999px; background: var(--bg);
@@ -525,15 +524,54 @@
     overflow: visible; /* lens flare in dark mode extends past the sprite bounds */
     --glow: 0 168 243; --flick-p: 6.5s; --flick-d: -3.4s;
   }
-  /* tri-2 is the only sprinkle that could collide with the .sneak card on
-     narrow viewports. Sneak's left edge sits at viewport_right − 416px
-     (8px sneak-row padding + 352px card width + 56px .page padding).
-     `right: max(36%, 440px)` floats tri-2 at column ~64% on wide viewports
-     and clamps to 440px (24px clear of sneak's left) on narrow ones. */
   .sp-tri-2 {
-    bottom: 70px; right: max(36%, 440px); width: 30px; transform: rotate(48deg);
+    top: 18%;
+    right: clamp(180px, 22vw, 360px);  /* was the old corner-avoidance clamp */
+    width: 26px; height: 24px;
+    color: var(--ink-yellow);
+    transform: rotate(15deg);
     --glow: 1 156 73; --flick-p: 7.3s; --flick-d: -3.6s;
   }
+
+  /* CRT canvas: fixed 640×480 display maps cleanly to 1280×960
+     device pixels at 2× DPR — exactly 2 device pixels per phosphor
+     cell. max-width: 100% falls back to fluid sizing on narrow viewports. */
+  .mcrt__crt {
+    display: block;
+    width: 640px;
+    height: 480px;
+    max-width: 100%;
+    aspect-ratio: 4 / 3;
+  }
+
+  /* Easter-egg power sticker on the Memphis frame. Toggles the CRT
+     effect pipeline on/off via Trinitron.setMasterMode. */
+  .mcrt-power {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink-0);
+    background: var(--ink-cyan);
+    border: 2px solid var(--ink-0);
+    box-shadow: 3px 3px 0 0 var(--ink-0);
+    cursor: pointer;
+    z-index: 5;
+    transition: opacity 0.2s ease;
+  }
+  .mcrt-power[aria-pressed="false"] {
+    opacity: 0.5;
+    background: var(--paper-0);
+  }
+  .mcrt-power:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--ink-0); }
+  .mcrt-power:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 0 var(--ink-0); }
 </style>
 </head>
 <body>
@@ -1037,9 +1075,9 @@
     </div>
   </section>
 
-  <!-- ============ SNEAK PREVIEW · IS-2200 ============ -->
-  <div class="sneak-row">
-  <aside class="sneak" aria-label="Sneak preview · IS-2200 Recipe Router">
+  <!-- ============ IS-2200 HERO (was sneak corner card) ============ -->
+  <section class="is2200-hero">
+  <aside class="sneak" aria-label="IS-2200 Recipe Router — sneak preview">
     <span class="sneak__tape">↳ sneak preview</span>
     <div class="sneak__card">
       <div class="sneak__head">
@@ -1052,9 +1090,10 @@
       <div class="sneak__foot">
         <span>Coming Fall 1998</span>
       </div>
+      <button class="mcrt-power" type="button" aria-label="Toggle CRT effects" aria-pressed="true">⏻</button>
     </div>
   </aside>
-  </div>
+  </section>
 
   <!-- ============ FOOTER ============ -->
   <footer class="foot">
@@ -1205,6 +1244,18 @@
     let trinitron;
     try {
       trinitron = new window.Trinitron(canvas, {
+        // GPU-by-default with CPU fallback. The IS-2200 below opts in
+        // to the bypass canvas + debug overlay; the logo opts out
+        // (no toggle UI, and the .trinitron absolute-positioning
+        // would put a bypass overlay in the wrong place anyway).
+        renderer: 'auto',
+        bypassCanvas: false,
+        debugOverlay: false,
+        // The logo floats on the page background — canvas alpha
+        // tracks the silhouette mask so the page bg shows through
+        // outside the logo. The silhouette edge is softened only
+        // by the upstream beam-spread blur on the signal.
+        opaqueBackground: false,
         signal,
         // Shipped 200×200 source resolution — the hot loop runs at this
         // resolution (40K pixels, 4× cheaper than vw=400 would be). The
@@ -1224,11 +1275,12 @@
         // stretch in the final drawImage. The gap mask fills in the
         // "between" canvas pixels with darkened gap appearance.
         stripeUpscale: 2,
-        // Shipped phosphor coupling. Every column shows the signal with
-        // one channel emphasized — pure-color regions stay bright
-        // because every column emits the signal's dominant color (just
-        // at coupling fraction at non-emphasized columns).
-        phosphorCoupling: 0.55,
+        // Phosphor coupling tuned via the compare.html harness — every
+        // column shows the signal with one channel emphasized; pure-color
+        // regions stay bright because every column emits the signal's
+        // dominant color (just at coupling fraction at non-emphasized
+        // columns). 0.344 reads cleanly without dominating.
+        phosphorCoupling: 0.344,
         // Gap mask: thin vertical lines at every other canvas pixel,
         // partially darkening to suggest the aperture grille at canvas
         // resolution. Painted across the whole canvas (clipped to bleed
@@ -1273,7 +1325,7 @@
         rowShimmer: 0.015,
         persistence: 0.85,
       });
-      window.__trinitron = trinitron;
+      window.__trinitronLogo = trinitron;
     } catch (err) {
       return; // Silent fallback to SVG
     }
@@ -1304,27 +1356,43 @@
     });
   }
 
-  // IS-2200 sneak-preview screen. Theme-invariant by design (the CRT
-  // hardware sub-palette doesn't flip with theme), so it runs in both
-  // modes — no syncWithTheme gating like the logo. Independent of the
-  // logo init: if the logo rasterization fails, the mcrt still runs.
-  // Source-canvas hugs the text exactly: longest line is 248 source-px
-  // (31 chars × 8.0 at 20px VT323) + 2px pad each side = 252 wide;
-  // six lines × 24 lineH = 144 + 3px pad top/bottom = 150 tall. Tight
-  // so no source-canvas slack shows as dark space inside the bezel.
-  const MCRT_VIEW_W = 252;
-  const MCRT_VIEW_H = 150;
-  const MCRT_LINE_H = 24;
-  const MCRT_PAD_X = 2;
-  const MCRT_PAD_Y = 3;
-  const MCRT_FONT = '20px "VT323", "JetBrains Mono", monospace';
+  // IS-2200 sneak-preview screen at native VGA resolution.
+  // Source canvas = phosphor cells × cellSize. At 640×480 cells with
+  // cs=2 the source canvas is 1280×960.
+  // Source canvas (signal callback paints into this) — high enough
+  // for 80-col VT323 text at 40px. Kept at 1280×960 so character
+  // glyph sharpness doesn't depend on the phosphor cell size below.
+  const MCRT_VIEW_W = 1280;
+  const MCRT_VIEW_H = 960;
+  // cs=4 gives a proper [R, G, B, gap] aperture-grille triad: each
+  // phosphor cell is 4 source pixels = 4 device pixels wide on a
+  // 2× DPR display, with one pixel per channel and one gap. The
+  // earlier cs=2 setup (R+G only, B via coupling, no gap column)
+  // was tuned for the small sneak card where cells were physically
+  // bigger — at hero scale it read as solid color mush.
+  const MCRT_CELL_SIZE = 4;
+  const MCRT_PHOSPHOR_W = MCRT_VIEW_W / MCRT_CELL_SIZE;  // 320
+  const MCRT_PHOSPHOR_H = MCRT_VIEW_H / MCRT_CELL_SIZE;  // 240
+  // canvasSize is the WebGL backing buffer in CSS pixels. The
+  // renderer multiplies by DPR. We want backing = display device
+  // pixels so the browser doesn't downscale the carefully-placed
+  // phosphor stripes. Display CSS is 640×480 (set in .mcrt__crt).
+  const MCRT_CANVAS_W = 640;
+  const MCRT_CANVAS_H = 480;
+  const MCRT_LINE_H = 48;
+  const MCRT_PAD_X = 32;
+  const MCRT_PAD_Y = 48;
+  const MCRT_FONT = '40px "VT323", "JetBrains Mono", monospace';
   const MCRT_LINES = [
-    { text: 'IS-2200 · BIOS v2.4',             color: '#FF6CB4' }, // --crt-magenta
-    { text: '(c) 1983 interslice systems',     color: 'rgba(68,255,138,0.75)' },
-    { text: 'mesh ........... 14 nodes',       color: 'rgba(68,255,138,0.75)' },
-    { text: 'latency ........ 0.4 ms',         color: 'rgba(68,255,138,0.75)' },
-    { text: 'mirepoix@is-2200:~$ mesh status', color: '#5EE2FF', promptLen: 19 },
-    { text: 'RX OK · 4 / 14 · cowabunga',      color: '#44FF8A' },
+    { text: 'IS-2200 · BIOS v2.4 · POWER-ON SELF TEST OK · 14 NODES MESHED · UP 384D', color: '#FF6CB4' },
+    { text: '(c) 1983-2026 interslice systems · a wholly-owned subsidiary of NDD', color: 'rgba(68,255,138,0.75)' },
+    { text: '', color: '#000000' },
+    { text: 'mesh status ............................. 14 nodes / 14 expected (100%)', color: 'rgba(68,255,138,0.75)' },
+    { text: 'median latency .......................... 0.4 ms          peak: 1.2 ms', color: 'rgba(68,255,138,0.75)' },
+    { text: 'phosphor temp ........................... 41 C            persistence OK', color: 'rgba(68,255,138,0.75)' },
+    { text: '', color: '#000000' },
+    { text: 'mirepoix@is-2200:~$ mesh status --verbose --since 24h', color: '#5EE2FF', promptLen: 19 },
+    { text: 'RX OK · 4 / 14 nodes · cowabunga · uptime 384d · last reset 2026-01-12', color: '#44FF8A' },
   ];
 
   function mcrtSignal(ctx, timeMs) {
@@ -1334,28 +1402,33 @@
 
     for (let i = 0; i < MCRT_LINES.length; i++) {
       const line = MCRT_LINES[i];
+      if (!line.text) continue;
       const y = MCRT_PAD_Y + i * MCRT_LINE_H;
       if (line.promptLen) {
-        // Prompt prefix in amber/yellow, command in the line color.
         const prefix = line.text.slice(0, line.promptLen);
-        ctx.fillStyle = '#FED105'; // --ink-yellow
+        ctx.fillStyle = '#FED105';
         ctx.fillText(prefix, MCRT_PAD_X, y);
         ctx.fillStyle = line.color;
-        ctx.fillText(line.text.slice(line.promptLen), MCRT_PAD_X + ctx.measureText(prefix).width, y);
+        ctx.fillText(line.text.slice(line.promptLen),
+          MCRT_PAD_X + ctx.measureText(prefix).width, y);
       } else {
         ctx.fillStyle = line.color;
         ctx.fillText(line.text, MCRT_PAD_X, y);
       }
     }
 
-    // Cursor: 1.1s blink, painted into the signal so it inherits
-    // phosphor persistence and bleed.
+    // Cursor at the end of the last non-empty line. Larger block for
+    // VGA scale.
     if ((timeMs % 1100) < 550) {
-      const last = MCRT_LINES[MCRT_LINES.length - 1];
-      const cursorX = MCRT_PAD_X + ctx.measureText(last.text).width + 2;
-      const cursorY = MCRT_PAD_Y + (MCRT_LINES.length - 1) * MCRT_LINE_H;
-      ctx.fillStyle = '#44FF8A';
-      ctx.fillRect(cursorX, cursorY, 9, 18);
+      let lastIdx = MCRT_LINES.length - 1;
+      while (lastIdx >= 0 && !MCRT_LINES[lastIdx].text) lastIdx--;
+      if (lastIdx >= 0) {
+        const last = MCRT_LINES[lastIdx];
+        const cursorX = MCRT_PAD_X + ctx.measureText(last.text).width + 4;
+        const cursorY = MCRT_PAD_Y + lastIdx * MCRT_LINE_H;
+        ctx.fillStyle = '#44FF8A';
+        ctx.fillRect(cursorX, cursorY, 18, 36);
+      }
     }
   }
 
@@ -1386,30 +1459,41 @@
 
     fontReady.then(() => {
       try {
-        new window.Trinitron(canvas, {
+        const mcrt = new window.Trinitron(canvas, {
+          renderer: 'auto',
           signal: mcrtSignal,
           viewSize: [MCRT_VIEW_W, MCRT_VIEW_H],
-          // canvasSize = viewSize × stripeUpscale (zero bleed margin) so
-          // the stripe region fills the entire canvas with no dark moat
-          // around it. The halo is disabled (bleedIntensity 0) since
-          // there's no margin for it to spread into anyway.
-          canvasSize: [MCRT_VIEW_W * 2, MCRT_VIEW_H * 2],
-          cellSize: 2,
-          stripeUpscale: 2,
+          canvasSize: [MCRT_CANVAS_W, MCRT_CANVAS_H],
+          cellSize: MCRT_CELL_SIZE,
           phosphorCoupling: 0.35,
-          gapMaskAlpha: 0.25,
-          gapMaskPeriod: 2,
-          bleedRadius: 1,
-          bleedIntensity: 0,
           persistence: 0.55,
-          convergence: { r: [-0.15, -0.15], g: [0, 0], b: [0.15, 0.15] },
+          convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
           beamSpreadPx: 0.4,
-          phosphorBlurPx: 0.3,
           hotspot: 0.18,
           cellShimmer: 0.03,
           rowShimmer: 0.012,
-          damperWires: [], // disabled — would slice across text
-        }).start();
+          curvature: 0.025,
+          bloomThreshold: 0.6,
+          bloomStrength: 0.9,
+          damperWires: [],
+        });
+        mcrt.start();
+        // IS-2200 is the canonical DevTools handle; logo lives under
+        // window.__trinitronLogo so the two don't collide.
+        window.__trinitron = mcrt;
+
+        const powerBtn = document.querySelector('.mcrt-power');
+        if (powerBtn) {
+          // Initial state reflects the persisted localStorage value.
+          const initialOn = mcrt._masterOn;
+          powerBtn.setAttribute('aria-pressed', initialOn ? 'true' : 'false');
+
+          powerBtn.addEventListener('click', () => {
+            const newOn = !window.__trinitron._masterOn;
+            window.__trinitron.setMasterMode(newOn);
+            powerBtn.setAttribute('aria-pressed', newOn ? 'true' : 'false');
+          });
+        }
       } catch (err) {
         // Silent fallback: bezel stays, screen is dark — same as if
         // Trinitron weren't loaded. The a11y mirror still reads.
