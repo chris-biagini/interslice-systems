@@ -1210,36 +1210,72 @@
     try {
       trinitron = new window.Trinitron(canvas, {
         signal,
-        // canvasSize − viewSize / 2 = 40-unit halo margin per side, ample
-        // room for bleedRadius=13's ~39-unit visible extent.
-        canvasSize: [280, 280],
-        // stdDev=13 matches the SVG fallback's #phosphor-bleed filter.
-        bleedRadius: 13,
-        // +25% over the SVG fallback's feFuncA slope for a punchier halo.
-        bleedIntensity: 1.625,
-        // Static R/B fringe; drift turned off (read as page jitter, not CRT).
-        convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
-        convergenceDriftAmplitudePx: 0.0,
-        // Imperfect aperture-grille spill — each stripe column's R/G/B
-        // sample bleeds into its neighbors at this fraction. For uniform
-        // cells this restores the brightness a strict per-stripe render
-        // would lose; for edge cells it preserves the per-column
-        // gradients that come out of the alpha-weighted sampler.
+        // Shipped 200×200 source resolution — the hot loop runs at this
+        // resolution (40K pixels, 4× cheaper than vw=400 would be). The
+        // aperture-grille gap pattern is added at canvas resolution via
+        // gapMaskAlpha below, not at source resolution.
+        viewSize: [200, 200],
+        // Canvas backing is 560 so we get the same on-screen logo size
+        // and halo extent as the previous version. The stripe region in
+        // canvas pixels is 400 (= 200 source × stripeUpscale 2), with
+        // 80 canvas-px halo margin per side.
+        canvasSize: [560, 560],
+        // 3-pixel contiguous triad [R, G, B], shipped layout. Every
+        // source pixel is a lit phosphor column — no source-pixel gap
+        // columns to dim the per-area brightness.
+        cellSize: 3,
+        // Each source pixel becomes 2 canvas pixels via nearest-neighbor
+        // stretch in the final drawImage. The gap mask fills in the
+        // "between" canvas pixels with darkened gap appearance.
+        stripeUpscale: 2,
+        // Shipped phosphor coupling. Every column shows the signal with
+        // one channel emphasized — pure-color regions stay bright
+        // because every column emits the signal's dominant color (just
+        // at coupling fraction at non-emphasized columns).
         phosphorCoupling: 0.55,
-        // Sub-pixel blur softens LCD-sharp pixel edges into lit-phosphor
-        // dots through curved glass.
-        phosphorBlurPx: 0.3,
-        // Electron-beam spread — isotropic Gaussian blur applied to the
-        // convergence canvases (source pixels). A real Trinitron's spot
-        // has fuzzy edges, so stripe ends and curved silhouettes soften
-        // into adjacent scan lines rather than terminating razor-sharp
-        // mid-phosphor like an LCD. The browser's canvas filter blur
-        // no-ops below ~0.7px, so 0.8 is the smallest value that
-        // visibly takes effect; it softens edges while leaving the
-        // R/G/B stripe triad clearly resolved.
-        beamSpreadPx: 0.8,
-        persistence: 0.85,
+        // Gap mask: thin vertical lines at every other canvas pixel,
+        // partially darkening to suggest the aperture grille at canvas
+        // resolution. Painted across the whole canvas (clipped to bleed
+        // content via source-atop), so it also creates a substrate-like
+        // texture across the halo. Kept subtle here so the dot-grid
+        // hotspot pattern remains the dominant structure.
+        gapMaskAlpha: 0.3,
+        gapMaskPeriod: 2,
+        // Per-cell hotspot — Manhattan-distance brightness boost at the
+        // dead-center pixel of each 3×3 cell. With shipped's 0.30, the
+        // center pixel reads as a brighter phosphor "dot" once the
+        // browser downsamples; the cell grid becomes the dominant
+        // visible texture, which is what gives the "lit phosphor through
+        // glass" feel.
         hotspot: 0.30,
+        // Per-cell brightness jitter, stable per reload. 4% variance
+        // breaks up the regularity of the hotspot grid just enough to
+        // read as real phosphor variation rather than a print pattern.
+        cellShimmer: 0.04,
+        // stdDev=26 in canvas-pixel units — same value as the previous
+        // version, since canvasSize is unchanged.
+        bleedRadius: 26,
+        // Bleed brightness for the halo. Alpha tracks source coverage so
+        // the bleed is fully blocked inside the silhouette. Shipped used
+        // 1.625; that's the punchier value for matching the previous
+        // version's halo feel.
+        bleedIntensity: 1.625,
+        // Static R/B fringe at ±0.25 source px (shipped value). Visible
+        // chromatic fringe at silhouette edges after the 2× canvas
+        // upscale becomes ~0.5 canvas px wide — comparable to the
+        // previous cs=6 version's ±0.5 source px shift.
+        convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
+        // Post-stripe blur in canvas-pixel units. Unchanged from the
+        // previous version since canvasSize is unchanged.
+        phosphorBlurPx: 0.6,
+        // Electron-beam spread in source-pixel units. Shipped value
+        // (0.8) since viewSize is back to 200.
+        beamSpreadPx: 0.8,
+        // Per-row brightness jitter — the line-to-line beam-current
+        // fluctuation a real CRT exhibits. Static (LCG-seeded) so it's
+        // a fixed texture, not video static.
+        rowShimmer: 0.015,
+        persistence: 0.85,
       });
       window.__trinitron = trinitron;
     } catch (err) {
