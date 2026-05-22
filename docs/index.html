@@ -92,12 +92,13 @@
     padding: 0 20px;
   }
 
-  /* Trinitron canvas overlay — dark mode only, sits below the .mark SVG.
-     We size the canvas so its inner source region (viewSize) matches the
-     SVG mark's 168px box; the surrounding margin holds the bleed halo.
+  /* Trinitron canvas overlay — dark mode only. Sits behind the .mark SVG
+     and the live wordmark; in dark mode the canvas paints both, so the
+     SVG dark-mode layers are display:none (see triple-activation rules
+     below) and the wordmark goes color:transparent in dark mode (Task 4).
      --canvas-to-view must equal canvasSize / viewSize from the renderer
      opts (currently 280/200 = 1.4). */
-  .trinitron {
+  .hero-screen {
     position: absolute;
     --svg-size: 168px;
     --canvas-to-view: calc(280 / 200);
@@ -115,9 +116,9 @@
   /* Canonical triple-activation pattern (see CLAUDE.md): explicit dark
      OR (OS-dark AND not pinned-to-light). No light-mode rule needed —
      display: none is the default. */
-  :root.trinitron-active[data-theme="dark"] .trinitron { display: block; }
+  :root.trinitron-active[data-theme="dark"] .hero-screen { display: block; }
   @media (prefers-color-scheme: dark) {
-    :root.trinitron-active:not([data-theme="light"]) .trinitron { display: block; }
+    :root.trinitron-active:not([data-theme="light"]) .hero-screen { display: block; }
   }
 
   /* When canvas is active in a dark-mode path, hide every SVG dark-mode
@@ -539,7 +540,7 @@
   <!-- ============ HERO: LOGO + WORDMARK + CTA ============ -->
   <section class="hero">
     <div class="stack">
-      <canvas class="trinitron" aria-hidden="true"></canvas>
+      <canvas class="hero-screen" aria-hidden="true"></canvas>
       <svg class="mark" viewBox="0 0 200 200" width="168" height="168" role="img" aria-label="Interslice mark">
         <defs>
           <!-- ===== PHOSPHOR BLEED filter (additive) =====
@@ -1057,7 +1058,7 @@
   }
 
   async function init() {
-    const canvas = document.querySelector('canvas.trinitron');
+    const canvas = document.querySelector('canvas.hero-screen');
     if (!canvas || !window.Trinitron) return;
 
     let armsImg, hubImg, aquaImg;
