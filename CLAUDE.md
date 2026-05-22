@@ -48,8 +48,6 @@ Almost every dark-mode rule in `index.html` therefore appears twice — once for
 ### Load-bearing token quirks
 
 - `--stamp-ink` flips with theme (`--ink-0` in light, `--paper-0` in dark) so Memphis offset shadows and sticker outlines read against either background. New offset shadows must use `var(--stamp-ink)`, not a hardcoded near-black like `#0B0E1F`.
-- The `.sneak__tape` yellow-sticker element deliberately pins to `--ink-0` directly (not `--stamp-ink`) — yellow needs dark contrast in both themes. If you spot this pattern, leave it.
-- The `.mcrt` widget has a CRT-hardware sub-palette (`--crt-green`, `--crt-amber`, `--crt-screen-deep`, `--crt-bezel*`, ...) that is **theme-invariant** — phosphor green inside the widget intentionally does not flip in dark mode.
 
 ### CSS-first, with one documented JS exception
 
@@ -74,7 +72,7 @@ One consumer in `docs/index.html`:
 
 The renderer is *option-driven*: same code, different look. The hero screen runs on the **GPU path** (`renderer: 'auto'` with automatic CPU fallback on WebGL2 context failure), `cellSize: 4`, opaque substrate, contained halo, big aperture-grille mask, `viewSize: [800, 320]`.
 
-The GPU pipeline is a three-pass setup (signal upload → phosphor/persistence → composite) plus three auxiliary bloom passes. All 18 effects are togglable at runtime via `window.__trinitronLogo.effects`. Add `?debug=1` to the URL to expose a per-effect override panel in the top-right corner. The spec and implementation plan live in `specs/2026-05-22-is2200-gpu-trinitron-design.md` and `plans/2026-05-22-is2200-gpu-trinitron-implementation.md`.
+The GPU pipeline is a three-pass setup (signal upload → phosphor/persistence → composite) plus three auxiliary bloom passes. All 18 effects are togglable at runtime via `window.__trinitronLogo.effects`. Add `?debug=1` to the URL to expose a per-effect override panel in the top-right corner. The original GPU pipeline design lives in `specs/2026-05-22-is2200-gpu-trinitron-design.md` and `plans/2026-05-22-is2200-gpu-trinitron-implementation.md`. The current single-consumer hero-screen consolidation is documented in `specs/2026-05-22-hero-trinitron-design.md` and `plans/2026-05-22-hero-trinitron-implementation.md`.
 
 There are two memory entries about deliberate aesthetic choices in this renderer — gap-mask striations bleeding into the halo, and the per-cell hotspot/shimmer texture. Both are "leave it alone, this is the look I want" entries. Don't refactor either away as accidental.
 
