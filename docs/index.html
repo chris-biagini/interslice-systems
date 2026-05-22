@@ -92,17 +92,24 @@
     padding: 0 20px;
   }
 
-  /* Trinitron canvas overlay — dark mode only. Sits behind the .mark SVG
-     and the live wordmark; in dark mode the canvas paints both, so the
-     SVG dark-mode layers are display:none (see triple-activation rules
-     below) and the wordmark goes color:transparent in dark mode (Task 4). */
+  /* Trinitron canvas overlay — dark mode only. Sits behind .mark and
+     the live wordmark and paints both as phosphor. Display box is
+     sized to cover the visible region of logo + wordmark; the canvas's
+     internal source coordinates (viewSize = 800×320 source px) map to
+     this box. Halo bleed is contained inside the canvas rectangle —
+     no visible halo outside the screen edge. */
   .hero-screen {
     position: absolute;
-    --svg-size: 168px;
-    --canvas-to-view: calc(280 / 200);
-    width:  calc(var(--svg-size) * var(--canvas-to-view));
-    height: calc(var(--svg-size) * var(--canvas-to-view));
-    top:    calc(var(--svg-size) * (1 - var(--canvas-to-view)) / 2);
+    /* Display width clamps with the wordmark's clamp(56px, 9vw, 124px)
+       font-size: at floor the screen is 560px wide, at cap 880px wide.
+       aspect-ratio keeps height tied to width for a fixed 2.5:1 face. */
+    width: clamp(560px, 78vw, 880px);
+    aspect-ratio: 800 / 320;
+    /* Center horizontally and overlay the stack starting at the top of
+       the logo. The logo at 168px + wordmark with -0.18em pull-up + a
+       few px breathing fits inside ~310 display px at the wide end,
+       comfortably inside our 880×352 canvas display box. */
+    top: 0;
     left: 50%;
     transform: translateX(-50%);
     pointer-events: none;
@@ -227,6 +234,24 @@
   .wordmark b {
     font-weight: 500;
     color: var(--fg);
+  }
+
+  /* Dark mode: live wordmark text stays in the DOM (accessibility tree
+     reads it as "interslice systems"), but its visual paint is
+     suppressed — the canvas paints its own phosphor copy at the same
+     layout position. Triple-activation pattern (see CLAUDE.md):
+     explicit dark OR (OS-dark AND not pinned-to-light). */
+  :root[data-theme="dark"] .wordmark,
+  :root[data-theme="dark"] .wordmark i,
+  :root[data-theme="dark"] .wordmark b {
+    color: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .wordmark,
+    :root:not([data-theme="light"]) .wordmark i,
+    :root:not([data-theme="light"]) .wordmark b {
+      color: transparent;
+    }
   }
 
   /* the wordmark→cta gap is page-specific; the rest of .cta-wrap
@@ -1055,6 +1080,43 @@
     return -(timeMs / ROT_PERIOD_MS) * 360;
   }
 
+  // Hero screen source-canvas geometry (matches viewSize below).
+  // Treat this as the canonical layout — all draws inside `signal()`
+  // place content in these coordinates. The renderer takes care of
+  // mapping the source canvas to the device pixel canvas.
+  const HERO_VIEW_W = 800;
+  const HERO_VIEW_H = 320;
+
+  // Logo position inside the screen — centered horizontally,
+  // 140 source px square, top-aligned with ~20 px breathing room.
+  const HERO_LOGO_X = (HERO_VIEW_W - 140) / 2;  // 330
+  const HERO_LOGO_Y = 20;
+  const HERO_LOGO_SIZE = 140;
+
+  // Wordmark — drawn below the logo. font-size is in source-canvas
+  // pixels, sized so cap-height ≈ 80 px (about 20 phosphor cells with
+  // cs=4, plenty for readability). Color is a near-white phosphor —
+  // not pure #FFFFFF; a touch warm so it reads as lit phosphor rather
+  // than backlight.
+  const HERO_WORDMARK_BASELINE_Y = 270;
+  const HERO_WORDMARK_FONT_PX = 110;
+  const HERO_WORDMARK_FONT = '"Space Grotesk", "Hanken Grotesk", system-ui, sans-serif';
+  const HERO_WORDMARK_COLOR = '#FFF6E6';
+  const HERO_WORDMARK_LETTER_SPACING_PX = -6;  // ~-0.06em at 110 px
+
+  // CRT substrate — deeper black than --bg (--navy-0 = #000926) so the
+  // screen face reads as the darkest plane on the page.
+  const HERO_SUBSTRATE = '#04081A';
+
+  // Wordmark glyph parts, in document order. The middle "·" is drawn
+  // separately so its margins can be tuned to match the live wordmark's
+  // 0.22em-left / 0.10em-right asymmetric kerning.
+  const HERO_WORDMARK_PARTS = [
+    { text: 'interslice', weight: 700 },
+    { text: '·',          weight: 700, marginLeftEm: 0.22, marginRightEm: 0.10 },
+    { text: 'systems',    weight: 500 },
+  ];
+
   async function init() {
     const canvas = document.querySelector('canvas.hero-screen');
     if (!canvas || !window.Trinitron) return;
@@ -1070,108 +1132,145 @@
       return; // Fall back to SVG implementation
     }
 
-    // Display signal — colored phosphor logo (arms + rotating hub) with
-    // the Aqua gloss composited on top via source-atop. This is the one
-    // bitmap the Trinitron renders; the halo derives from the same
-    // bitmap, gloss included, because a real CRT can't selectively leak
-    // some pixels and not others.
+    // Reusable offscreen canvas for the logo composite. The logo's aqua
+    // gloss is composited onto the lit phosphor via source-atop, which
+    // only works when the surrounding canvas is transparent — so the
+    // logo is rendered into this transparent temp first, then drawn
+    // onto the main source canvas (which has an opaque substrate).
+    const logoCanvas = document.createElement('canvas');
+    logoCanvas.width = HERO_LOGO_SIZE;
+    logoCanvas.height = HERO_LOGO_SIZE;
+    const logoCtx = logoCanvas.getContext('2d');
+
     function signal(ctx, timeMs) {
-      ctx.drawImage(armsImg, 0, 0, 200, 200);
-      ctx.save();
-      ctx.translate(100, 100);
-      ctx.rotate(hubAngleDeg(timeMs) * Math.PI / 180);
-      ctx.translate(-100, -100);
-      ctx.drawImage(hubImg, 0, 0, 200, 200);
-      ctx.restore();
-      ctx.save();
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.drawImage(aquaImg, 0, 0, 200, 200);
-      ctx.restore();
+      // 1. Substrate — opaque CRT face under everything.
+      ctx.fillStyle = HERO_SUBSTRATE;
+      ctx.fillRect(0, 0, HERO_VIEW_W, HERO_VIEW_H);
+
+      // 2. Logo — composited in the transparent offscreen canvas
+      //    (arms + rotating hub + aqua gloss via source-atop), then
+      //    blitted onto the main source canvas at the logo position.
+      logoCtx.clearRect(0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+
+      // arms (static)
+      logoCtx.drawImage(armsImg, 0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+
+      // hub (rotating around its center)
+      logoCtx.save();
+      const hubCx = HERO_LOGO_SIZE / 2;
+      const hubCy = HERO_LOGO_SIZE / 2;
+      logoCtx.translate(hubCx, hubCy);
+      logoCtx.rotate(hubAngleDeg(timeMs) * Math.PI / 180);
+      logoCtx.translate(-hubCx, -hubCy);
+      logoCtx.drawImage(hubImg, 0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+      logoCtx.restore();
+
+      // aqua gloss — source-atop confines it to wherever the lit
+      // phosphor has alpha (the logoCanvas surroundings are transparent).
+      logoCtx.save();
+      logoCtx.globalCompositeOperation = 'source-atop';
+      logoCtx.drawImage(aquaImg, 0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+      logoCtx.restore();
+
+      // blit the composed logo onto the main source canvas
+      ctx.drawImage(logoCanvas, HERO_LOGO_X, HERO_LOGO_Y);
+
+      // 3. Wordmark — three fillText calls for the weight split, with
+      //    letter-spacing applied via ctx.letterSpacing (widely supported
+      //    as of 2024+; on older browsers this property is silently
+      //    ignored, which is a tolerable degradation — the wordmark just
+      //    renders at default tracking).
+      ctx.fillStyle = HERO_WORDMARK_COLOR;
+      ctx.textBaseline = 'alphabetic';
+      if ('letterSpacing' in ctx) {
+        ctx.letterSpacing = HERO_WORDMARK_LETTER_SPACING_PX + 'px';
+      }
+
+      // Measure each part with its own weight, accumulate x as we go.
+      // Start by computing the full width so we can center the wordmark
+      // horizontally inside the screen.
+      function partFont(part) {
+        return `${part.weight} ${HERO_WORDMARK_FONT_PX}px ${HERO_WORDMARK_FONT}`;
+      }
+      function partWidth(part) {
+        ctx.font = partFont(part);
+        return ctx.measureText(part.text).width;
+      }
+      const emPx = HERO_WORDMARK_FONT_PX;
+      let totalW = 0;
+      for (const part of HERO_WORDMARK_PARTS) {
+        totalW += partWidth(part);
+        if (part.marginLeftEm)  totalW += part.marginLeftEm  * emPx;
+        if (part.marginRightEm) totalW += part.marginRightEm * emPx;
+      }
+
+      let x = (HERO_VIEW_W - totalW) / 2;
+      for (const part of HERO_WORDMARK_PARTS) {
+        if (part.marginLeftEm) x += part.marginLeftEm * emPx;
+        ctx.font = partFont(part);
+        ctx.fillText(part.text, x, HERO_WORDMARK_BASELINE_Y);
+        x += partWidth(part);
+        if (part.marginRightEm) x += part.marginRightEm * emPx;
+      }
     }
 
     let trinitron;
     try {
       trinitron = new window.Trinitron(canvas, {
-        // GPU-by-default with CPU fallback. The IS-2200 below opts in
-        // to the bypass canvas + debug overlay; the logo opts out
-        // (no toggle UI, and the .hero-screen absolute-positioning
-        // would put a bypass overlay in the wrong place anyway).
         renderer: 'auto',
-        bypassCanvas: false,
-        debugOverlay: false,
-        // The logo floats on the page background — canvas alpha
-        // tracks the silhouette mask so the page bg shows through
-        // outside the logo. The silhouette edge is softened only
-        // by the upstream beam-spread blur on the signal.
-        opaqueBackground: false,
         signal,
-        // Shipped 200×200 source resolution — the hot loop runs at this
-        // resolution (40K pixels, 4× cheaper than vw=400 would be). The
-        // aperture-grille gap pattern is added at canvas resolution via
-        // gapMaskAlpha below, not at source resolution.
-        viewSize: [200, 200],
-        // Canvas backing is 560 so we get the same on-screen logo size
-        // and halo extent as the previous version. The stripe region in
-        // canvas pixels is 400 (= 200 source × stripeUpscale 2), with
-        // 80 canvas-px halo margin per side.
-        canvasSize: [560, 560],
-        // 3-pixel contiguous triad [R, G, B], shipped layout. Every
-        // source pixel is a lit phosphor column — no source-pixel gap
-        // columns to dim the per-area brightness.
-        cellSize: 3,
-        // Each source pixel becomes 2 canvas pixels via nearest-neighbor
-        // stretch in the final drawImage. The gap mask fills in the
-        // "between" canvas pixels with darkened gap appearance.
+        // Source canvas covers the full hero screen — substrate + logo + wordmark.
+        viewSize: [HERO_VIEW_W, HERO_VIEW_H],
+        // 2× source → canvas backing, the same stripeUpscale pattern used by
+        // both prior consumers. Canvas backing is 1600×640 at 1× DPR; the
+        // renderer multiplies by DPR internally.
+        canvasSize: [HERO_VIEW_W * 2, HERO_VIEW_H * 2],
+        // cs=4 gives proper [R, G, B, gap] aperture triads at this scale.
+        cellSize: 4,
         stripeUpscale: 2,
-        // Phosphor coupling tuned via the compare.html harness — every
-        // column shows the signal with one channel emphasized; pure-color
-        // regions stay bright because every column emits the signal's
-        // dominant color (just at coupling fraction at non-emphasized
-        // columns). 0.344 reads cleanly without dominating.
-        phosphorCoupling: 0.344,
-        // Gap mask: thin vertical lines at every other canvas pixel,
-        // partially darkening to suggest the aperture grille at canvas
-        // resolution. Painted across the whole canvas (clipped to bleed
-        // content via source-atop), so it also creates a substrate-like
-        // texture across the halo. Kept subtle here so the dot-grid
-        // hotspot pattern remains the dominant structure.
+        // Opaque substrate — the canvas rectangle IS the screen face.
+        // (This is the renderer's default; we list it explicitly because
+        // the previous logo-only setup overrode it to false.)
+        opaqueBackground: true,
+        // Phosphor coupling tuned for mixed content — text wants every
+        // column lit at moderate coupling so glyph edges read as phosphor
+        // dots rather than razor-thin column slivers.
+        phosphorCoupling: 0.35,
+        // Persistence — high enough to smear the rotating hub into a soft
+        // trail, low enough that the wordmark stays crisp on a stationary
+        // signal (the wordmark doesn't move; persistence has nothing to
+        // smear there).
+        persistence: 0.82,
+        // Convergence — matches both prior consumers.
+        convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+        // Beam spread in source pixels — slight softening of glyph edges
+        // and arm caps. Below 0.7 px Chromium's filter blur no-ops.
+        beamSpreadPx: 0.7,
+        // Per-cell hotspot and shimmer — produce the dot-grid texture that
+        // reads as phosphor through glass. Slightly higher hotspot than the
+        // IS-2200 used because the wordmark text needs the per-cell bright
+        // center to read as crisp lit glyphs.
+        hotspot: 0.24,
+        cellShimmer: 0.04,
+        rowShimmer: 0.012,
+        // Halo — contained inside the canvas rectangle (the rectangle IS
+        // the screen edge). Lower intensity than the logo-only setup
+        // (which used 1.625) so the substrate stays visible.
+        bleedRadius: 18,
+        bleedIntensity: 1.2,
+        // Post-stripe blur in canvas-pixel units. Light touch.
+        phosphorBlurPx: 0.6,
+        // Aperture-grille gap mask — same fraction the logo used.
         gapMaskAlpha: 0.3,
         gapMaskPeriod: 2,
-        // Per-cell hotspot — Manhattan-distance brightness boost at the
-        // dead-center pixel of each 3×3 cell. With shipped's 0.30, the
-        // center pixel reads as a brighter phosphor "dot" once the
-        // browser downsamples; the cell grid becomes the dominant
-        // visible texture, which is what gives the "lit phosphor through
-        // glass" feel.
-        hotspot: 0.30,
-        // Per-cell brightness jitter, stable per reload. 4% variance
-        // breaks up the regularity of the hotspot grid just enough to
-        // read as real phosphor variation rather than a print pattern.
-        cellShimmer: 0.04,
-        // stdDev=26 in canvas-pixel units — same value as the previous
-        // version, since canvasSize is unchanged.
-        bleedRadius: 26,
-        // Bleed brightness for the halo. Alpha tracks source coverage so
-        // the bleed is fully blocked inside the silhouette. Shipped used
-        // 1.625; that's the punchier value for matching the previous
-        // version's halo feel.
-        bleedIntensity: 1.625,
-        // Static R/B fringe at ±0.25 source px (shipped value). Visible
-        // chromatic fringe at silhouette edges after the 2× canvas
-        // upscale becomes ~0.5 canvas px wide — comparable to the
-        // previous cs=6 version's ±0.5 source px shift.
-        convergence: { r: [-0.25, -0.25], g: [0.0, 0.0], b: [0.25, 0.25] },
-        // Post-stripe blur in canvas-pixel units. Unchanged from the
-        // previous version since canvasSize is unchanged.
-        phosphorBlurPx: 0.6,
-        // Electron-beam spread in source-pixel units. Shipped value
-        // (0.8) since viewSize is back to 200.
-        beamSpreadPx: 0.8,
-        // Per-row brightness jitter — the line-to-line beam-current
-        // fluctuation a real CRT exhibits. Static (LCG-seeded) so it's
-        // a fixed texture, not video static.
-        rowShimmer: 0.015,
-        persistence: 0.85,
+        // The hero screen is the only consumer left, so it claims the
+        // ?debug=1 effect overlay. No bypass canvas (no power-button
+        // toggle UI anymore — easter egg dropped per the spec).
+        bypassCanvas: false,
+        debugOverlay: true,
+        // Damper wires off for now (the IS-2200 had them off too). Could
+        // be a future tuning option.
+        damperWires: [],
       });
       window.__trinitronLogo = trinitron;
     } catch (err) {
