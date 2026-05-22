@@ -419,34 +419,3 @@ hr { border: 0; border-top: var(--bw-rule) solid var(--ink-0); margin: var(--sp-
       drop-shadow(0 0 calc(18px * var(--glow-strength)) rgb(229 4 127 / 0.28));
   }
 }
-
-/* ============================ MINI CRT ===============================
-   Tiny CRT terminal — phosphor-green console output on a near-black
-   tube, scanline overlay, soft vignette. Uses the theme-invariant
-   CRT hardware sub-palette (so it stays "green console" in both
-   light and dark mode — see tokens above). */
-
-.mcrt {
-  background: var(--crt-screen-deep);
-  border: 1px solid var(--border);
-  border-radius: var(--r-2);
-  padding: 0;
-  position: relative;
-  overflow: hidden;
-}
-.mcrt__crt {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-.mcrt__a11y {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0,0,0,0);
-  white-space: nowrap;
-  border: 0;
-}
