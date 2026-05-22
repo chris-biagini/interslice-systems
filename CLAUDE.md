@@ -16,7 +16,8 @@ The maintainer (Chris) frames this as a long-term "tender of documents" repo. To
 
 ## File layout
 
-- `docs/index.html` — the entire page. All page-specific CSS is **inlined** in one `<style>` block. No `<script>` tags, by design (see "Pure CSS" below).
+- `docs/index.html` — the entire page. All page-specific CSS is **inlined** in one `<style>` block. One `<script src="trinitron.js">` tag and one inline `<script>` block at the bottom — the only JS on the site (see "CSS-first, with one documented JS exception" below).
+- `docs/trinitron.js` — canvas-based phosphor renderer. Load-bearing for the dark-mode logo and the IS-2200 sneak-preview screen (see "Trinitron renderer" below).
 - `docs/tokens.css` — the canonical design-token sheet (colors, type, semantic vars). Imported by `index.html`. Anything reusable across future documents belongs here.
 - `docs/logo_CMYK*.svg`, `docs/logo_RGBW*.svg` — the two-media logo (see "Two media" below).
 - `docs/CNAME` — Pages custom-domain config.
@@ -50,11 +51,31 @@ Almost every dark-mode rule in `index.html` therefore appears twice — once for
 - The `.sneak__tape` yellow-sticker element deliberately pins to `--ink-0` directly (not `--stamp-ink`) — yellow needs dark contrast in both themes. If you spot this pattern, leave it.
 - The `.mcrt` widget has a CRT-hardware sub-palette (`--crt-green`, `--crt-amber`, `--crt-screen-deep`, `--crt-bezel*`, ...) that is **theme-invariant** — phosphor green inside the widget intentionally does not flip in dark mode.
 
-### Pure CSS, no JavaScript
+### CSS-first, with one documented JS exception
 
-There are zero `<script>` tags. Effects that *look* like JS (CRT scanlines, Memphis sprinkles, theme-aware content swaps, day/night taglines) are all CSS — using `:has()`, `prefers-color-scheme`, `data-*` attribute selectors, custom-property switches, pseudo-elements with `content:`, sibling combinators, etc.
+Effects that *look* like JS — CRT scanlines, Memphis sprinkles, theme-aware content swaps, day/night taglines, sprinkle flicker — are all CSS, using `:has()`, `prefers-color-scheme`, `data-*` attribute selectors, custom-property switches, pseudo-elements with `content:`, sibling combinators, etc. Before reaching for JS for any new behavior, exhaust the CSS toolbox first.
 
-Before reaching for JS for new behavior, exhaust the CSS toolbox. If JS is genuinely required, call it out as a fallback and explain why CSS couldn't do it.
+The one place JS *is* load-bearing is the Trinitron phosphor renderer (see next section). It's a physical-model simulation of an aperture-grille CRT — per-channel RGB stripe decomposition, per-pixel persistence, convergence fringe, halo bleed — that CSS genuinely cannot do. Don't take this as license to bolt on more JS; the bar for new scripts is "CSS can't do this either, and here's why."
+
+### Trinitron renderer
+
+`docs/trinitron.js` defines a single `Trinitron` class. It takes a `<canvas>`, an options object, and a `signal(ctx, timeMs)` callback. Each RAF tick it:
+
+1. Lets the callback paint into a small offscreen "signal" canvas.
+2. Bakes stationary damper-wire bands into the signal (optional).
+3. Creates three per-channel pre-shifted copies for convergence.
+4. Runs one fused per-output-pixel pass: sample → persistence lerp → multiply by stripe profile (R lights at subX=0, G at 1, B at 2 for `cellSize: 3`) → per-cell hotspot + shimmer → write.
+5. Blurs the original signal into a separate canvas for the halo bleed.
+6. Composites bleed under stripes, optional blur on top, optional gap mask via `source-atop`.
+
+Two consumers in `docs/index.html`:
+
+- **The dark-mode logo** (`canvas.trinitron`): signal is a rasterized SVG of the rotating arms + petals. Gated on `<html>` carrying `trinitron-active` so the SVG can render unchanged in light mode and the canvas overlays it in dark mode. A `MutationObserver` on `data-theme` toggles `start()` / `stop()` to drop animation cost on the off path.
+- **The IS-2200 sneak-preview screen** (`canvas.mcrt__crt`): signal is `fillText` of six lines of VT323 in CRT-palette colors plus a blinking cursor. Theme-invariant — the CRT-hardware sub-palette doesn't flip with theme, so it runs in both modes. A visually-hidden `.mcrt__a11y` mirror gives screen readers real text; the canvas paint is sighted-only.
+
+The renderer is *option-driven*: same code, different look. The logo runs with `cellSize: 3`, big halo, slow persistence; the IS-2200 runs with `cellSize: 2`, no halo (`bleedIntensity: 0`), tight persistence, sharper convergence.
+
+There are two memory entries about deliberate aesthetic choices in this renderer — gap-mask striations bleeding into the halo, and the per-cell hotspot/shimmer texture. Both are "leave it alone, this is the look I want" entries. Don't refactor either away as accidental.
 
 ## Working conventions
 
@@ -82,3 +103,5 @@ Standing authorization to commit and push at reasonable points without asking ea
 ### Verifying visual changes
 
 Type-checking and grep don't catch broken layouts. For CSS/visual edits, open the page in a browser and check both themes — toggle via `<html data-theme="dark">` / `data-theme="light">` in DevTools, and verify the OS-preference path still works by removing the attribute entirely.
+
+For Trinitron-renderer edits the same rule applies, plus: open the page, check that both consumers (the dark-mode logo and the IS-2200 screen) still look correct, and verify the start/stop wiring on theme toggle (`window.__trinitron` is exposed for poking in DevTools).
