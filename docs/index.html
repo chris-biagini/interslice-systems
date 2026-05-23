@@ -1400,6 +1400,28 @@
         });
       }
 
+      // Wordmark part widths and total layout width. Measured once per
+      // layout — font and text don't change between frames; fontPx only
+      // changes on resize, which recreates the layout. Replaces 6
+      // measureText calls per frame in the signal callback (one
+      // measureText per part, twice over).
+      const wmCanvas = document.createElement('canvas');
+      const wmCtx = wmCanvas.getContext('2d');
+      if ('letterSpacing' in wmCtx) {
+        wmCtx.letterSpacing = (fontPx * HERO_WORDMARK_LETTER_SPACING_EM) + 'px';
+      }
+      const wordmarkPartWidths = HERO_WORDMARK_PARTS.map((part) => {
+        wmCtx.font = `${part.weight} ${fontPx}px ${HERO_WORDMARK_FONT}`;
+        return wmCtx.measureText(part.text).width;
+      });
+      let wordmarkTotalW = 0;
+      for (let i = 0; i < HERO_WORDMARK_PARTS.length; i++) {
+        const part = HERO_WORDMARK_PARTS[i];
+        wordmarkTotalW += wordmarkPartWidths[i];
+        if (part.marginLeftEm)  wordmarkTotalW += part.marginLeftEm  * fontPx;
+        if (part.marginRightEm) wordmarkTotalW += part.marginRightEm * fontPx;
+      }
+
       return {
         width:  Math.round(brandRect.width  + 2 * M),
         height: Math.round(brandRect.height + 2 * M),
@@ -1415,6 +1437,8 @@
         canvasPageX: brandRect.left - pageRect.left - M,
         canvasPageY: brandRect.top  - pageRect.top  - M,
         sprinkles,
+        wordmarkPartWidths,
+        wordmarkTotalW,
       };
     }
 
@@ -1499,33 +1523,19 @@
         ctx.letterSpacing = (fontPx * HERO_WORDMARK_LETTER_SPACING_EM) + 'px';
       }
 
-      function partFont(part) {
-        return `${part.weight} ${fontPx}px ${HERO_WORDMARK_FONT}`;
-      }
-      function partWidth(part) {
-        ctx.font = partFont(part);
-        return ctx.measureText(part.text).width;
-      }
-
-      // Measure once for centering. Use the live wordmark's actual
-      // left edge (wordmarkX) — wordmark is already centered within
-      // .brand by the flex container, so wordmarkX is the live left.
-      let totalW = 0;
-      for (const part of HERO_WORDMARK_PARTS) {
-        totalW += partWidth(part);
-        if (part.marginLeftEm)  totalW += part.marginLeftEm  * fontPx;
-        if (part.marginRightEm) totalW += part.marginRightEm * fontPx;
-      }
-      // Center text horizontally based on the brand width (wordmarkX
-      // accounts for live H1's leading whitespace, which can differ
-      // from canvas-measured width). Centering on .brand width gives
-      // a stable position even if widths drift slightly.
-      let x = (layout.width - totalW) / 2;
-      for (const part of HERO_WORDMARK_PARTS) {
+      // Widths and total were pre-measured in readLayout(); fill the
+      // glyphs using those cached values. Center text horizontally based
+      // on the brand width (wordmarkX accounts for live H1's leading
+      // whitespace, which can differ from canvas-measured width);
+      // centering on .brand width gives a stable position even if widths
+      // drift slightly.
+      let x = (layout.width - layout.wordmarkTotalW) / 2;
+      for (let i = 0; i < HERO_WORDMARK_PARTS.length; i++) {
+        const part = HERO_WORDMARK_PARTS[i];
         if (part.marginLeftEm) x += part.marginLeftEm * fontPx;
-        ctx.font = partFont(part);
+        ctx.font = `${part.weight} ${fontPx}px ${HERO_WORDMARK_FONT}`;
         ctx.fillText(part.text, x, layout.wordmarkTopY);
-        x += partWidth(part);
+        x += layout.wordmarkPartWidths[i];
         if (part.marginRightEm) x += part.marginRightEm * fontPx;
       }
     }
