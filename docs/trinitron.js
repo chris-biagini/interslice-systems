@@ -1554,7 +1554,12 @@ void main() {
         const t = now - this._startTime;
         if (this._mode === 'cpu') this._frame(t);
         else if (this._mode === 'gpu') this._renderGpu(t);
-        this._rafHandle = requestAnimationFrame(tick);
+        // stop() may have nulled _rafHandle during the frame work
+        // (e.g. theme MutationObserver firing mid-tick). Don't re-queue
+        // in that case — otherwise the loop keeps running past stop().
+        if (this._rafHandle !== null) {
+          this._rafHandle = requestAnimationFrame(tick);
+        }
       };
       this._rafHandle = requestAnimationFrame(tick);
     }
