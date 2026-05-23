@@ -1128,11 +1128,18 @@
   // by readLayout() inside init() — these constants are the ones that
   // don't depend on the live layout.
 
-  // CRT substrate — matches --bg (--navy-0) so the screen face is
-  // visually continuous with the page bg behind it. Combined with
-  // HERO_DOT_* below, the screen reads as "the page bg, but lit
-  // through phosphor" rather than a darker rectangle floating on it.
-  const HERO_SUBSTRATE = '#000926';
+  // CRT substrate — visually matches --bg (--navy-0 = #000926) AFTER
+  // the phosphor pipeline. Naively painting #000926 makes the screen
+  // read maybe a third as bright as the page bg: the aperture-grille
+  // stripe decomposition only lights cells at their primary channel
+  // (with `phosphorCoupling: 0.35` letting others contribute at 35%),
+  // and `gapMaskAlpha: 0.3` darkens every other column by 30%, so the
+  // perceived average is well below the source. To compensate, feed
+  // the pipeline a source navy ~3× brighter on each channel — the
+  // pipeline attenuates it back down to roughly --bg out the other
+  // end. (Empirically tuned; iterate if the screen and page bg
+  // diverge visually.)
+  const HERO_SUBSTRATE = '#001B72';
 
   // Halftone dot wash — replicates .page::before's
   // `radial-gradient(--stamp-ink 1.1px, transparent 1.3px)` at
