@@ -1089,9 +1089,24 @@
   // by readLayout() inside init() — these constants are the ones that
   // don't depend on the live layout.
 
-  // CRT substrate — deeper black than --bg (--navy-0 = #000926) so the
-  // screen face reads as the darkest plane on the page.
-  const HERO_SUBSTRATE = '#04081A';
+  // CRT substrate — matches --bg (--navy-0) so the screen face is
+  // visually continuous with the page bg behind it. Combined with
+  // HERO_DOT_* below, the screen reads as "the page bg, but lit
+  // through phosphor" rather than a darker rectangle floating on it.
+  const HERO_SUBSTRATE = '#000926';
+
+  // Halftone dot wash — matches .page::before's
+  // `radial-gradient(--stamp-ink 1.1px, transparent 1.3px)` at
+  // background-size 22px and opacity 0.045. The canvas dots are
+  // phase-aligned to the page's dot grid at paint time so the
+  // pattern is continuous across the screen edge.
+  const HERO_DOT_COLOR = 'rgba(244, 241, 234, 0.045)';
+  const HERO_DOT_PERIOD = 22;
+  const HERO_DOT_RADIUS = 1.1;
+  // Page-bg dot is centered in its 22×22 tile (at 11, 11). The
+  // canvas paints the same grid, offset so a dot just inside the
+  // screen edge follows a dot just outside on the same lattice.
+  const HERO_DOT_TILE_CENTER = HERO_DOT_PERIOD / 2;
 
   // Wordmark phosphor color — a touch warm rather than pure #FFFFFF.
   const HERO_WORDMARK_COLOR = '#FFF6E6';
@@ -1181,6 +1196,16 @@
       // sits where the live text sits.
       const emToLineBoxOffset = (fontPx - lineHeight) / 2;
 
+      // Page-relative position of the canvas top-left (in page coords,
+      // i.e. document scroll-position-independent — getBoundingClientRect
+      // already accounts for scroll). Used to phase-align the dot pattern
+      // with the .page::before halftone wash so dots line up continuously
+      // across the screen edge. .page is at (0, 0) relative to itself, so
+      // brandRect.left is the brand's offset from the page's top-left
+      // (the page is the document root layout container).
+      const page = document.querySelector('.page');
+      const pageRect = page ? page.getBoundingClientRect() : { left: 0, top: 0 };
+
       // Width/height include the halo margin: the canvas is HALO_MARGIN
       // bigger than .brand on each side. All content x/y inside the
       // source canvas is offset by HALO_MARGIN.
@@ -1196,6 +1221,9 @@
         wordmarkW:    Math.round(wordmarkRect.width),
         wordmarkH:    Math.round(wordmarkRect.height),
         fontPx,
+        // Canvas top-left in page coords — used for dot-pattern phase.
+        canvasPageX: brandRect.left - pageRect.left - M,
+        canvasPageY: brandRect.top  - pageRect.top  - M,
       };
     }
 
@@ -1206,9 +1234,29 @@
     function signal(ctx, timeMs) {
       if (!layout) return;
 
-      // 1. Substrate — opaque CRT face under everything.
+      // 1. Substrate — opaque CRT face under everything. Matches --bg
+      //    so the page reads continuously through the screen.
       ctx.fillStyle = HERO_SUBSTRATE;
       ctx.fillRect(0, 0, layout.width, layout.height);
+
+      // 1b. Halftone wash — replicates .page::before inside the screen,
+      //     phase-aligned to the page grid so dots are continuous across
+      //     the screen edge. (Page tile origin is at (0,0) in page coords,
+      //     dot center at (11,11). Canvas top-left in page coords is
+      //     (canvasPageX, canvasPageY), so the first dot in the canvas
+      //     lives at (tileCenter - canvasPageX) mod period.)
+      const period = HERO_DOT_PERIOD;
+      const tc = HERO_DOT_TILE_CENTER;
+      const startX = ((tc - layout.canvasPageX) % period + period) % period;
+      const startY = ((tc - layout.canvasPageY) % period + period) % period;
+      ctx.fillStyle = HERO_DOT_COLOR;
+      for (let y = startY; y < layout.height; y += period) {
+        for (let x = startX; x < layout.width; x += period) {
+          ctx.beginPath();
+          ctx.arc(x, y, HERO_DOT_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
 
       // 2. Logo — composited in the transparent offscreen canvas
       //    (arms + rotating hub + aqua gloss via source-atop), then
