@@ -14,7 +14,10 @@
   const SEED = 0x53707269; // "Spri"
   const KEEPOUT_PAD = 16;
   const CANDIDATE_COUNT = 30;
-  const KEEPOUT_SELECTORS = ['.top', '.brand', '.cta-wrap', '.foot'];
+  // .motto (not .top) — .top is a flex container with justify-content:
+  // flex-end that spans the full page width, so its bounding rect would
+  // wall off the entire upper strip. .motto is the actual content rect.
+  const KEEPOUT_SELECTORS = ['.motto', '.brand', '.cta-wrap', '.foot'];
   const RESIZE_DEBOUNCE_MS = 150;
 
   // mulberry32: small, well-known, statistically fine for this use.
