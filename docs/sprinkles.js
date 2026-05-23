@@ -137,6 +137,21 @@
     return placed;
   }
 
+  // Write inline style.top / style.left to each placed sprinkle.
+  // Placement positions are sprinkle centers (in .page coords); we
+  // subtract the *unrotated* half-width / half-height (captured in
+  // measureSprinkles via getComputedStyle) to get the top-left
+  // corner CSS expects. Clears bottom/right so any leftover authored
+  // shorthand doesn't fight the inline values.
+  function apply(placements) {
+    for (const p of placements) {
+      p.el.style.top    = (p.y - p.h / 2) + 'px';
+      p.el.style.left   = (p.x - p.w / 2) + 'px';
+      p.el.style.bottom = 'auto';
+      p.el.style.right  = 'auto';
+    }
+  }
+
   function layout() {
     const page = document.querySelector('.page');
     if (!page) return;
@@ -145,12 +160,7 @@
     const sprinkles = measureSprinkles();
     if (!sprinkles.length) return;
     const placements = placeAll(sprinkles, keepouts, pageRect);
-    console.log('[sprinkles] placements', placements.map(p => ({
-      cls: p.el.classList[1], // e.g. "sp-squig-1"
-      x: Math.round(p.x),
-      y: Math.round(p.y),
-      r: Math.round(p.radius),
-    })));
+    apply(placements);
   }
 
   if (document.readyState === 'loading') {
