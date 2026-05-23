@@ -1009,6 +1009,45 @@
     });
   }
 
+  // Rasterize a live SVG element to an HTMLImageElement, with the
+  // dark-mode form baked in: `.paper-only` groups are stripped, computed
+  // `color` and `font-family` are inlined on the root so `currentColor`
+  // and `<text>` elements resolve correctly in the standalone SVG (no
+  // page CSS reaches the blob document). The .sprinkle class is
+  // dropped from the clone — that class carries page-positioning rules
+  // we don't want; the canvas applies positioning + rotation itself.
+  function rasterizeSvgElement(svgElement) {
+    const clone = svgElement.cloneNode(true);
+    clone.querySelectorAll('.paper-only').forEach(g => g.remove());
+    const style = window.getComputedStyle(svgElement);
+    const inlineStyle = `color: ${style.color}; font-family: ${style.fontFamily}`;
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const existing = clone.getAttribute('style');
+    clone.setAttribute('style', existing ? `${existing}; ${inlineStyle}` : inlineStyle);
+    clone.removeAttribute('class');
+    const doc = clone.outerHTML;
+    const blob = new Blob([doc], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+  }
+
+  // Extract the rotation angle (radians) from an element's computed
+  // CSS transform. Used so the canvas paint matches the live sprinkle's
+  // rotation. Returns 0 for `none` or unparseable matrices.
+  function getRotationRad(element) {
+    const t = window.getComputedStyle(element).transform;
+    if (!t || t === 'none') return 0;
+    const m = t.match(/matrix\(([-\d.,\s]+)\)/);
+    if (!m) return 0;
+    const parts = m[1].split(',').map(parseFloat);
+    return Math.atan2(parts[1], parts[0]);
+  }
+
   // Markup for the two phosphor source groups. Kept inline so the script is
   // self-contained — and the design system explicitly uses these exact colors.
   const ARMS_MARKUP = `
@@ -1152,6 +1191,20 @@
       return; // Fall back to SVG implementation
     }
 
+    // SVG sprinkles: rasterize each once at startup (markup doesn't
+    // change). At paint time we walk this list and draw any that
+    // intersect the canvas region, so the sprinkles read as continuous
+    // across the screen edge — paper sticker outside, phosphor inside.
+    // Span-based sprinkles (CSS-only shapes) are not handled; they'll
+    // be migrated to SVG separately.
+    const svgSprinkles = Array.from(document.querySelectorAll('svg.sprinkle'));
+    const sprinkleImages = new Map(); // Element → HTMLImageElement
+    await Promise.all(svgSprinkles.map(async (spr) => {
+      try {
+        sprinkleImages.set(spr, await rasterizeSvgElement(spr));
+      } catch (_) { /* skip individual failures; sprinkle just doesn't appear in canvas */ }
+    }));
+
     // Wait for Space Grotesk to be loaded — measureText returns metrics
     // for whatever font ctx.font resolves to, so a fallback like
     // system-ui would produce wrong centering. document.fonts.load
@@ -1210,6 +1263,58 @@
       // bigger than .brand on each side. All content x/y inside the
       // source canvas is offset by HALO_MARGIN.
       const M = HERO_HALO_MARGIN_PX;
+
+      // Canvas top-left in viewport coords. Used to map sprinkles'
+      // viewport-relative bounding rects into canvas-source coords.
+      const canvasVpLeft = brandRect.left - M;
+      const canvasVpTop  = brandRect.top  - M;
+      const canvasVpRight  = brandRect.right  + M;
+      const canvasVpBottom = brandRect.bottom + M;
+
+      // Detect SVG sprinkles whose live bounding rect intersects the
+      // canvas region. For each, capture the canvas-coord center, the
+      // unrotated CSS dimensions, and the CSS rotation. The signal
+      // callback re-draws these on the canvas so the screen edge looks
+      // like the sprinkle wraps from paper into phosphor.
+      const sprinkles = [];
+      for (const spr of svgSprinkles) {
+        if (!sprinkleImages.has(spr)) continue;
+        const r = spr.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (r.right  <= canvasVpLeft ||
+            r.left   >= canvasVpRight ||
+            r.bottom <= canvasVpTop  ||
+            r.top    >= canvasVpBottom) continue;
+
+        const sprStyle = window.getComputedStyle(spr);
+        let cssW = parseFloat(sprStyle.width);
+        let cssH = parseFloat(sprStyle.height);
+        if (isNaN(cssW) || cssW === 0) {
+          // Fallback: use the rotated AABB dimensions (loses crispness
+          // but at least the sprinkle still appears).
+          cssW = r.width;
+          cssH = r.height;
+        } else if (isNaN(cssH) || cssH === 0) {
+          // Height is `auto`; derive from the SVG's viewBox aspect.
+          const vb = spr.getAttribute('viewBox');
+          if (vb) {
+            const parts = vb.split(/\s+/).map(parseFloat);
+            cssH = parts.length === 4 ? cssW * (parts[3] / parts[2]) : cssW;
+          } else {
+            cssH = cssW;
+          }
+        }
+
+        sprinkles.push({
+          element: spr,
+          centerX: r.left + r.width  / 2 - canvasVpLeft,
+          centerY: r.top  + r.height / 2 - canvasVpTop,
+          width:  cssW,
+          height: cssH,
+          rotation: getRotationRad(spr),
+        });
+      }
+
       return {
         width:  Math.round(brandRect.width  + 2 * M),
         height: Math.round(brandRect.height + 2 * M),
@@ -1224,6 +1329,7 @@
         // Canvas top-left in page coords — used for dot-pattern phase.
         canvasPageX: brandRect.left - pageRect.left - M,
         canvasPageY: brandRect.top  - pageRect.top  - M,
+        sprinkles,
       };
     }
 
@@ -1256,6 +1362,23 @@
           ctx.arc(x, y, HERO_DOT_RADIUS, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+
+      // 1c. Sprinkles whose live position intersects the canvas region:
+      //     paint the rasterized SVG at the canvas-relative center, with
+      //     the same rotation the live element has. The live sprinkle
+      //     stays in the DOM at its original page position; outside the
+      //     canvas the page paint shows, inside the canvas the substrate
+      //     covers the live element and this paint shows in its place —
+      //     so the shape reads as continuous across the screen edge.
+      for (const spr of layout.sprinkles) {
+        const img = sprinkleImages.get(spr.element);
+        if (!img) continue;
+        ctx.save();
+        ctx.translate(spr.centerX, spr.centerY);
+        if (spr.rotation) ctx.rotate(spr.rotation);
+        ctx.drawImage(img, -spr.width / 2, -spr.height / 2, spr.width, spr.height);
+        ctx.restore();
       }
 
       // 2. Logo — composited in the transparent offscreen canvas
