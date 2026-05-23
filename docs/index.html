@@ -292,44 +292,58 @@
      (layout, label rules) lives in tokens.css */
   .hero .cta-wrap { margin-top: 64px; }
 
-  /* Dark mode: same trick as the wordmark — the live CTA stack stays in
-     the DOM (link is clickable, focusable, in the a11y tree) but every
-     visual property goes transparent so the canvas can paint a phosphor
-     copy at the same layout position. The element's box still occupies
-     space (border, padding, dimensions unchanged), so clicks land on
-     the live <a> through the canvas (which has pointer-events: none).
-     Hover/press transforms still run on the live element; the canvas
-     follows them via JS-lerped offsets in the signal callback. */
-  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-label,
-  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-sub,
-  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta,
-  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta b,
-  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta .arrow {
+  /* "Make me invisible so the canvas can paint a phosphor copy" — an
+     attribute-based convention shared by every element the Trinitron
+     signal paints into the screen. Two tiers, matching what a given
+     element needs:
+
+       [data-crt-text]    Text-only: zero out color and the backgrounds
+                          of ::before/::after pseudos (covers e.g. the
+                          .cta-label's flanking rules). Use for plain
+                          captions, sub-links, label rows.
+
+       [data-crt-element] Full strip: as above plus border-color, bg,
+                          box-shadow, and filter — cascaded to all
+                          descendants. Use for boxed widgets whose
+                          frame/shadow/glow are reproduced in canvas
+                          (e.g. the CTA button + its inner text/arrow).
+
+     Both are gated on .trinitron-active so the live elements stay
+     visible if the renderer fails to start (no WebGL, font-load error).
+     Triple-activation pattern (see CLAUDE.md): explicit dark OR
+     (OS-dark AND not pinned-to-light). The live element keeps its
+     dimensions and pointer-events, so clicks land on the underlying
+     <a> through the canvas (which has pointer-events: none). */
+  :root.trinitron-active[data-theme="dark"] [data-crt-text] {
+    color: transparent;
+  }
+  :root.trinitron-active[data-theme="dark"] [data-crt-text]::before,
+  :root.trinitron-active[data-theme="dark"] [data-crt-text]::after {
+    background: transparent;
+  }
+  :root.trinitron-active[data-theme="dark"] [data-crt-element],
+  :root.trinitron-active[data-theme="dark"] [data-crt-element] * {
     color: transparent;
     border-color: transparent;
     background: transparent;
     box-shadow: none;
     filter: none;
   }
-  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-label::before,
-  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-label::after {
-    background: transparent;
-  }
   @media (prefers-color-scheme: dark) {
-    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-label,
-    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-sub,
-    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta,
-    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta b,
-    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta .arrow {
+    :root.trinitron-active:not([data-theme="light"]) [data-crt-text] {
+      color: transparent;
+    }
+    :root.trinitron-active:not([data-theme="light"]) [data-crt-text]::before,
+    :root.trinitron-active:not([data-theme="light"]) [data-crt-text]::after {
+      background: transparent;
+    }
+    :root.trinitron-active:not([data-theme="light"]) [data-crt-element],
+    :root.trinitron-active:not([data-theme="light"]) [data-crt-element] * {
       color: transparent;
       border-color: transparent;
       background: transparent;
       box-shadow: none;
       filter: none;
-    }
-    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-label::before,
-    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-label::after {
-      background: transparent;
     }
   }
 
@@ -1075,12 +1089,12 @@
       <h1 class="wordmark">interslice<i>·</i><b>systems</b></h1>
 
       <div class="cta-wrap">
-        <span class="cta-label">Visit our new web-site!</span>
-        <a class="cta" href="https://mirepoix.recipes" target="_blank" rel="noopener">
+        <span class="cta-label" data-crt-text>Visit our new web-site!</span>
+        <a class="cta" data-crt-element href="https://mirepoix.recipes" target="_blank" rel="noopener">
           <span><b>mirepoix.recipes</b></span>
           <span class="arrow">↗</span>
         </a>
-        <a class="cta-sub" href="https://www.mozilla.org/firefox/new/" target="_blank" rel="noopener">Mozilla Firefox recommended</a>
+        <a class="cta-sub" data-crt-text href="https://www.mozilla.org/firefox/new/" target="_blank" rel="noopener">Mozilla Firefox recommended</a>
       </div>
       </div>
     </div>
@@ -1338,6 +1352,70 @@
   const HERO_CTA_PRESS_TX_PX    = 5;   // .cta:active { transform: translate(5px, 5px) }
   const HERO_CTA_BORDER_PX      = 3;   // matches --bw-bold
 
+  // ===== CRT text helpers =====
+  // Used by readLayout()/signal() to project a live DOM text element into
+  // the Trinitron's source canvas. Pairs with the [data-crt-text] /
+  // [data-crt-element] CSS attributes — the live element provides the
+  // layout box (clickable, in the a11y tree) and these helpers paint a
+  // phosphor copy at the same coordinates.
+
+  // Snapshot a text element's position + font for canvas rendering.
+  // Returns canvas-source coordinates (relative to .brand top-left,
+  // offset by the halo margin M). getBoundingClientRect includes any
+  // CSS transforms on the element; callers that need the resting
+  // position should only invoke this when the element is at rest
+  // (typically true since readLayout runs on resize, not on hover).
+  // opts.textTransform: 'uppercase' applies .toUpperCase() to the text
+  // (canvas has no text-transform equivalent — has to be done up front).
+  function captureCRTTextLayout(element, brandRect, M, opts = {}) {
+    const r = element.getBoundingClientRect();
+    const st = window.getComputedStyle(element);
+    let text = element.textContent || '';
+    if (opts.textTransform === 'uppercase') text = text.toUpperCase();
+    return {
+      x: Math.round(r.left - brandRect.left + M),
+      y: Math.round(r.top  - brandRect.top  + M),
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+      text,
+      fontPx: parseFloat(st.fontSize),
+      letterSpacingPx: parseFloat(st.letterSpacing) || 0,
+      weight: st.fontWeight || '400',
+    };
+  }
+
+  // Paint a captured text layout. Defaults anchor to the top-left of
+  // the element's bounding rect (matches how the live text sits when
+  // its line-height is ~1). For rect-centered captions pass
+  // {align:'center', baseline:'middle'}; pass tx/ty to add hover/press
+  // offsets on top of the resting position.
+  function paintCRTText(ctx, layout, opts) {
+    const {
+      fontFamily,
+      color,
+      align = 'start',
+      baseline = 'top',
+      tx = 0,
+      ty = 0,
+      letterSpacingPx = layout.letterSpacingPx,
+    } = opts;
+    ctx.fillStyle = color;
+    ctx.font = `${layout.weight} ${layout.fontPx}px ${fontFamily}`;
+    if ('letterSpacing' in ctx) ctx.letterSpacing = letterSpacingPx + 'px';
+    ctx.textBaseline = baseline;
+    ctx.textAlign = align;
+    let x = layout.x + tx;
+    let y = layout.y + ty;
+    if      (align === 'center') x += layout.w / 2;
+    else if (align === 'end')    x += layout.w;
+    if      (baseline === 'middle') y += layout.h / 2;
+    else if (baseline === 'bottom') y += layout.h;
+    ctx.fillText(layout.text, x, y);
+    // Reset textAlign so callers writing manual fillText (e.g. the
+    // wordmark's per-part x-cursor) don't have to.
+    ctx.textAlign = 'start';
+  }
+
   async function init() {
     const canvas = document.querySelector('canvas.hero-screen');
     const brand  = document.querySelector('.brand');
@@ -1551,68 +1629,11 @@
       // size changes, not hover). The signal callback adds the
       // JS-lerped hover/press translate on top of these resting
       // positions per frame.
-      let ctaButtonLayout = null;
-      let ctaLabelLayout  = null;
-      let ctaSubLayout    = null;
-      let ctaTextLayout   = null;
-      let ctaArrowLayout  = null;
-      if (ctaEl && ctaText && ctaArrow) {
-        const ctaR     = ctaEl.getBoundingClientRect();
-        const ctaTextR = ctaText.getBoundingClientRect();
-        const ctaArrR  = ctaArrow.getBoundingClientRect();
-        const ctaSt    = window.getComputedStyle(ctaEl);
-        const ctaTSt   = window.getComputedStyle(ctaText);
-        const ctaASt   = window.getComputedStyle(ctaArrow);
-        ctaButtonLayout = {
-          x: Math.round(ctaR.left - brandRect.left + M),
-          y: Math.round(ctaR.top  - brandRect.top  + M),
-          w: Math.round(ctaR.width),
-          h: Math.round(ctaR.height),
-        };
-        ctaTextLayout = {
-          x: Math.round(ctaTextR.left - brandRect.left + M),
-          y: Math.round(ctaTextR.top  - brandRect.top  + M),
-          text: ctaText.textContent,
-          fontPx: parseFloat(ctaTSt.fontSize),
-          letterSpacingPx: parseFloat(ctaTSt.letterSpacing) || 0,
-          weight: ctaTSt.fontWeight || '700',
-        };
-        ctaArrowLayout = {
-          x: Math.round(ctaArrR.left - brandRect.left + M),
-          y: Math.round(ctaArrR.top  - brandRect.top  + M),
-          text: ctaArrow.textContent,
-          fontPx: parseFloat(ctaASt.fontSize),
-          weight: ctaASt.fontWeight || '500',
-        };
-      }
-      if (ctaLabel) {
-        const r  = ctaLabel.getBoundingClientRect();
-        const st = window.getComputedStyle(ctaLabel);
-        ctaLabelLayout = {
-          x: Math.round(r.left - brandRect.left + M),
-          y: Math.round(r.top  - brandRect.top  + M),
-          w: Math.round(r.width),
-          h: Math.round(r.height),
-          text: (ctaLabel.textContent || '').toUpperCase(),
-          fontPx: parseFloat(st.fontSize),
-          letterSpacingPx: parseFloat(st.letterSpacing) || 0,
-          weight: st.fontWeight || '700',
-        };
-      }
-      if (ctaSub) {
-        const r  = ctaSub.getBoundingClientRect();
-        const st = window.getComputedStyle(ctaSub);
-        ctaSubLayout = {
-          x: Math.round(r.left - brandRect.left + M),
-          y: Math.round(r.top  - brandRect.top  + M),
-          w: Math.round(r.width),
-          h: Math.round(r.height),
-          text: (ctaSub.textContent || '').toUpperCase(),
-          fontPx: parseFloat(st.fontSize),
-          letterSpacingPx: parseFloat(st.letterSpacing) || 0,
-          weight: st.fontWeight || '700',
-        };
-      }
+      const ctaButtonLayout = ctaEl    ? captureCRTTextLayout(ctaEl,    brandRect, M) : null;
+      const ctaTextLayout   = ctaText  ? captureCRTTextLayout(ctaText,  brandRect, M) : null;
+      const ctaArrowLayout  = ctaArrow ? captureCRTTextLayout(ctaArrow, brandRect, M) : null;
+      const ctaLabelLayout  = ctaLabel ? captureCRTTextLayout(ctaLabel, brandRect, M, { textTransform: 'uppercase' }) : null;
+      const ctaSubLayout    = ctaSub   ? captureCRTTextLayout(ctaSub,   brandRect, M, { textTransform: 'uppercase' }) : null;
 
       return {
         width:  Math.round(brandRect.width  + 2 * M),
@@ -1757,14 +1778,12 @@
         ctx.fillStyle = HERO_CTA_LABEL_COLOR;
         ctx.fillRect(L.x, L.y + L.h / 2 - 1, 28, 2);
         ctx.fillRect(L.x + L.w - 28, L.y + L.h / 2 - 1, 28, 2);
-        ctx.font = `${L.weight} ${L.fontPx}px ${HERO_CTA_MONO_FONT}`;
-        if ('letterSpacing' in ctx) {
-          ctx.letterSpacing = L.letterSpacingPx + 'px';
-        }
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'center';
-        ctx.fillText(L.text, L.x + L.w / 2, L.y + L.h / 2);
-        ctx.textAlign = 'start';
+        paintCRTText(ctx, L, {
+          fontFamily: HERO_CTA_MONO_FONT,
+          color: HERO_CTA_LABEL_COLOR,
+          align: 'center',
+          baseline: 'middle',
+        });
       }
 
       // .cta — bordered button with magenta+paper stamp shadow.
@@ -1820,42 +1839,35 @@
         // so the b's line-box top ≈ its em-box top; textBaseline 'top'
         // lands the glyphs right where the live text would sit.
         if (layout.ctaText) {
-          const T = layout.ctaText;
-          ctx.fillStyle = HERO_CTA_TEXT_COLOR;
-          ctx.font = `${T.weight} ${T.fontPx}px ${HERO_WORDMARK_FONT}`;
-          if ('letterSpacing' in ctx) {
-            ctx.letterSpacing = T.letterSpacingPx + 'px';
-          }
-          ctx.textBaseline = 'top';
-          ctx.textAlign = 'start';
-          ctx.fillText(T.text, T.x + tx, T.y + ty);
+          paintCRTText(ctx, layout.ctaText, {
+            fontFamily: HERO_WORDMARK_FONT,
+            color: HERO_CTA_TEXT_COLOR,
+            tx, ty,
+          });
         }
 
         // "↗" arrow — already includes its CSS translateY(-2px) in the
         // captured rect (getBoundingClientRect reflects transforms).
+        // letterSpacingPx 0 because the arrow is one glyph and shouldn't
+        // inherit the button's font-wide tracking.
         if (layout.ctaArrow) {
-          const A = layout.ctaArrow;
-          ctx.fillStyle = HERO_CTA_ARROW_COLOR;
-          ctx.font = `${A.weight} ${A.fontPx}px ${HERO_WORDMARK_FONT}`;
-          if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
-          ctx.textBaseline = 'top';
-          ctx.textAlign = 'start';
-          ctx.fillText(A.text, A.x + tx, A.y + ty);
+          paintCRTText(ctx, layout.ctaArrow, {
+            fontFamily: HERO_WORDMARK_FONT,
+            color: HERO_CTA_ARROW_COLOR,
+            tx, ty,
+            letterSpacingPx: 0,
+          });
         }
       }
 
       // .cta-sub — "Mozilla Firefox recommended" single-line caption.
       if (layout.ctaSub) {
-        const S = layout.ctaSub;
-        ctx.fillStyle = HERO_CTA_LABEL_COLOR;
-        ctx.font = `${S.weight} ${S.fontPx}px ${HERO_CTA_MONO_FONT}`;
-        if ('letterSpacing' in ctx) {
-          ctx.letterSpacing = S.letterSpacingPx + 'px';
-        }
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'center';
-        ctx.fillText(S.text, S.x + S.w / 2, S.y + S.h / 2);
-        ctx.textAlign = 'start';
+        paintCRTText(ctx, layout.ctaSub, {
+          fontFamily: HERO_CTA_MONO_FONT,
+          color: HERO_CTA_LABEL_COLOR,
+          align: 'center',
+          baseline: 'middle',
+        });
       }
     }
 
