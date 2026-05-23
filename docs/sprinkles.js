@@ -29,5 +29,49 @@
     };
   }
 
-  console.log('[sprinkles] loaded');
+  // Signed distance from point p to axis-aligned rect r.
+  // Negative if p is inside r; the magnitude is the smallest
+  // distance to any edge (useful for "how far inside").
+  function distToRect(p, r) {
+    const dx = Math.max(r.left - p.x, 0, p.x - r.right);
+    const dy = Math.max(r.top - p.y, 0, p.y - r.bottom);
+    if (dx === 0 && dy === 0) {
+      // Inside: return negative distance to nearest edge.
+      return -Math.min(p.x - r.left, r.right - p.x, p.y - r.top, r.bottom - p.y);
+    }
+    return Math.hypot(dx, dy);
+  }
+
+  // Read keepout selectors and return their rects in .page-relative
+  // coordinates, expanded outward by KEEPOUT_PAD.
+  function rectsFromSelectors(pageRect) {
+    const out = [];
+    for (const sel of KEEPOUT_SELECTORS) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      out.push({
+        left:   r.left   - pageRect.left - KEEPOUT_PAD,
+        top:    r.top    - pageRect.top  - KEEPOUT_PAD,
+        right:  r.right  - pageRect.left + KEEPOUT_PAD,
+        bottom: r.bottom - pageRect.top  + KEEPOUT_PAD,
+      });
+    }
+    return out;
+  }
+
+  function layout() {
+    const page = document.querySelector('.page');
+    if (!page) return;
+    const pageRect = page.getBoundingClientRect();
+    const keepouts = rectsFromSelectors(pageRect);
+    console.log('[sprinkles] page', { w: pageRect.width, h: pageRect.height });
+    console.log('[sprinkles] keepouts', keepouts);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', layout);
+  } else {
+    layout();
+  }
 })();
