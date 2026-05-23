@@ -1280,8 +1280,6 @@
     // change). At paint time we walk this list and draw any that
     // intersect the canvas region, so the sprinkles read as continuous
     // across the screen edge — paper sticker outside, phosphor inside.
-    // Span-based sprinkles (CSS-only shapes) are not handled; they'll
-    // be migrated to SVG separately.
     const svgSprinkles = Array.from(document.querySelectorAll('svg.sprinkle'));
     const sprinkleImages = new Map(); // Element → HTMLImageElement
     await Promise.all(svgSprinkles.map(async (spr) => {

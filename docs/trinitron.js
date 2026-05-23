@@ -533,12 +533,14 @@ void main() {
       this.ctx.imageSmoothingEnabled = false;
 
       // Offscreen signal canvas — caller paints into 200×200 logical coords.
-      // willReadFrequently=true since _renderPixels reads each convergence
-      // canvas back every frame.
+      // No willReadFrequently hint: the signal canvas is only sampled via
+      // drawImage (into the convergence canvases) and is never read back
+      // with getImageData. Setting the hint would push the browser to a
+      // CPU-backed implementation for no benefit.
       this.signalCanvas = document.createElement('canvas');
       this.signalCanvas.width = vw;
       this.signalCanvas.height = vh;
-      this.signalCtx = this.signalCanvas.getContext('2d', { willReadFrequently: true });
+      this.signalCtx = this.signalCanvas.getContext('2d');
       // Smoothing ON for the signal canvas — the caller's drawImage of a
       // rotated bitmap is bilinear-sampled, so AA fringe pixels at the
       // rotating hub's perimeter get smooth alpha gradients that change
@@ -1571,9 +1573,9 @@ void main() {
       }
     }
 
-    // Master A/B mode. true = CRT effects on, false = bypass to raw signal.
-    // localStorage-persisted. Today it just tracks state; Task 15 wires
-    // it to actually bypass the GPU pipeline.
+    // Master A/B mode. true = CRT effects on, false = bypass to raw signal
+    // (only effective when bypassCanvas:true at construction; the hero
+    // screen passes false and ignores master mode). localStorage-persisted.
     setMasterMode(on) {
       const wasOn = this._masterOn;
       this._masterOn = !!on;
