@@ -1059,6 +1059,7 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
       this._buildStaticTextures();
+      this._uploadStaticUniforms();
 
       // Bypass mode draws the signal canvas directly to the visible
       // canvas via a separate 2D context. WebGL2 already owns this.canvas,
@@ -1249,6 +1250,76 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
     }
 
+    // Upload uniforms that don't change for the lifetime of this
+    // renderer — sampler unit bindings, viewSize/cellSize, the
+    // base option values (phosphorCoupling, persistence, hotspot,
+    // shimmer amplitudes, beam spread, bloom threshold, composite
+    // geometry, opaque background flag), and the convergence base
+    // (R/B get overridden per-frame when effects.convergenceDrift
+    // is on; G never drifts). Called once at the end of _initGpu,
+    // saving ~30 CPU→GPU command-buffer writes per frame.
+    //
+    // Uniforms still uploaded per frame in _renderGpu: the *Enabled
+    // toggles (?debug=1 panel mutates them at runtime), brightness
+    // (warmup/breathing modulate it), and convergence R/B when drift
+    // is active.
+    _uploadStaticUniforms() {
+      const gl = this._gl;
+      const [vw, vh] = this.opts.viewSize;
+
+      // Phosphor program.
+      gl.useProgram(this._progPhosphor);
+      gl.uniform1i(this._uPhosphor.signal,          0);
+      gl.uniform1i(this._uPhosphor.persistencePrev, 1);
+      gl.uniform2f(this._uPhosphor.viewSize, vw, vh);
+      gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
+      gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
+      gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
+      gl.uniform1f(this._uPhosphor.hotspot,          this.opts.hotspot);
+      gl.uniform1f(this._uPhosphor.cellShimmerAmp,   this.opts.cellShimmer);
+      gl.uniform1f(this._uPhosphor.rowShimmerAmp,    this.opts.rowShimmer);
+      gl.uniform1ui(this._uPhosphor.shimmerSeed,     this.opts.shimmerSeed);
+      gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
+      gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
+
+      // Convergence base — R/B get overridden per-frame when drift is
+      // active. On the transition back to inactive, _renderGpu re-uploads
+      // the base values once to clear the drifted state.
+      const c = this.opts.convergence;
+      gl.uniform2f(this._uPhosphor.convergenceR, c.r[0], c.r[1]);
+      gl.uniform2f(this._uPhosphor.convergenceG, c.g[0], c.g[1]);
+      gl.uniform2f(this._uPhosphor.convergenceB, c.b[0], c.b[1]);
+
+      // Composite program.
+      gl.useProgram(this._progComposite);
+      gl.uniform1i(this._uComposite.phosphor, 0);
+      gl.uniform1i(this._uComposite.gloss,    1);
+      gl.uniform1i(this._uComposite.vignette, 2);
+      gl.uniform1i(this._uComposite.gapMask,  3);
+      gl.uniform1i(this._uComposite.bloom,    4);
+      gl.uniform2f(this._uComposite.canvasSize, this.canvas.width, this.canvas.height);
+      gl.uniform1f(this._uComposite.curvature,        this.opts.curvature);
+      gl.uniform1f(this._uComposite.bloomStrength,    this.opts.bloomStrength);
+      gl.uniform1f(this._uComposite.stripeFraction,   this._stripeFraction);
+      gl.uniform1f(this._uComposite.stripeMargin,     this._stripeMargin);
+      gl.uniform1f(this._uComposite.opaqueBackground, this.opts.opaqueBackground ? 1 : 0);
+
+      // Bloom programs — sampler binding, threshold, and texSize all
+      // static. Only invoked when effects.selectiveBloom is on, but
+      // there's no cost to uploading at init regardless.
+      gl.useProgram(this._progBloomThresh);
+      gl.uniform1i(this._uBloomThresh.phosphor,  0);
+      gl.uniform1f(this._uBloomThresh.threshold, this.opts.bloomThreshold);
+
+      gl.useProgram(this._progBloomH);
+      gl.uniform1i(this._uBloomH.tex, 0);
+      gl.uniform2f(this._uBloomH.texSize, this._bloomW, this._bloomH);
+
+      gl.useProgram(this._progBloomV);
+      gl.uniform1i(this._uBloomV.tex, 0);
+      gl.uniform2f(this._uBloomV.texSize, this._bloomW, this._bloomH);
+    }
+
     _renderGpu(timeMs) {
       const gl = this._gl;
       if (!gl) return;  // raced with destroy()
@@ -1329,44 +1400,42 @@ void main() {
       gl.bindVertexArray(this._vao);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this._texSignal);
-      gl.uniform1i(this._uPhosphor.signal, 0);
 
-      // New uniforms for stripe profile.
-      gl.uniform2f(this._uPhosphor.viewSize, vw, vh);
-      gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
-      gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
-      gl.uniform1f(this._uPhosphor.stripeEnabled,   this.effects.stripeProfile     ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.couplingEnabled, this.effects.phosphorCoupling  ? 1 : 0);
+      // Per-frame *Enabled toggles. The ?debug=1 panel mutates
+      // this.effects at runtime, so these must stay dynamic. Static
+      // option values (phosphorCoupling, persistence, hotspot, shimmer
+      // amps, beam spread, viewSize/cellSize, sampler bindings, base
+      // convergence) are uploaded once in _uploadStaticUniforms.
+      gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.couplingEnabled,    this.effects.phosphorCoupling ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.hotspotEnabled,     this.effects.perCellHotspot   ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.cellShimmerEnabled, this.effects.perCellShimmer   ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer    ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread       ? 1 : 0);
 
-      // Trust opts defaults from Object.assign — don't override an
-      // explicit 0 (= no persistence) or convergence: false (= disabled).
-      gl.uniform1f(this._uPhosphor.persistence, this.opts.persistence);
-
-      const c = this.opts.convergence;
-      const drift = this._convergenceDriftPx;
-      gl.uniform2f(this._uPhosphor.convergenceR, c.r[0] - drift, c.r[1]);
-      gl.uniform2f(this._uPhosphor.convergenceG, c.g[0],         c.g[1]);
-      gl.uniform2f(this._uPhosphor.convergenceB, c.b[0] + drift, c.b[1]);
-
-      gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence ? 1 : 0);
-
-      gl.uniform1f(this._uPhosphor.hotspot,         this.opts.hotspot);
-      gl.uniform1f(this._uPhosphor.cellShimmerAmp,  this.opts.cellShimmer);
-      gl.uniform1f(this._uPhosphor.rowShimmerAmp,   this.opts.rowShimmer);
-      gl.uniform1ui(this._uPhosphor.shimmerSeed,    this.opts.shimmerSeed);
-      gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
-      gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
-      gl.uniform1f(this._uPhosphor.hotspotEnabled,     this.effects.perCellHotspot  ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.cellShimmerEnabled, this.effects.perCellShimmer  ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer   ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread      ? 1 : 0);
+      // Convergence drift: override base R/B per-frame while active.
+      // G never drifts (it's the reference channel). On the transition
+      // from active→inactive, re-upload base R/B once so the GPU isn't
+      // left with the last drifted values.
+      const driftActive = this.effects.convergenceDrift;
+      if (driftActive) {
+        const c = this.opts.convergence;
+        const drift = this._convergenceDriftPx;
+        gl.uniform2f(this._uPhosphor.convergenceR, c.r[0] - drift, c.r[1]);
+        gl.uniform2f(this._uPhosphor.convergenceB, c.b[0] + drift, c.b[1]);
+      } else if (this._convergenceDriftWasActive) {
+        const c = this.opts.convergence;
+        gl.uniform2f(this._uPhosphor.convergenceR, c.r[0], c.r[1]);
+        gl.uniform2f(this._uPhosphor.convergenceB, c.b[0], c.b[1]);
+      }
+      this._convergenceDriftWasActive = driftActive;
 
       // Bind persistence-prev (the texture NOT in the currently-bound FBO).
       const persistPrev = this._pingPongFlip ? this._texPersistB : this._texPersistA;
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, persistPrev);
-      gl.uniform1i(this._uPhosphor.persistencePrev, 1);
 
       gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -1374,6 +1443,8 @@ void main() {
       this._pingPongFlip = !this._pingPongFlip;
 
       // Bloom passes (skip entirely when disabled — real CPU savings).
+      // Sampler bindings, threshold, and texSize are uploaded once in
+      // _uploadStaticUniforms; only the texture bindings change per pass.
       if (this.effects.selectiveBloom) {
         // 3a. Threshold: phosphor → bloomA.
         gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboBloomA);
@@ -1384,8 +1455,6 @@ void main() {
         gl.bindVertexArray(this._vao);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this._texPhosphor);
-        gl.uniform1i(this._uBloomThresh.phosphor, 0);
-        gl.uniform1f(this._uBloomThresh.threshold, this.opts.bloomThreshold);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
 
         // 3b. Horizontal Gaussian: bloomA → bloomB.
@@ -1393,8 +1462,6 @@ void main() {
         gl.useProgram(this._progBloomH);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this._texBloomA);
-        gl.uniform1i(this._uBloomH.tex, 0);
-        gl.uniform2f(this._uBloomH.texSize, this._bloomW, this._bloomH);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
 
         // 3c. Vertical Gaussian: bloomB → bloomA.
@@ -1402,8 +1469,6 @@ void main() {
         gl.useProgram(this._progBloomV);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this._texBloomB);
-        gl.uniform1i(this._uBloomV.tex, 0);
-        gl.uniform2f(this._uBloomV.texSize, this._bloomW, this._bloomH);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         // Final bloom output sits in _texBloomA.
       }
@@ -1415,36 +1480,26 @@ void main() {
       gl.clear(gl.COLOR_BUFFER_BIT);
 
       gl.useProgram(this._progComposite);
-      gl.uniform2f(this._uComposite.canvasSize, this.canvas.width, this.canvas.height);
-      gl.uniform1f(this._uComposite.curvature, this.opts.curvature);
-      gl.uniform1f(this._uComposite.curvatureEnabled, this.effects.curvature ? 1 : 0);
-      gl.uniform1f(this._uComposite.glossEnabled,     this.effects.gloss ? 1 : 0);
-      gl.uniform1f(this._uComposite.vignetteEnabled,  this.effects.vignette ? 1 : 0);
-      gl.uniform1f(this._uComposite.gapMaskEnabled,   this.effects.gapMask ? 1 : 0);
-      gl.uniform1f(this._uComposite.bloomStrength, this.opts.bloomStrength);
-      gl.uniform1f(this._uComposite.bloomEnabled,  this.effects.selectiveBloom ? 1 : 0);
-      gl.uniform1f(this._uComposite.brightness,    this._brightness ?? 1.0);
-      gl.uniform1f(this._uComposite.stripeFraction, this._stripeFraction);
-      gl.uniform1f(this._uComposite.stripeMargin,   this._stripeMargin);
-      gl.uniform1f(this._uComposite.opaqueBackground, this.opts.opaqueBackground ? 1 : 0);
+      // Per-frame uniforms only. Statics (canvasSize, curvature value,
+      // bloomStrength, stripeFraction/Margin, opaqueBackground, sampler
+      // bindings) are uploaded once in _uploadStaticUniforms.
+      gl.uniform1f(this._uComposite.curvatureEnabled, this.effects.curvature      ? 1 : 0);
+      gl.uniform1f(this._uComposite.glossEnabled,     this.effects.gloss          ? 1 : 0);
+      gl.uniform1f(this._uComposite.vignetteEnabled,  this.effects.vignette       ? 1 : 0);
+      gl.uniform1f(this._uComposite.gapMaskEnabled,   this.effects.gapMask        ? 1 : 0);
+      gl.uniform1f(this._uComposite.bloomEnabled,     this.effects.selectiveBloom ? 1 : 0);
+      gl.uniform1f(this._uComposite.brightness,       this._brightness ?? 1.0);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this._texPhosphor);
-      gl.uniform1i(this._uComposite.phosphor, 0);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this._texGloss);
-      gl.uniform1i(this._uComposite.gloss, 1);
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, this._texVignette);
-      gl.uniform1i(this._uComposite.vignette, 2);
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, this._texGapMask);
-      gl.uniform1i(this._uComposite.gapMask, 3);
-
-      // Bind bloom texture at unit 4.
       gl.activeTexture(gl.TEXTURE4);
       gl.bindTexture(gl.TEXTURE_2D, this._texBloomA);
-      gl.uniform1i(this._uComposite.bloom, 4);
 
       gl.bindVertexArray(this._vao);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
