@@ -163,9 +163,16 @@
     apply(placements);
   }
 
+  let resizeTimer = null;
+  function onResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(layout, RESIZE_DEBOUNCE_MS);
+  }
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', layout);
   } else {
     layout();
   }
+  window.addEventListener('resize', onResize);
 })();
