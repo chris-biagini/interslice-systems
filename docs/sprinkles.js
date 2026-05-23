@@ -78,16 +78,79 @@
     });
   }
 
+  // Mitchell's best-candidate, seeded mulberry32.
+  // Sort sprinkles largest-first so the hardest-to-place ones get the
+  // best spots. For each, sample CANDIDATE_COUNT random points in the
+  // .page interior (clamped so the sprinkle's circle stays on-page),
+  // reject any that intersect a keepout, and score the rest by the
+  // worst-case (minimum) distance to placed sprinkles and keepout
+  // edges. The candidate with the highest score wins.
+  //
+  // If every candidate intersects a keepout, the best-scoring one
+  // (least bad) is kept — graceful degradation rather than dropping
+  // the sprinkle to (0, 0).
+  function placeAll(sprinkles, keepouts, pageRect) {
+    const rng = mulberry32(SEED);
+    const sorted = sprinkles.slice().sort((a, b) => b.radius - a.radius);
+    const placed = [];
+    const pageW = pageRect.width;
+    const pageH = pageRect.height;
+
+    for (const s of sorted) {
+      let best = null;
+      let bestScore = -Infinity;
+      const minX = s.radius;
+      const maxX = pageW - s.radius;
+      const minY = s.radius;
+      const maxY = pageH - s.radius;
+
+      for (let i = 0; i < CANDIDATE_COUNT; i++) {
+        const p = {
+          x: minX + rng() * (maxX - minX),
+          y: minY + rng() * (maxY - minY),
+        };
+
+        // Score: minimum signed distance to (a) any placed sprinkle's
+        // edge, (b) any keepout edge. Sprinkle-vs-sprinkle uses
+        // center-distance minus both radii. Keepout uses distToRect
+        // minus this sprinkle's radius.
+        let score = Infinity;
+
+        for (const o of placed) {
+          const d = Math.hypot(p.x - o.x, p.y - o.y) - o.radius - s.radius;
+          if (d < score) score = d;
+        }
+        for (const k of keepouts) {
+          const d = distToRect(p, k) - s.radius;
+          if (d < score) score = d;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = p;
+        }
+      }
+
+      placed.push({ el: s.el, x: best.x, y: best.y, radius: s.radius, w: s.w, h: s.h });
+    }
+
+    return placed;
+  }
+
   function layout() {
     const page = document.querySelector('.page');
     if (!page) return;
     const pageRect = page.getBoundingClientRect();
     const keepouts = rectsFromSelectors(pageRect);
     const sprinkles = measureSprinkles();
-    console.log('[sprinkles] page', { w: pageRect.width, h: pageRect.height });
-    console.log('[sprinkles] keepouts', keepouts);
-    console.log('[sprinkles] count', sprinkles.length, 'radii',
-      sprinkles.map(s => Math.round(s.radius)));
+    if (!sprinkles.length) return;
+    const placements = placeAll(sprinkles, keepouts, pageRect);
+    console.log('[sprinkles] placements', placements.map(p => ({
+      cls: p.el.classList[1], // e.g. "sp-squig-1"
+      x: Math.round(p.x),
+      y: Math.round(p.y),
+      r: Math.round(p.radius),
+    })));
   }
 
   if (document.readyState === 'loading') {
