@@ -175,4 +175,11 @@
     layout();
   }
   window.addEventListener('resize', onResize);
+
+  // Wordmark width depends on a custom font. Re-layout once fonts
+  // settle so sprinkles avoid the post-font-load wordmark, not the
+  // pre-font-load fallback.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(layout);
+  }
 })();
