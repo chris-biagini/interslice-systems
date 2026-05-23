@@ -200,6 +200,7 @@ uniform sampler2D uGapMask;
 uniform sampler2D uBloom;
 uniform vec2 uCanvasSize;
 uniform float uCurvature;
+uniform float uCurvatureMode;       // 0 = spherical (generic), 1 = cylindrical (Trinitron)
 uniform float uBloomStrength;
 uniform float uBrightness;
 uniform float uStripeFraction;
@@ -210,18 +211,29 @@ uniform float uGlossEnabled;
 uniform float uVignetteEnabled;
 uniform float uGapMaskEnabled;
 uniform float uBloomEnabled;
+uniform float uScanlineEnabled;
+uniform float uScanlineCycles;      // number of bright/dim cycles across stripeUv.y = 1
+uniform float uScanlineDepth;       // 0 = no scanlines, 1 = troughs hit zero
 out vec4 oColor;
 
-vec2 curveUv(vec2 uv, float cAmt) {
+vec2 curveUv(vec2 uv, float cAmt, float mode) {
   vec2 c = uv - 0.5;
-  float r2 = dot(c, c);
-  vec2 warped = c * (1.0 + cAmt * r2 * 4.0);
+  vec2 warped;
+  if (mode > 0.5) {
+    // Cylindrical (Trinitron face): warp X only, by x-distance from
+    // the vertical center axis. Vertical lines stay straight.
+    warped = vec2(c.x * (1.0 + cAmt * c.x * c.x * 4.0), c.y);
+  } else {
+    // Spherical / generic barrel: r²-based warp on both axes.
+    float r2 = dot(c, c);
+    warped = c * (1.0 + cAmt * r2 * 4.0);
+  }
   return warped + 0.5;
 }
 
 void main() {
   float curvAmt = uCurvature * uCurvatureEnabled;
-  vec2 sampleUv = curveUv(vUv, curvAmt);
+  vec2 sampleUv = curveUv(vUv, curvAmt, uCurvatureMode);
   if (sampleUv.x < 0.0 || sampleUv.x > 1.0 ||
       sampleUv.y < 0.0 || sampleUv.y > 1.0) {
     // Out of bounds (e.g. curvature corners): transparent, not
@@ -250,6 +262,15 @@ void main() {
     alpha = phos.a;
     vec4 bloom = texture(uBloom, stripeUv);
     color += bloom.rgb * uBloomStrength * uBloomEnabled;
+
+    // Horizontal scanlines: cosine modulation along stripeUv.y. cycle
+    // peaks (cos=1) stay full brightness; troughs (cos=-1) dim by
+    // uScanlineDepth. uScanlineCycles is set so one cycle equals
+    // scanlinePeriod source pixels.
+    if (uScanlineEnabled > 0.5) {
+      float wave = 0.5 - 0.5 * cos(stripeUv.y * uScanlineCycles * 6.28318530718);
+      color *= 1.0 - uScanlineDepth * wave;
+    }
   }
 
   vec4 gloss = texture(uGloss, sampleUv);
@@ -427,6 +448,17 @@ void main() {
         // Barrel-distortion strength for the composite glass pass.
         // 0 = flat panel. Default 0 (CPU path doesn't use this).
         curvature: 0,
+        // Curvature axis distribution. 'spherical' = generic CRT barrel
+        // (warp on both axes, by r²). 'cylindrical' = Trinitron face
+        // (warp X only, by x²) — verticals stay straight, horizontals
+        // curve. GPU path only.
+        curvatureMode: 'spherical',
+        // Horizontal scanlines (GPU composite pass). scanlineDepth = 0
+        // means flat brightness; 1 means troughs go to black.
+        // scanlinePeriod = source pixels per bright/dim cycle, so on a
+        // vh=320 hero with period=2 you get 160 scanlines.
+        scanlineDepth: 0.18,
+        scanlinePeriod: 2,
         bloomThreshold: 0.6,
         bloomStrength: 1.0,
         signal: () => {},
@@ -468,11 +500,20 @@ void main() {
         perCellShimmer: false,
         perRowShimmer: false,
         beamSpread: true,
+        // Damper wires — Trinitron's two horizontal stabilizer strands.
+        // On by default for any Trinitron sim worth the name; the
+        // wires only show when opts.damperWires has positions in it
+        // (default [0.32, 0.68]) and damperStrength < 1.
+        damperWires: true,
         // Composite pass — both off (selectiveBloom interacts oddly
         // with the stripe profile; gapMask is broken at the current
         // sampling resolution, see commit history).
         selectiveBloom: false,
         gapMask: false,
+        // Horizontal scanlines — periodic dim/bright bands along Y in
+        // the composite pass. Off by default since it adds a strong
+        // visual layer that compounds with the vertical stripe pattern.
+        scanlines: false,
         // Glass — all off; curvature warps the stripe pattern and
         // gloss/vignette obscure the phosphor character on the
         // small physical sizes we're working with.
@@ -990,10 +1031,14 @@ void main() {
         stripeMargin:      gl.getUniformLocation(this._progComposite, 'uStripeMargin'),
         opaqueBackground:  gl.getUniformLocation(this._progComposite, 'uOpaqueBackground'),
       };
-      this._uComposite.bloom         = gl.getUniformLocation(this._progComposite, 'uBloom');
-      this._uComposite.bloomStrength = gl.getUniformLocation(this._progComposite, 'uBloomStrength');
-      this._uComposite.bloomEnabled  = gl.getUniformLocation(this._progComposite, 'uBloomEnabled');
-      this._uComposite.brightness    = gl.getUniformLocation(this._progComposite, 'uBrightness');
+      this._uComposite.bloom            = gl.getUniformLocation(this._progComposite, 'uBloom');
+      this._uComposite.bloomStrength    = gl.getUniformLocation(this._progComposite, 'uBloomStrength');
+      this._uComposite.bloomEnabled     = gl.getUniformLocation(this._progComposite, 'uBloomEnabled');
+      this._uComposite.brightness       = gl.getUniformLocation(this._progComposite, 'uBrightness');
+      this._uComposite.curvatureMode    = gl.getUniformLocation(this._progComposite, 'uCurvatureMode');
+      this._uComposite.scanlineEnabled  = gl.getUniformLocation(this._progComposite, 'uScanlineEnabled');
+      this._uComposite.scanlineCycles   = gl.getUniformLocation(this._progComposite, 'uScanlineCycles');
+      this._uComposite.scanlineDepth    = gl.getUniformLocation(this._progComposite, 'uScanlineDepth');
 
       // Bloom programs.
       const bthVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
@@ -1115,7 +1160,7 @@ void main() {
         background: rgba(0,0,0,0.85); color: #fff;
         font: 11px/1.4 monospace; padding: 12px 14px;
         border: 1px solid #555; border-radius: 4px;
-        max-width: 240px; max-height: 80vh; overflow: auto;
+        max-width: 320px; max-height: 86vh; overflow: auto;
       `;
       panel.innerHTML = `<div style="font-weight:700;margin-bottom:8px;">__trinitron debug</div>`;
 
@@ -1127,6 +1172,89 @@ void main() {
       this._debugFps = fpsEl;
       this._debugFpsLast = performance.now();
       this._debugFpsFrames = 0;
+
+      // Baseline snapshot: capture current effects + panel-mutable opts
+      // so the "copy state" button can emit a diff of "what did the user
+      // change since page load." Deep-copies convergence (object) so we
+      // don't alias.
+      const PANEL_OPT_KEYS = [
+        'phosphorCoupling', 'persistence', 'hotspot', 'cellShimmer',
+        'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
+        'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
+        'damperStrength', 'scanlineDepth', 'scanlinePeriod',
+      ];
+      const snapshotOpts = () => {
+        const snap = {};
+        for (const k of PANEL_OPT_KEYS) {
+          if (k in this.opts) snap[k] = this.opts[k];
+        }
+        if (this.opts.convergence) {
+          const c = this.opts.convergence;
+          snap.convergence = {
+            r: [c.r?.[0] ?? 0, c.r?.[1] ?? 0],
+            g: [c.g?.[0] ?? 0, c.g?.[1] ?? 0],
+            b: [c.b?.[0] ?? 0, c.b?.[1] ?? 0],
+          };
+        }
+        return snap;
+      };
+      const baseline = {
+        effects: { ...this.effects },
+        opts: snapshotOpts(),
+      };
+      const convergenceEq = (a, b) => {
+        if (!a || !b) return a === b;
+        return a.r[0]===b.r[0] && a.r[1]===b.r[1] &&
+               a.g[0]===b.g[0] && a.g[1]===b.g[1] &&
+               a.b[0]===b.b[0] && a.b[1]===b.b[1];
+      };
+      const fmtNum = (n) => {
+        if (Number.isInteger(n)) return String(n);
+        return String(Math.round(n * 10000) / 10000); // strip float fuzz
+      };
+      const buildDiff = () => {
+        const lines = [];
+        for (const k of Object.keys(this.effects)) {
+          if (this.effects[k] !== baseline.effects[k]) {
+            lines.push(`  effects.${k} = ${this.effects[k]}`);
+          }
+        }
+        const currOpts = snapshotOpts();
+        for (const k of Object.keys(currOpts)) {
+          const cv = currOpts[k];
+          const bv = baseline.opts[k];
+          if (k === 'convergence') {
+            if (!convergenceEq(cv, bv)) {
+              lines.push(`  opts.convergence = { r: [${cv.r.map(fmtNum).join(', ')}], g: [${cv.g.map(fmtNum).join(', ')}], b: [${cv.b.map(fmtNum).join(', ')}] }`);
+            }
+          } else if (cv !== bv) {
+            if (typeof cv === 'string') lines.push(`  opts.${k} = '${cv}'`);
+            else                        lines.push(`  opts.${k} = ${fmtNum(cv)}`);
+          }
+        }
+        if (lines.length === 0) return 'trinitron state: (no changes from page load)';
+        return ['trinitron state diff (from page load):', ...lines].join('\n');
+      };
+
+      // "Copy state" button. Writes the diff to clipboard; falls back
+      // to console if clipboard is unavailable. Localhost is a secure
+      // context so clipboard works on the dev server.
+      const copyBtn = document.createElement('button');
+      copyBtn.textContent = 'copy state diff';
+      copyBtn.style.cssText = 'display:block;width:100%;padding:5px 6px;margin-bottom:10px;background:#222;color:#5EE2FF;border:1px solid #555;font:11px monospace;cursor:pointer;border-radius:2px;';
+      copyBtn.addEventListener('click', async () => {
+        const text = buildDiff();
+        const restore = () => { copyBtn.textContent = 'copy state diff'; };
+        try {
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = 'copied to clipboard';
+        } catch (err) {
+          console.log('[trinitron]\n' + text);
+          copyBtn.textContent = 'clipboard failed — see console';
+        }
+        setTimeout(restore, 1400);
+      });
+      panel.appendChild(copyBtn);
 
       // View CSS fallback toggle. Stops the renderer and removes
       // .trinitron-active from <html>, which is the single switch
@@ -1156,20 +1284,184 @@ void main() {
       bypassRow.appendChild(bypassLbl);
       panel.appendChild(bypassRow);
 
-      // Effect checkboxes.
-      const keys = Object.keys(this.effects);
-      for (const key of keys) {
-        const row = document.createElement('label');
-        row.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0;';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = !!this.effects[key];
-        cb.addEventListener('change', () => { this.effects[key] = cb.checked; });
-        row.appendChild(cb);
-        const lbl = document.createElement('span');
-        lbl.textContent = key;
-        row.appendChild(lbl);
-        panel.appendChild(row);
+      // Captioned effect groups with inline sliders for tunable scalars.
+      // Order mirrors the GPU pass order (phosphor → composite → glass);
+      // "modulation" holds the slow brightness modulators. Sliders mutate
+      // this.opts.<x> and re-run _uploadStaticUniforms so the change is
+      // visible on the next frame.
+      const GROUPS = [
+        { title: 'phosphor',
+          items: [
+            { key: 'stripeProfile',    label: 'stripe profile',
+              desc: 'RGB aperture-grille subpixel decomposition. Off = raw signal, no triad mask.' },
+            { key: 'phosphorCoupling', label: 'phosphor coupling',
+              desc: 'Each lit column also emits the other two channels. Brightens pure colors.',
+              params: [{ opt: 'phosphorCoupling', min: 0, max: 1, step: 0.05, sub: 'strength' }] },
+            { key: 'convergence',      label: 'convergence',
+              desc: 'Per-channel xy-offset. R and B sample from shifted positions — edges fringe.',
+              params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread' }] },
+            { key: 'convergenceDrift', label: 'convergence drift',
+              desc: 'Slow time-varying R/B shift on top of base. Mistuned-yoke wobble.' },
+            { key: 'persistence',      label: 'persistence',
+              desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
+              params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
+            { key: 'perCellHotspot',   label: 'per-cell hotspot',
+              desc: 'Brightens the dead-center pixel of each cell — beam focus point.',
+              params: [{ opt: 'hotspot', min: 0, max: 1.5, step: 0.05, sub: 'amount' }] },
+            { key: 'perCellShimmer',   label: 'per-cell shimmer',
+              desc: 'Static brightness jitter per cell. Asserts the phosphor-dot grid.',
+              params: [{ opt: 'cellShimmer', min: 0, max: 0.2, step: 0.01, sub: 'amount' }] },
+            { key: 'perRowShimmer',    label: 'per-row shimmer',
+              desc: 'Per-scanline brightness noise. Beam-current line-to-line fluctuation.',
+              params: [{ opt: 'rowShimmer', min: 0, max: 0.1, step: 0.005, sub: 'amount' }] },
+            { key: 'beamSpread',       label: 'beam spread',
+              desc: 'Gaussian PSF blur on signal. Softens razor edges into glowing phosphor.',
+              params: [
+                { opt: 'beamSpreadPx',         min: 0, max: 3, step: 0.1, sub: 'h (px)' },
+                { opt: 'beamSpreadVerticalPx', min: 0, max: 3, step: 0.1, sub: 'v (px)' },
+              ] },
+            { key: 'damperWires',      label: 'damper wires',
+              desc: 'Two horizontal stabilizer strands across the aperture grille. The Trinitron signature.',
+              params: [{ opt: '__damperDarkness', min: 0, max: 1, step: 0.05, sub: 'darkness' }] },
+          ] },
+        { title: 'composite',
+          items: [
+            { key: 'selectiveBloom', label: 'selective bloom',
+              desc: 'Bright-pixel halo. Threshold the phosphor, blur, add back as bloom.',
+              params: [
+                { opt: 'bloomThreshold', min: 0, max: 1, step: 0.05, sub: 'threshold' },
+                { opt: 'bloomStrength',  min: 0, max: 3, step: 0.1,  sub: 'strength' },
+              ] },
+            { key: 'gapMask',        label: 'gap mask',
+              desc: 'Dark vertical lines between stripes. Texture-baked; alpha fixed at init.' },
+            { key: 'scanlines',      label: 'horizontal scanlines',
+              desc: 'Periodic dim/bright bands along Y — the beam paints rows with gaps between.',
+              params: [
+                { opt: 'scanlineDepth',  min: 0, max: 1,  step: 0.02, sub: 'depth' },
+                { opt: 'scanlinePeriod', min: 1, max: 10, step: 0.5,  sub: 'period (px)' },
+              ] },
+          ] },
+        { title: 'glass',
+          items: [
+            { key: 'curvature', label: 'curvature',
+              desc: 'CRT face curvature. Spherical = generic barrel; cylindrical = Trinitron (verticals stay straight).',
+              params: [
+                { opt: 'curvature', min: 0, max: 0.3, step: 0.01, sub: 'amount' },
+                { opt: 'curvatureMode', kind: 'select', sub: 'mode',
+                  options: ['spherical', 'cylindrical'] },
+              ] },
+            { key: 'gloss',     label: 'gloss',
+              desc: 'Upper-left elliptical highlight. Virtual light source. Texture-baked.' },
+            { key: 'vignette',  label: 'vignette',
+              desc: 'Darken corners. Bezel falloff. Texture-baked.' },
+          ] },
+        { title: 'modulation',
+          items: [
+            { key: 'warmup',    label: 'warmup',
+              desc: 'One-shot brightness ramp on start. CRT tube warming up.' },
+            { key: 'breathing', label: 'breathing',
+              desc: 'Slow brightness modulation. Power-supply ripple feel.' },
+          ] },
+      ];
+
+      // Synthetic opts the panel exposes that don't map 1:1 to this.opts:
+      //  __convergenceSpread → distributes to r=[-s,-s], b=[s,s], g=[0,0]
+      //  __damperDarkness    → 1 - damperStrength (so the slider reads
+      //                        "how dark are the wires" instead of the
+      //                        existing "fraction of brightness remaining"
+      //                        semantics buried in damperStrength)
+      const readVal = (opt) => {
+        if (opt === '__convergenceSpread') return Math.abs(this.opts.convergence?.r?.[0] ?? 0);
+        if (opt === '__damperDarkness')   return 1 - (this.opts.damperStrength ?? 0);
+        return this.opts[opt] ?? 0;
+      };
+      const writeVal = (opt, v) => {
+        if (opt === '__convergenceSpread') {
+          this.opts.convergence = { r: [-v, -v], g: [0, 0], b: [v, v] };
+        } else if (opt === '__damperDarkness') {
+          this.opts.damperStrength = 1 - v;
+        } else {
+          this.opts[opt] = v;
+        }
+        if (this._gl) this._uploadStaticUniforms();
+      };
+      const fmt = (v, step) => v.toFixed(Math.max(0, -Math.floor(Math.log10(step))));
+
+      for (const group of GROUPS) {
+        const head = document.createElement('div');
+        head.style.cssText = 'margin-top:10px;margin-bottom:4px;color:#A99CFF;font-weight:700;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;';
+        head.textContent = group.title;
+        panel.appendChild(head);
+
+        for (const item of group.items) {
+          const block = document.createElement('div');
+          block.style.cssText = 'margin-bottom:8px;';
+
+          const row = document.createElement('label');
+          row.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0;';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = !!this.effects[item.key];
+          cb.addEventListener('change', () => { this.effects[item.key] = cb.checked; });
+          row.appendChild(cb);
+          const lbl = document.createElement('span');
+          lbl.textContent = item.label;
+          row.appendChild(lbl);
+          block.appendChild(row);
+
+          const desc = document.createElement('div');
+          desc.style.cssText = 'padding-left:20px;color:#9aa;font-size:10px;line-height:1.35;margin-top:1px;';
+          desc.textContent = item.desc;
+          block.appendChild(desc);
+
+          if (item.params) {
+            for (const p of item.params) {
+              const prow = document.createElement('div');
+              prow.style.cssText = 'display:flex;align-items:center;gap:6px;padding-left:20px;margin-top:3px;';
+              const sub = document.createElement('span');
+              sub.style.cssText = 'color:#888;min-width:62px;font-size:10px;';
+              sub.textContent = p.sub;
+              prow.appendChild(sub);
+
+              if (p.kind === 'select') {
+                const select = document.createElement('select');
+                select.style.cssText = 'flex:1;min-width:0;background:#222;color:#5EE2FF;border:1px solid #555;font:10px monospace;padding:1px 3px;';
+                for (const optVal of p.options) {
+                  const opt = document.createElement('option');
+                  opt.value = optVal;
+                  opt.textContent = optVal;
+                  select.appendChild(opt);
+                }
+                select.value = String(this.opts[p.opt] ?? p.options[0]);
+                select.addEventListener('change', () => { writeVal(p.opt, select.value); });
+                prow.appendChild(select);
+              } else {
+                const slider = document.createElement('input');
+                slider.type = 'range';
+                slider.min = String(p.min);
+                slider.max = String(p.max);
+                slider.step = String(p.step);
+                slider.style.cssText = 'flex:1;min-width:0;accent-color:#5EE2FF;';
+                const valEl = document.createElement('span');
+                valEl.style.cssText = 'color:#5EE2FF;min-width:38px;text-align:right;font-size:10px;';
+                const initV = readVal(p.opt);
+                slider.value = String(initV);
+                valEl.textContent = fmt(initV, p.step);
+                slider.addEventListener('input', () => {
+                  const v = parseFloat(slider.value);
+                  valEl.textContent = fmt(v, p.step);
+                  writeVal(p.opt, v);
+                });
+                prow.appendChild(slider);
+                prow.appendChild(valEl);
+              }
+
+              block.appendChild(prow);
+            }
+          }
+
+          panel.appendChild(block);
+        }
       }
 
       document.body.appendChild(panel);
@@ -1329,10 +1621,17 @@ void main() {
       gl.uniform1i(this._uComposite.bloom,    4);
       gl.uniform2f(this._uComposite.canvasSize, this.canvas.width, this.canvas.height);
       gl.uniform1f(this._uComposite.curvature,        this.opts.curvature);
+      gl.uniform1f(this._uComposite.curvatureMode,    this.opts.curvatureMode === 'cylindrical' ? 1 : 0);
       gl.uniform1f(this._uComposite.bloomStrength,    this.opts.bloomStrength);
       gl.uniform1f(this._uComposite.stripeFraction,   this._stripeFraction);
       gl.uniform1f(this._uComposite.stripeMargin,     this._stripeMargin);
       gl.uniform1f(this._uComposite.opaqueBackground, this.opts.opaqueBackground ? 1 : 0);
+      // Scanline geometry — depth is the trough darkening fraction;
+      // cycles is the count of bright/dim cycles per stripe-UV unit
+      // (vh / scanlinePeriod). Both re-uploaded when the panel mutates
+      // opts; scanlineEnabled is uploaded per-frame in _renderGpu.
+      gl.uniform1f(this._uComposite.scanlineDepth,    this.opts.scanlineDepth);
+      gl.uniform1f(this._uComposite.scanlineCycles,   vh / Math.max(0.5, this.opts.scanlinePeriod));
 
       // Bloom programs — sampler binding, threshold, and texSize all
       // static. Only invoked when effects.selectiveBloom is on, but
@@ -1358,6 +1657,24 @@ void main() {
       const [vw, vh] = this.opts.viewSize;
       this._signalCtx.clearRect(0, 0, vw, vh);
       this.opts.signal(this._signalCtx, timeMs);
+
+      // Damper wires — stamp the configured horizontal rows onto the
+      // signal canvas BEFORE upload, so the wires inherit convergence
+      // fringe, persistence, beam spread, and bloom from the rest of
+      // the pipeline. damperStrength names the fraction of substrate
+      // brightness that REMAINS at the wire row (0 = fully black wire,
+      // 1 = invisible) — same semantics as the CPU path.
+      if (this.effects.damperWires &&
+          this.opts.damperWires &&
+          this.opts.damperWires.length > 0 &&
+          this.opts.damperStrength < 1) {
+        const fillAlpha = 1 - this.opts.damperStrength;
+        this._signalCtx.fillStyle = `rgba(0,0,0,${fillAlpha})`;
+        for (const frac of this.opts.damperWires) {
+          const y = Math.round(frac * vh);
+          if (y >= 0 && y < vh) this._signalCtx.fillRect(0, y, vw, 1);
+        }
+      }
 
       // Bypass mode only triggers if both the user toggled it off AND
       // this instance owns a bypass canvas. Instances constructed with
@@ -1518,6 +1835,7 @@ void main() {
       gl.uniform1f(this._uComposite.vignetteEnabled,  this.effects.vignette       ? 1 : 0);
       gl.uniform1f(this._uComposite.gapMaskEnabled,   this.effects.gapMask        ? 1 : 0);
       gl.uniform1f(this._uComposite.bloomEnabled,     this.effects.selectiveBloom ? 1 : 0);
+      gl.uniform1f(this._uComposite.scanlineEnabled,  this.effects.scanlines      ? 1 : 0);
       gl.uniform1f(this._uComposite.brightness,       this._brightness ?? 1.0);
 
       gl.activeTexture(gl.TEXTURE0);
@@ -1660,7 +1978,7 @@ void main() {
       //    dim to opaque phosphor pixels (no wires over the surrounding
       //    glass). Baking into the signal means the wires get the same
       //    convergence fringe and bleed treatment as everything else.
-      if (this.damperRows.length > 0 && this.damperOpacity > 0) {
+      if (this.effects.damperWires && this.damperRows.length > 0 && this.damperOpacity > 0) {
         this.signalCtx.save();
         this.signalCtx.globalCompositeOperation = 'source-atop';
         this.signalCtx.fillStyle = `rgba(0,0,0,${this.damperOpacity})`;
