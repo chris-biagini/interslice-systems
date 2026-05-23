@@ -60,13 +60,34 @@
     return out;
   }
 
+  // Read every .sprinkle element and compute its unrotated width,
+  // height, and bounding-circle radius. We use getComputedStyle
+  // (not getBoundingClientRect) because the rect reflects the
+  // *rotated* AABB, while CSS `top`/`left` and the rotation pivot
+  // both reference the *unrotated* box. The bounding circle of the
+  // unrotated box is also rotation-invariant — which is what
+  // Mitchell's wants for a single exclusion radius.
+  function measureSprinkles() {
+    const nodes = Array.from(document.querySelectorAll('.sprinkle'));
+    return nodes.map((el) => {
+      const cs = getComputedStyle(el);
+      const w = parseFloat(cs.width)  || 0;
+      const h = parseFloat(cs.height) || 0;
+      const radius = Math.hypot(w, h) / 2;
+      return { el, w, h, radius };
+    });
+  }
+
   function layout() {
     const page = document.querySelector('.page');
     if (!page) return;
     const pageRect = page.getBoundingClientRect();
     const keepouts = rectsFromSelectors(pageRect);
+    const sprinkles = measureSprinkles();
     console.log('[sprinkles] page', { w: pageRect.width, h: pageRect.height });
     console.log('[sprinkles] keepouts', keepouts);
+    console.log('[sprinkles] count', sprinkles.length, 'radii',
+      sprinkles.map(s => Math.round(s.radius)));
   }
 
   if (document.readyState === 'loading') {
