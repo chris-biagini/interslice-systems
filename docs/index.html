@@ -120,12 +120,44 @@
   }
   .stack .mark { position: relative; z-index: 1; }
 
+  /* CRT bezel / cutout depth. The page is an arcade-cabinet panel
+     (Memphis sprinkles, halftone wash, paper graphics); the Trinitron
+     sits behind a rectangular hole in that panel, recessed. This
+     pseudo-element rides the canvas plane and casts a soft inner
+     shadow at the screen edge so the CRT reads as set back, with the
+     top edge slightly darker to suggest light from above being
+     occluded by the cutout's upper lip.
+
+     Geometry note: the *visible* screen is the canvas, not .brand. The
+     canvas is sized .brand + HERO_HALO_MARGIN_PX (16px) per side (see
+     the JS init() block below), and the substrate fillRect paints
+     across the whole canvas. So this bezel uses inset: -16px to land
+     its edge exactly on the canvas edge. If HERO_HALO_MARGIN_PX
+     changes, this value has to track it. */
+  .brand::after {
+    content: "";
+    position: absolute;
+    inset: -16px;
+    pointer-events: none;
+    z-index: 2;
+    display: none;
+    box-shadow:
+      inset 0 0 36px 8px rgba(0, 0, 0, 0.85),
+      inset 0 0 4px  0   rgba(0, 0, 0, 1),
+      inset 0 4px 10px 0 rgba(0, 0, 0, 0.55);
+  }
+
   /* Canonical triple-activation pattern (see CLAUDE.md): explicit dark
      OR (OS-dark AND not pinned-to-light). No light-mode rule needed —
-     display: none is the default. */
-  :root.trinitron-active[data-theme="dark"] .hero-screen { display: block; }
+     display: none is the default. Bezel is gated on .trinitron-active
+     too because the screen substrate only exists once the renderer is
+     painting; without JS there's just an SVG logo, no rectangle to
+     frame. */
+  :root.trinitron-active[data-theme="dark"] .hero-screen,
+  :root.trinitron-active[data-theme="dark"] .brand::after { display: block; }
   @media (prefers-color-scheme: dark) {
-    :root.trinitron-active:not([data-theme="light"]) .hero-screen { display: block; }
+    :root.trinitron-active:not([data-theme="light"]) .hero-screen,
+    :root.trinitron-active:not([data-theme="light"]) .brand::after { display: block; }
   }
 
   /* When canvas is active in a dark-mode path, hide every SVG dark-mode
