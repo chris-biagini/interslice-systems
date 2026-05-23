@@ -292,6 +292,47 @@
      (layout, label rules) lives in tokens.css */
   .hero .cta-wrap { margin-top: 64px; }
 
+  /* Dark mode: same trick as the wordmark — the live CTA stack stays in
+     the DOM (link is clickable, focusable, in the a11y tree) but every
+     visual property goes transparent so the canvas can paint a phosphor
+     copy at the same layout position. The element's box still occupies
+     space (border, padding, dimensions unchanged), so clicks land on
+     the live <a> through the canvas (which has pointer-events: none).
+     Hover/press transforms still run on the live element; the canvas
+     follows them via JS-lerped offsets in the signal callback. */
+  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-label,
+  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-sub,
+  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta,
+  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta b,
+  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta .arrow {
+    color: transparent;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    filter: none;
+  }
+  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-label::before,
+  :root.trinitron-active[data-theme="dark"] .cta-wrap .cta-label::after {
+    background: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-label,
+    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-sub,
+    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta,
+    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta b,
+    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta .arrow {
+      color: transparent;
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+      filter: none;
+    }
+    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-label::before,
+    :root.trinitron-active:not([data-theme="light"]) .cta-wrap .cta-label::after {
+      background: transparent;
+    }
+  }
+
   /* ===================== FOOTER ===================== */
   .foot {
     position: relative;
@@ -1032,7 +1073,6 @@
       </svg>
 
       <h1 class="wordmark">interslice<i>·</i><b>systems</b></h1>
-      </div>
 
       <div class="cta-wrap">
         <span class="cta-label">Visit our new web-site!</span>
@@ -1041,6 +1081,7 @@
           <span class="arrow">↗</span>
         </a>
         <a class="cta-sub" href="https://www.mozilla.org/firefox/new/" target="_blank" rel="noopener">Mozilla Firefox recommended</a>
+      </div>
       </div>
     </div>
   </section>
@@ -1263,12 +1304,84 @@
   // the phosphor halo isn't truncated at the brand's edge.
   const HERO_HALO_MARGIN_PX = 16;
 
+  // CTA paint colors. The Trinitron pipeline attenuates source colors,
+  // so these are chosen brighter than the equivalent CSS-rule colors
+  // to land at roughly the same on-screen brightness after phosphor
+  // decomposition + persistence + gap mask. Tune if the CTA reads
+  // dim against the wordmark.
+  //   - LABEL: muted phosphor for the "Visit our new web-site!" caption
+  //     and the "Mozilla Firefox recommended" sub-link. Roughly the
+  //     dark-mode --fg-muted (#B3BAD0) brightened a touch.
+  //   - TEXT: pure-white "mirepoix.recipes" so all three phosphor stripes
+  //     light at max (matches wordmark treatment).
+  //   - ARROW + MAGENTA stamp: bright pink phosphor; the halo bleed
+  //     pass picks this up as the magenta glow that the CSS
+  //     drop-shadow filter approximated in plain dark mode.
+  //   - RING + BORDER: cream/white that becomes paper-bright phosphor
+  //     inside the screen (matches dark-mode --paper-0 stamp-ink).
+  const HERO_CTA_LABEL_COLOR  = '#C8CFE3';
+  const HERO_CTA_TEXT_COLOR   = '#FFFFFF';
+  const HERO_CTA_ARROW_COLOR  = '#FF1493';
+  const HERO_CTA_MAGENTA      = '#FF1493';
+  const HERO_CTA_RING         = '#F4F1EA';
+  const HERO_CTA_BORDER       = '#FFFFFF';
+  const HERO_CTA_MONO_FONT    = '"JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace';
+
+  // CTA button stamp shadow geometry — mirrors .cta in tokens.css:
+  //   box-shadow: 8px 8px 0 0 var(--ink-magenta), 8px 8px 0 5px var(--stamp-ink)
+  // At rest: 8px offset, 5px ink ring. On hover: 10px offset (still 5
+  // ring). On press: 0/0 (everything collapses under the button).
+  const HERO_CTA_STAMP_REST_PX  = 8;
+  const HERO_CTA_STAMP_HOVER_PX = 10;
+  const HERO_CTA_STAMP_RING_PX  = 5;
+  const HERO_CTA_HOVER_TX_PX    = -2;  // .cta:hover { transform: translate(-2px, -2px) }
+  const HERO_CTA_PRESS_TX_PX    = 5;   // .cta:active { transform: translate(5px, 5px) }
+  const HERO_CTA_BORDER_PX      = 3;   // matches --bw-bold
+
   async function init() {
     const canvas = document.querySelector('canvas.hero-screen');
     const brand  = document.querySelector('.brand');
     const mark   = document.querySelector('.mark');
     const wordmark = document.querySelector('.wordmark');
     if (!canvas || !brand || !mark || !wordmark || !window.Trinitron) return;
+
+    // CTA elements — optional. If any are missing the CTA paint phase
+    // in signal() short-circuits via layout.ctaButton === null.
+    const ctaLabel = document.querySelector('.cta-label');
+    const ctaEl    = document.querySelector('.cta');
+    const ctaSub   = document.querySelector('.cta-sub');
+    const ctaText  = ctaEl ? ctaEl.querySelector('b') : null;
+    const ctaArrow = ctaEl ? ctaEl.querySelector('.arrow') : null;
+
+    // CSS-driven hover/press transitions apply to the (invisible) live
+    // button, not the canvas-painted copy. We track interaction state
+    // in JS and lerp toward the targets each frame so the canvas paint
+    // visually follows the live element's translate. lerpK ≈ 0.22 gives
+    // a ~10-frame settle (~165 ms at 60fps), close to the CSS 140 ms
+    // ease-snap. Not bouncy like the real curve, but the press-down
+    // and pop-back feel survive.
+    let ctaHover = 0, ctaHoverTarget = 0;
+    let ctaPress = 0, ctaPressTarget = 0;
+    if (ctaEl) {
+      ctaEl.addEventListener('mouseenter', () => { ctaHoverTarget = 1; });
+      ctaEl.addEventListener('mouseleave', () => { ctaHoverTarget = 0; ctaPressTarget = 0; });
+      ctaEl.addEventListener('mousedown',  () => { ctaPressTarget = 1; });
+      ctaEl.addEventListener('mouseup',    () => { ctaPressTarget = 0; });
+      // Keyboard focus: light up the hover state so a tab-focused CTA
+      // gets the same visual lift as a moused-over one.
+      ctaEl.addEventListener('focus', () => { ctaHoverTarget = 1; });
+      ctaEl.addEventListener('blur',  () => { ctaHoverTarget = 0; ctaPressTarget = 0; });
+      // Touch: treat tap-start as press+hover, tap-end as release.
+      ctaEl.addEventListener('touchstart', () => {
+        ctaHoverTarget = 1; ctaPressTarget = 1;
+      }, { passive: true });
+      const touchEnd = () => {
+        ctaPressTarget = 0;
+        setTimeout(() => { ctaHoverTarget = 0; }, 120);
+      };
+      ctaEl.addEventListener('touchend',    touchEnd);
+      ctaEl.addEventListener('touchcancel', touchEnd);
+    }
 
     let armsImg, hubImg, aquaImg;
     try {
@@ -1300,7 +1413,14 @@
     // use after this resolves the same font face.
     if (document.fonts && document.fonts.load) {
       try {
-        await document.fonts.load('700 124px "Space Grotesk"');
+        await Promise.all([
+          document.fonts.load('700 124px "Space Grotesk"'),
+          // JetBrains Mono — the .cta-label and .cta-sub captions paint
+          // into the CRT using this face. Without priming, the first
+          // signal frame measures against a fallback mono and the
+          // caption centering drifts on the second frame.
+          document.fonts.load('700 11px "JetBrains Mono"'),
+        ]);
       } catch (_) { /* fall through; we'll use whatever's available */ }
     }
 
@@ -1425,6 +1545,75 @@
         if (part.marginRightEm) wordmarkTotalW += part.marginRightEm * fontPx;
       }
 
+      // CTA layout — captured per-resize like the wordmark. Reads
+      // bounding rects at rest (hover/press transforms aren't applied
+      // here under normal use because the resize observer fires on
+      // size changes, not hover). The signal callback adds the
+      // JS-lerped hover/press translate on top of these resting
+      // positions per frame.
+      let ctaButtonLayout = null;
+      let ctaLabelLayout  = null;
+      let ctaSubLayout    = null;
+      let ctaTextLayout   = null;
+      let ctaArrowLayout  = null;
+      if (ctaEl && ctaText && ctaArrow) {
+        const ctaR     = ctaEl.getBoundingClientRect();
+        const ctaTextR = ctaText.getBoundingClientRect();
+        const ctaArrR  = ctaArrow.getBoundingClientRect();
+        const ctaSt    = window.getComputedStyle(ctaEl);
+        const ctaTSt   = window.getComputedStyle(ctaText);
+        const ctaASt   = window.getComputedStyle(ctaArrow);
+        ctaButtonLayout = {
+          x: Math.round(ctaR.left - brandRect.left + M),
+          y: Math.round(ctaR.top  - brandRect.top  + M),
+          w: Math.round(ctaR.width),
+          h: Math.round(ctaR.height),
+        };
+        ctaTextLayout = {
+          x: Math.round(ctaTextR.left - brandRect.left + M),
+          y: Math.round(ctaTextR.top  - brandRect.top  + M),
+          text: ctaText.textContent,
+          fontPx: parseFloat(ctaTSt.fontSize),
+          letterSpacingPx: parseFloat(ctaTSt.letterSpacing) || 0,
+          weight: ctaTSt.fontWeight || '700',
+        };
+        ctaArrowLayout = {
+          x: Math.round(ctaArrR.left - brandRect.left + M),
+          y: Math.round(ctaArrR.top  - brandRect.top  + M),
+          text: ctaArrow.textContent,
+          fontPx: parseFloat(ctaASt.fontSize),
+          weight: ctaASt.fontWeight || '500',
+        };
+      }
+      if (ctaLabel) {
+        const r  = ctaLabel.getBoundingClientRect();
+        const st = window.getComputedStyle(ctaLabel);
+        ctaLabelLayout = {
+          x: Math.round(r.left - brandRect.left + M),
+          y: Math.round(r.top  - brandRect.top  + M),
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+          text: (ctaLabel.textContent || '').toUpperCase(),
+          fontPx: parseFloat(st.fontSize),
+          letterSpacingPx: parseFloat(st.letterSpacing) || 0,
+          weight: st.fontWeight || '700',
+        };
+      }
+      if (ctaSub) {
+        const r  = ctaSub.getBoundingClientRect();
+        const st = window.getComputedStyle(ctaSub);
+        ctaSubLayout = {
+          x: Math.round(r.left - brandRect.left + M),
+          y: Math.round(r.top  - brandRect.top  + M),
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+          text: (ctaSub.textContent || '').toUpperCase(),
+          fontPx: parseFloat(st.fontSize),
+          letterSpacingPx: parseFloat(st.letterSpacing) || 0,
+          weight: st.fontWeight || '700',
+        };
+      }
+
       return {
         width:  Math.round(brandRect.width  + 2 * M),
         height: Math.round(brandRect.height + 2 * M),
@@ -1442,6 +1631,11 @@
         sprinkles,
         wordmarkPartWidths,
         wordmarkTotalW,
+        ctaButton: ctaButtonLayout,
+        ctaLabel:  ctaLabelLayout,
+        ctaSub:    ctaSubLayout,
+        ctaText:   ctaTextLayout,
+        ctaArrow:  ctaArrowLayout,
       };
     }
 
@@ -1540,6 +1734,128 @@
         ctx.fillText(part.text, x, layout.wordmarkTopY);
         x += layout.wordmarkPartWidths[i];
         if (part.marginRightEm) x += part.marginRightEm * fontPx;
+      }
+
+      // 4. CTA — paint the "Visit our new web-site!" label, the
+      //    Mirepoix button (with its magenta+paper stamp shadow), the
+      //    "mirepoix.recipes" text, the "↗" arrow, and the Firefox
+      //    sub-link. The live <a> stays in the DOM underneath, invisible
+      //    in dark mode but still clickable (canvas has pointer-events:
+      //    none). Hover/press transitions ride the live element via CSS
+      //    transition; the canvas paint follows via JS-lerped offsets.
+
+      // Per-frame ease toward the interaction targets. 0.22 ≈ 165 ms
+      // settle at 60fps; close enough to the CSS 140 ms ease-snap that
+      // the press-down feel survives, without trying to bounce.
+      const kEase = 0.22;
+      ctaHover += (ctaHoverTarget - ctaHover) * kEase;
+      ctaPress += (ctaPressTarget - ctaPress) * kEase;
+
+      // .cta-label — flanking 28×2 rules + centered uppercase caption.
+      if (layout.ctaLabel) {
+        const L = layout.ctaLabel;
+        ctx.fillStyle = HERO_CTA_LABEL_COLOR;
+        ctx.fillRect(L.x, L.y + L.h / 2 - 1, 28, 2);
+        ctx.fillRect(L.x + L.w - 28, L.y + L.h / 2 - 1, 28, 2);
+        ctx.font = `${L.weight} ${L.fontPx}px ${HERO_CTA_MONO_FONT}`;
+        if ('letterSpacing' in ctx) {
+          ctx.letterSpacing = L.letterSpacingPx + 'px';
+        }
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        ctx.fillText(L.text, L.x + L.w / 2, L.y + L.h / 2);
+        ctx.textAlign = 'start';
+      }
+
+      // .cta — bordered button with magenta+paper stamp shadow.
+      if (layout.ctaButton) {
+        const B = layout.ctaButton;
+
+        // Mirror .cta:hover / .cta:active translations. CSS:
+        //   :hover  → translate(-2px, -2px)
+        //   :active → translate( 5px,  5px)   (overrides hover)
+        // Compose: baseline tx pulled by hover, then crossfade to +5
+        // by press. ty == tx (CSS uses the same value on both axes).
+        const baseTx  = HERO_CTA_HOVER_TX_PX * ctaHover;
+        const tx      = baseTx + (HERO_CTA_PRESS_TX_PX - baseTx) * ctaPress;
+        const ty      = tx;
+        // Stamp geometry: 8→10 px offset with hover, collapses to 0 with press.
+        const baseOff = HERO_CTA_STAMP_REST_PX
+                      + (HERO_CTA_STAMP_HOVER_PX - HERO_CTA_STAMP_REST_PX) * ctaHover;
+        const stampOff = baseOff * (1 - ctaPress);
+        const ringPx   = HERO_CTA_STAMP_RING_PX * (1 - ctaPress);
+
+        // Ring (paper-bright phosphor, sits behind magenta).
+        if (ringPx > 0.5 && stampOff > 0.5) {
+          ctx.fillStyle = HERO_CTA_RING;
+          ctx.fillRect(
+            B.x + stampOff - ringPx,
+            B.y + stampOff - ringPx,
+            B.w + ringPx * 2,
+            B.h + ringPx * 2
+          );
+        }
+        // Magenta stamp on top of the ring.
+        if (stampOff > 0.5) {
+          ctx.fillStyle = HERO_CTA_MAGENTA;
+          ctx.fillRect(B.x + stampOff, B.y + stampOff, B.w, B.h);
+        }
+
+        // Button face: re-paint the substrate so the stamp shadow is
+        // cleanly cut at the button edge instead of bleeding through.
+        // (The halftone wash would technically need to re-tile here for
+        // perfect continuity; the wash through the button is faint
+        // enough that the missing dots aren't noticeable.)
+        ctx.fillStyle = HERO_SUBSTRATE;
+        ctx.fillRect(B.x + tx, B.y + ty, B.w, B.h);
+
+        // Border (3px white phosphor). Inset by half-width so the stroke
+        // lands exactly on the button's CSS border-box edge.
+        ctx.lineWidth = HERO_CTA_BORDER_PX;
+        ctx.strokeStyle = HERO_CTA_BORDER;
+        const bp = HERO_CTA_BORDER_PX / 2;
+        ctx.strokeRect(B.x + tx + bp, B.y + ty + bp, B.w - HERO_CTA_BORDER_PX, B.h - HERO_CTA_BORDER_PX);
+
+        // "mirepoix.recipes" — rect-anchored. .cta has line-height: 1,
+        // so the b's line-box top ≈ its em-box top; textBaseline 'top'
+        // lands the glyphs right where the live text would sit.
+        if (layout.ctaText) {
+          const T = layout.ctaText;
+          ctx.fillStyle = HERO_CTA_TEXT_COLOR;
+          ctx.font = `${T.weight} ${T.fontPx}px ${HERO_WORDMARK_FONT}`;
+          if ('letterSpacing' in ctx) {
+            ctx.letterSpacing = T.letterSpacingPx + 'px';
+          }
+          ctx.textBaseline = 'top';
+          ctx.textAlign = 'start';
+          ctx.fillText(T.text, T.x + tx, T.y + ty);
+        }
+
+        // "↗" arrow — already includes its CSS translateY(-2px) in the
+        // captured rect (getBoundingClientRect reflects transforms).
+        if (layout.ctaArrow) {
+          const A = layout.ctaArrow;
+          ctx.fillStyle = HERO_CTA_ARROW_COLOR;
+          ctx.font = `${A.weight} ${A.fontPx}px ${HERO_WORDMARK_FONT}`;
+          if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+          ctx.textBaseline = 'top';
+          ctx.textAlign = 'start';
+          ctx.fillText(A.text, A.x + tx, A.y + ty);
+        }
+      }
+
+      // .cta-sub — "Mozilla Firefox recommended" single-line caption.
+      if (layout.ctaSub) {
+        const S = layout.ctaSub;
+        ctx.fillStyle = HERO_CTA_LABEL_COLOR;
+        ctx.font = `${S.weight} ${S.fontPx}px ${HERO_CTA_MONO_FONT}`;
+        if ('letterSpacing' in ctx) {
+          ctx.letterSpacing = S.letterSpacingPx + 'px';
+        }
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        ctx.fillText(S.text, S.x + S.w / 2, S.y + S.h / 2);
+        ctx.textAlign = 'start';
       }
     }
 
