@@ -1134,14 +1134,19 @@
   // through phosphor" rather than a darker rectangle floating on it.
   const HERO_SUBSTRATE = '#000926';
 
-  // Halftone dot wash — matches .page::before's
+  // Halftone dot wash — replicates .page::before's
   // `radial-gradient(--stamp-ink 1.1px, transparent 1.3px)` at
-  // background-size 22px and opacity 0.045. The canvas dots are
-  // phase-aligned to the page's dot grid at paint time so the
-  // pattern is continuous across the screen edge.
-  const HERO_DOT_COLOR = 'rgba(244, 241, 234, 0.045)';
+  // background-size 22px, but scaled up so the dots survive the
+  // phosphor pipeline. The page-bg dots paint flat at 4.5% opacity;
+  // through aperture-grille stripes + cell aggregation + persistence,
+  // a 4.5% signal becomes invisible. Radius 1.6 (≈ one phosphor cell
+  // at cellSize 4) and 25% opacity give a dot per cell strong enough
+  // to read as halftone through the pipeline. Phase-aligned to the
+  // page's dot grid at paint time so the pattern is continuous across
+  // the screen edge.
+  const HERO_DOT_COLOR = 'rgba(244, 241, 234, 0.25)';
   const HERO_DOT_PERIOD = 22;
-  const HERO_DOT_RADIUS = 1.1;
+  const HERO_DOT_RADIUS = 1.6;
   // Page-bg dot is centered in its 22×22 tile (at 11, 11). The
   // canvas paints the same grid, offset so a dot just inside the
   // screen edge follows a dot just outside on the same lattice.
