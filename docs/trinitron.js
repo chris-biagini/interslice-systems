@@ -1128,6 +1128,34 @@ void main() {
       this._debugFpsLast = performance.now();
       this._debugFpsFrames = 0;
 
+      // View CSS fallback toggle. Stops the renderer and removes
+      // .trinitron-active from <html>, which is the single switch
+      // index.html uses to gate "canvas painting" vs "static SVG
+      // fallback" (canvas display:none, .mark .m-dark layers visible).
+      // Same state a visitor sees if WebGL/JS fails. Note: if the
+      // user toggles the theme while bypassed, the index.html
+      // MutationObserver re-runs syncWithTheme() and re-adds the
+      // class — re-check the box to bypass again.
+      const bypassRow = document.createElement('label');
+      bypassRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0 8px;margin-bottom:8px;border-bottom:1px solid #444;';
+      const bypassCb = document.createElement('input');
+      bypassCb.type = 'checkbox';
+      bypassCb.checked = false;
+      bypassCb.addEventListener('change', () => {
+        if (bypassCb.checked) {
+          this.stop();
+          document.documentElement.classList.remove('trinitron-active');
+        } else {
+          document.documentElement.classList.add('trinitron-active');
+          this.start();
+        }
+      });
+      bypassRow.appendChild(bypassCb);
+      const bypassLbl = document.createElement('span');
+      bypassLbl.textContent = 'view CSS fallback';
+      bypassRow.appendChild(bypassLbl);
+      panel.appendChild(bypassRow);
+
       // Effect checkboxes.
       const keys = Object.keys(this.effects);
       for (const key of keys) {
