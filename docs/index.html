@@ -92,26 +92,28 @@
     padding: 0 20px;
   }
 
+  /* Brand block: wraps the logo + wordmark together so the dark-mode
+     canvas can absolutely-position over both. inline-flex shrink-wraps
+     to the wordmark's actual width (the widest child) so the canvas
+     exactly tracks the live layout, not a clamp-based estimate. */
+  .brand {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
   /* Trinitron canvas overlay — dark mode only. Sits behind .mark and
-     the live wordmark and paints both as phosphor. Display box is
-     sized to cover the visible region of logo + wordmark; the canvas's
-     internal source coordinates (viewSize = 800×320 source px) map to
-     this box. Halo bleed is contained inside the canvas rectangle —
-     no visible halo outside the screen edge. */
+     the live wordmark and paints both as phosphor. The canvas
+     absolutely fills the .brand wrapper, which shrink-wraps to the
+     live logo + wordmark layout — so the canvas dimensions track
+     the live elements at every viewport width. The JS recreates the
+     Trinitron instance with new viewSize/canvasSize on resize. */
   .hero-screen {
     position: absolute;
-    /* Display width clamps with the wordmark's clamp(56px, 9vw, 124px)
-       font-size: at floor the screen is 560px wide, at cap 880px wide.
-       aspect-ratio keeps height tied to width for a fixed 2.5:1 face. */
-    width: clamp(560px, 78vw, 880px);
-    aspect-ratio: 800 / 320;
-    /* Center horizontally and overlay the stack starting at the top of
-       the logo. The logo at 168px + wordmark with -0.18em pull-up + a
-       few px breathing fits inside ~310 display px at the wide end,
-       comfortably inside our 880×352 canvas display box. */
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
+    inset: 0;
+    width: 100%;
+    height: 100%;
     pointer-events: none;
     z-index: 0;
     display: none;
@@ -563,6 +565,7 @@
   <!-- ============ HERO: LOGO + WORDMARK + CTA ============ -->
   <section class="hero">
     <div class="stack">
+      <div class="brand">
       <canvas class="hero-screen" aria-hidden="true"></canvas>
       <svg class="mark" viewBox="0 0 200 200" width="168" height="168" role="img" aria-label="Interslice mark">
         <defs>
@@ -956,6 +959,7 @@
       </svg>
 
       <h1 class="wordmark">interslice<i>·</i><b>systems</b></h1>
+      </div>
 
       <div class="cta-wrap">
         <span class="cta-label">Visit our new web-site!</span>
@@ -1080,46 +1084,47 @@
     return -(timeMs / ROT_PERIOD_MS) * 360;
   }
 
-  // Hero screen source-canvas geometry (matches viewSize below).
-  // Treat this as the canonical layout — all draws inside `signal()`
-  // place content in these coordinates. The renderer takes care of
-  // mapping the source canvas to the device pixel canvas.
-  const HERO_VIEW_W = 800;
-  const HERO_VIEW_H = 320;
-
-  // Logo position inside the screen — centered horizontally,
-  // 140 source px square, top-aligned with ~20 px breathing room.
-  const HERO_LOGO_X = (HERO_VIEW_W - 140) / 2;  // 330
-  const HERO_LOGO_Y = 20;
-  const HERO_LOGO_SIZE = 140;
-
-  // Wordmark — drawn below the logo. font-size is in source-canvas
-  // pixels, sized so cap-height ≈ 80 px (about 20 phosphor cells with
-  // cs=4, plenty for readability). Color is a near-white phosphor —
-  // not pure #FFFFFF; a touch warm so it reads as lit phosphor rather
-  // than backlight.
-  const HERO_WORDMARK_BASELINE_Y = 270;
-  const HERO_WORDMARK_FONT_PX = 110;
-  const HERO_WORDMARK_FONT = '"Space Grotesk", "Hanken Grotesk", system-ui, sans-serif';
-  const HERO_WORDMARK_COLOR = '#FFF6E6';
-  const HERO_WORDMARK_LETTER_SPACING_PX = -6;  // ~-0.06em at 110 px
+  // Hero screen visual constants. Geometry (canvas size, logo size,
+  // wordmark size/position) is now read from the live DOM per resize
+  // by readLayout() inside init() — these constants are the ones that
+  // don't depend on the live layout.
 
   // CRT substrate — deeper black than --bg (--navy-0 = #000926) so the
   // screen face reads as the darkest plane on the page.
   const HERO_SUBSTRATE = '#04081A';
 
+  // Wordmark phosphor color — a touch warm rather than pure #FFFFFF.
+  const HERO_WORDMARK_COLOR = '#FFF6E6';
+
+  // Wordmark font stack — matches the live .wordmark's
+  // var(--font-display) (Space Grotesk).
+  const HERO_WORDMARK_FONT = '"Space Grotesk", "Hanken Grotesk", system-ui, sans-serif';
+
+  // Wordmark letter-spacing in em units — matches the live .wordmark's
+  // letter-spacing: -0.06em. Multiplied by the live font-size at paint
+  // time to get pixels.
+  const HERO_WORDMARK_LETTER_SPACING_EM = -0.06;
+
   // Wordmark glyph parts, in document order. The middle "·" is drawn
-  // separately so its margins can be tuned to match the live wordmark's
-  // 0.22em-left / 0.10em-right asymmetric kerning.
+  // separately so its margins can match the live .wordmark's CSS
+  // (.wordmark i { margin-left: 0.22em; margin-right: 0.10em; }).
   const HERO_WORDMARK_PARTS = [
     { text: 'interslice', weight: 700 },
     { text: '·',          weight: 700, marginLeftEm: 0.22, marginRightEm: 0.10 },
     { text: 'systems',    weight: 500 },
   ];
 
+  // Halo bleed margin around the live brand box, in display px. The
+  // canvas extends this many CSS pixels beyond .brand on each side so
+  // the phosphor halo isn't truncated at the brand's edge.
+  const HERO_HALO_MARGIN_PX = 16;
+
   async function init() {
     const canvas = document.querySelector('canvas.hero-screen');
-    if (!canvas || !window.Trinitron) return;
+    const brand  = document.querySelector('.brand');
+    const mark   = document.querySelector('.mark');
+    const wordmark = document.querySelector('.wordmark');
+    if (!canvas || !brand || !mark || !wordmark || !window.Trinitron) return;
 
     let armsImg, hubImg, aquaImg;
     try {
@@ -1132,152 +1137,196 @@
       return; // Fall back to SVG implementation
     }
 
-    // Reusable offscreen canvas for the logo composite. The logo's aqua
-    // gloss is composited onto the lit phosphor via source-atop, which
-    // only works when the surrounding canvas is transparent — so the
-    // logo is rendered into this transparent temp first, then drawn
-    // onto the main source canvas (which has an opaque substrate).
+    // Wait for Space Grotesk to be loaded — measureText returns metrics
+    // for whatever font ctx.font resolves to, so a fallback like
+    // system-ui would produce wrong centering. document.fonts.load
+    // primes the font cache at one specific size; any other size we
+    // use after this resolves the same font face.
+    if (document.fonts && document.fonts.load) {
+      try {
+        await document.fonts.load('700 124px "Space Grotesk"');
+      } catch (_) { /* fall through; we'll use whatever's available */ }
+    }
+
+    // Position the canvas so the halo can extend beyond the .brand
+    // bounding box without being clipped at the screen edge.
+    canvas.style.top    = `${-HERO_HALO_MARGIN_PX}px`;
+    canvas.style.left   = `${-HERO_HALO_MARGIN_PX}px`;
+    canvas.style.width  = `calc(100% + ${2 * HERO_HALO_MARGIN_PX}px)`;
+    canvas.style.height = `calc(100% + ${2 * HERO_HALO_MARGIN_PX}px)`;
+
+    // Reusable offscreen canvas for the logo composite (resized as the
+    // live .mark resizes).
     const logoCanvas = document.createElement('canvas');
-    logoCanvas.width = HERO_LOGO_SIZE;
-    logoCanvas.height = HERO_LOGO_SIZE;
     const logoCtx = logoCanvas.getContext('2d');
 
+    let layout = null;
+    let trinitron = null;
+
+    // Read live geometry from the DOM. Returns null if any element has
+    // zero width/height (e.g. display:none during light-mode).
+    function readLayout() {
+      const brandRect    = brand.getBoundingClientRect();
+      const markRect     = mark.getBoundingClientRect();
+      const wordmarkRect = wordmark.getBoundingClientRect();
+      if (brandRect.width === 0 || brandRect.height === 0) return null;
+
+      const wmStyle = window.getComputedStyle(wordmark);
+      const fontPx = parseFloat(wmStyle.fontSize);
+      const lineHeight = parseFloat(wmStyle.lineHeight);
+      // CSS line-height < 1 puts the em-box top above the line-box top
+      // (the line box is shorter than the em). textBaseline 'top' in
+      // canvas anchors to the em-box top; bounding rect anchors to the
+      // line-box top. Offset by half the difference so the canvas text
+      // sits where the live text sits.
+      const emToLineBoxOffset = (fontPx - lineHeight) / 2;
+
+      // Width/height include the halo margin: the canvas is HALO_MARGIN
+      // bigger than .brand on each side. All content x/y inside the
+      // source canvas is offset by HALO_MARGIN.
+      const M = HERO_HALO_MARGIN_PX;
+      return {
+        width:  Math.round(brandRect.width  + 2 * M),
+        height: Math.round(brandRect.height + 2 * M),
+        logoX:    Math.round(markRect.left - brandRect.left + M),
+        logoY:    Math.round(markRect.top  - brandRect.top  + M),
+        logoSize: Math.round(markRect.width),
+        wordmarkX:    Math.round(wordmarkRect.left - brandRect.left + M),
+        wordmarkTopY: Math.round(wordmarkRect.top  - brandRect.top  + M - emToLineBoxOffset),
+        wordmarkW:    Math.round(wordmarkRect.width),
+        wordmarkH:    Math.round(wordmarkRect.height),
+        fontPx,
+      };
+    }
+
+    // Signal callback closure — reads `layout` (outer scope) plus the
+    // module-scope phosphor sources (armsImg/hubImg/aquaImg) and
+    // logoCanvas. Recreated implicitly each frame; layout is mutated
+    // by createTrinitron(), not by the callback.
     function signal(ctx, timeMs) {
+      if (!layout) return;
+
       // 1. Substrate — opaque CRT face under everything.
       ctx.fillStyle = HERO_SUBSTRATE;
-      ctx.fillRect(0, 0, HERO_VIEW_W, HERO_VIEW_H);
+      ctx.fillRect(0, 0, layout.width, layout.height);
 
       // 2. Logo — composited in the transparent offscreen canvas
       //    (arms + rotating hub + aqua gloss via source-atop), then
-      //    blitted onto the main source canvas at the logo position.
-      logoCtx.clearRect(0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+      //    blitted onto the main source canvas at the live logo position.
+      logoCtx.clearRect(0, 0, layout.logoSize, layout.logoSize);
 
-      // arms (static)
-      logoCtx.drawImage(armsImg, 0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+      logoCtx.drawImage(armsImg, 0, 0, layout.logoSize, layout.logoSize);
 
-      // hub (rotating around its center)
       logoCtx.save();
-      const hubCx = HERO_LOGO_SIZE / 2;
-      const hubCy = HERO_LOGO_SIZE / 2;
-      logoCtx.translate(hubCx, hubCy);
+      const hubC = layout.logoSize / 2;
+      logoCtx.translate(hubC, hubC);
       logoCtx.rotate(hubAngleDeg(timeMs) * Math.PI / 180);
-      logoCtx.translate(-hubCx, -hubCy);
-      logoCtx.drawImage(hubImg, 0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+      logoCtx.translate(-hubC, -hubC);
+      logoCtx.drawImage(hubImg, 0, 0, layout.logoSize, layout.logoSize);
       logoCtx.restore();
 
-      // aqua gloss — source-atop confines it to wherever the lit
-      // phosphor has alpha (the logoCanvas surroundings are transparent).
       logoCtx.save();
       logoCtx.globalCompositeOperation = 'source-atop';
-      logoCtx.drawImage(aquaImg, 0, 0, HERO_LOGO_SIZE, HERO_LOGO_SIZE);
+      logoCtx.drawImage(aquaImg, 0, 0, layout.logoSize, layout.logoSize);
       logoCtx.restore();
 
-      // blit the composed logo onto the main source canvas
-      ctx.drawImage(logoCanvas, HERO_LOGO_X, HERO_LOGO_Y);
+      ctx.drawImage(logoCanvas, layout.logoX, layout.logoY);
 
-      // 3. Wordmark — three fillText calls for the weight split, with
-      //    letter-spacing applied via ctx.letterSpacing (widely supported
-      //    as of 2024+; on older browsers this property is silently
-      //    ignored, which is a tolerable degradation — the wordmark just
-      //    renders at default tracking).
+      // 3. Wordmark — three fillText calls using the live font-size,
+      //    placed so the text registers against the (invisible) live
+      //    wordmark. textBaseline 'top' aligns to the em-box top;
+      //    wordmarkTopY already includes the em-vs-line-box offset.
       ctx.fillStyle = HERO_WORDMARK_COLOR;
-      ctx.textBaseline = 'alphabetic';
+      ctx.textBaseline = 'top';
+      const fontPx = layout.fontPx;
       if ('letterSpacing' in ctx) {
-        ctx.letterSpacing = HERO_WORDMARK_LETTER_SPACING_PX + 'px';
+        ctx.letterSpacing = (fontPx * HERO_WORDMARK_LETTER_SPACING_EM) + 'px';
       }
 
-      // Measure each part with its own weight, accumulate x as we go.
-      // Start by computing the full width so we can center the wordmark
-      // horizontally inside the screen.
       function partFont(part) {
-        return `${part.weight} ${HERO_WORDMARK_FONT_PX}px ${HERO_WORDMARK_FONT}`;
+        return `${part.weight} ${fontPx}px ${HERO_WORDMARK_FONT}`;
       }
       function partWidth(part) {
         ctx.font = partFont(part);
         return ctx.measureText(part.text).width;
       }
-      const emPx = HERO_WORDMARK_FONT_PX;
+
+      // Measure once for centering. Use the live wordmark's actual
+      // left edge (wordmarkX) — wordmark is already centered within
+      // .brand by the flex container, so wordmarkX is the live left.
       let totalW = 0;
       for (const part of HERO_WORDMARK_PARTS) {
         totalW += partWidth(part);
-        if (part.marginLeftEm)  totalW += part.marginLeftEm  * emPx;
-        if (part.marginRightEm) totalW += part.marginRightEm * emPx;
+        if (part.marginLeftEm)  totalW += part.marginLeftEm  * fontPx;
+        if (part.marginRightEm) totalW += part.marginRightEm * fontPx;
       }
-
-      let x = (HERO_VIEW_W - totalW) / 2;
+      // Center text horizontally based on the brand width (wordmarkX
+      // accounts for live H1's leading whitespace, which can differ
+      // from canvas-measured width). Centering on .brand width gives
+      // a stable position even if widths drift slightly.
+      let x = (layout.width - totalW) / 2;
       for (const part of HERO_WORDMARK_PARTS) {
-        if (part.marginLeftEm) x += part.marginLeftEm * emPx;
+        if (part.marginLeftEm) x += part.marginLeftEm * fontPx;
         ctx.font = partFont(part);
-        ctx.fillText(part.text, x, HERO_WORDMARK_BASELINE_Y);
+        ctx.fillText(part.text, x, layout.wordmarkTopY);
         x += partWidth(part);
-        if (part.marginRightEm) x += part.marginRightEm * emPx;
+        if (part.marginRightEm) x += part.marginRightEm * fontPx;
       }
     }
 
-    let trinitron;
-    try {
-      trinitron = new window.Trinitron(canvas, {
-        renderer: 'auto',
-        signal,
-        // Source canvas covers the full hero screen — substrate + logo + wordmark.
-        viewSize: [HERO_VIEW_W, HERO_VIEW_H],
-        // 2× source → canvas backing, the same stripeUpscale pattern used by
-        // both prior consumers. Canvas backing is 1600×640 at 1× DPR; the
-        // renderer multiplies by DPR internally.
-        canvasSize: [HERO_VIEW_W * 2, HERO_VIEW_H * 2],
-        // cs=4 gives proper [R, G, B, gap] aperture triads at this scale.
-        cellSize: 4,
-        stripeUpscale: 2,
-        // Opaque substrate — the canvas rectangle IS the screen face.
-        // (This is the renderer's default; we list it explicitly because
-        // the previous logo-only setup overrode it to false.)
-        opaqueBackground: true,
-        // Phosphor coupling tuned for mixed content — text wants every
-        // column lit at moderate coupling so glyph edges read as phosphor
-        // dots rather than razor-thin column slivers.
-        phosphorCoupling: 0.35,
-        // Persistence — high enough to smear the rotating hub into a soft
-        // trail, low enough that the wordmark stays crisp on a stationary
-        // signal (the wordmark doesn't move; persistence has nothing to
-        // smear there).
-        persistence: 0.82,
-        // Convergence — matches both prior consumers.
-        convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
-        // Beam spread in source pixels — slight softening of glyph edges
-        // and arm caps. Below 0.7 px Chromium's filter blur no-ops.
-        beamSpreadPx: 0.7,
-        // Per-cell hotspot and shimmer — produce the dot-grid texture that
-        // reads as phosphor through glass. Slightly higher hotspot than the
-        // IS-2200 used because the wordmark text needs the per-cell bright
-        // center to read as crisp lit glyphs.
-        hotspot: 0.24,
-        cellShimmer: 0.04,
-        rowShimmer: 0.012,
-        // Halo — contained inside the canvas rectangle (the rectangle IS
-        // the screen edge). Lower intensity than the logo-only setup
-        // (which used 1.625) so the substrate stays visible.
-        bleedRadius: 18,
-        bleedIntensity: 1.2,
-        // Post-stripe blur in canvas-pixel units. Light touch.
-        phosphorBlurPx: 0.6,
-        // Aperture-grille gap mask — same fraction the logo used.
-        gapMaskAlpha: 0.3,
-        gapMaskPeriod: 2,
-        // The hero screen is the only consumer left, so it claims the
-        // ?debug=1 effect overlay. No bypass canvas (no power-button
-        // toggle UI anymore — easter egg dropped per the spec).
-        bypassCanvas: false,
-        debugOverlay: true,
-        // Damper wires off for now (the IS-2200 had them off too). Could
-        // be a future tuning option.
-        damperWires: [],
-      });
-      window.__trinitronLogo = trinitron;
-    } catch (err) {
-      return; // Silent fallback to SVG
+    function createTrinitron(newLayout) {
+      if (!newLayout) return;
+      const wasRunning = trinitron && trinitron._wasStartedByUser;
+      if (trinitron) {
+        try { trinitron.destroy(); } catch (_) { /* defensive */ }
+        trinitron = null;
+      }
+      layout = newLayout;
+
+      // Resize the offscreen logo canvas to match the live mark size.
+      logoCanvas.width  = layout.logoSize;
+      logoCanvas.height = layout.logoSize;
+
+      try {
+        trinitron = new window.Trinitron(canvas, {
+          renderer: 'auto',
+          signal,
+          // Source canvas dimensions match the .brand box + halo margin.
+          // 1 source px = 1 display px, so source content maps 1:1 to
+          // display coordinates. The renderer multiplies by DPR
+          // internally for the canvas backing buffer.
+          viewSize:   [layout.width, layout.height],
+          // 2× source → stripe-canvas pixels gives the aperture-grille
+          // texture room to breathe.
+          canvasSize: [layout.width * 2, layout.height * 2],
+          cellSize: 4,
+          stripeUpscale: 2,
+          opaqueBackground: true,
+          phosphorCoupling: 0.35,
+          persistence: 0.82,
+          convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+          beamSpreadPx: 0.7,
+          hotspot: 0.24,
+          cellShimmer: 0.04,
+          rowShimmer: 0.012,
+          bleedRadius: 18,
+          bleedIntensity: 1.2,
+          phosphorBlurPx: 0.6,
+          gapMaskAlpha: 0.3,
+          gapMaskPeriod: 2,
+          bypassCanvas: false,
+          debugOverlay: true,
+          damperWires: [],
+        });
+        window.__trinitronLogo = trinitron;
+        if (wasRunning && isDark()) trinitron.start();
+      } catch (err) {
+        // Silent fallback — SVG dark-mode logo remains as the static fallback.
+      }
     }
 
     function syncWithTheme() {
+      if (!trinitron) return;
       if (isDark()) {
         trinitron.start();
         document.documentElement.classList.add('trinitron-active');
@@ -1287,6 +1336,8 @@
       }
     }
 
+    // Initial creation
+    createTrinitron(readLayout());
     syncWithTheme();
 
     // Re-sync when OS preference changes
@@ -1295,12 +1346,37 @@
     if (colorMq.addEventListener) colorMq.addEventListener('change', colorHandler);
     else if (colorMq.addListener) colorMq.addListener(colorHandler);
 
-    // Re-sync when data-theme changes (manual toggle via DevTools or future UI)
+    // Re-sync when data-theme changes
     const themeObserver = new MutationObserver(syncWithTheme);
     themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme'],
     });
+
+    // Re-create the renderer when the .brand layout changes (viewport
+    // resize, font load, etc.). Debounced — recreating the Trinitron
+    // means tearing down and rebuilding the WebGL pipeline, which is
+    // ~20 ms; mid-drag we'd hammer it. 200 ms gives a smooth feel.
+    let resizeTimer = null;
+    const resizeObs = new ResizeObserver(() => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const newLayout = readLayout();
+        if (!newLayout) return;
+        // Skip recreation if nothing meaningful changed (sub-pixel
+        // float drift can fire ResizeObserver without real layout change).
+        if (layout
+            && newLayout.width  === layout.width
+            && newLayout.height === layout.height
+            && newLayout.logoSize === layout.logoSize
+            && Math.abs(newLayout.fontPx - layout.fontPx) < 0.5) {
+          return;
+        }
+        createTrinitron(newLayout);
+        syncWithTheme();
+      }, 200);
+    });
+    resizeObs.observe(brand);
   }
 
   if (document.readyState === 'loading') {
