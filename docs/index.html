@@ -1236,8 +1236,9 @@
   // screen edge follows a dot just outside on the same lattice.
   const HERO_DOT_TILE_CENTER = HERO_DOT_PERIOD / 2;
 
-  // Wordmark phosphor color — a touch warm rather than pure #FFFFFF.
-  const HERO_WORDMARK_COLOR = '#FFF6E6';
+  // Wordmark phosphor color — pure #FFFFFF so all three phosphor stripes
+  // light at max under the wordmark, matching the pure-RGB lobe scheme.
+  const HERO_WORDMARK_COLOR = '#FFFFFF';
 
   // Wordmark font stack — matches the live .wordmark's
   // var(--font-display) (Space Grotesk).
