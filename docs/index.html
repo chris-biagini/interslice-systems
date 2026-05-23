@@ -749,21 +749,21 @@
                the same CSS animation, so they rotate in lockstep. ===== -->
           <g id="phosphor-arms">
             <g fill="none" stroke-width="24" stroke-linecap="round">
-              <line x1="100" y1="100" x2="100"    y2="28"  stroke="#F32C09"/>
-              <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#019C49"/>
-              <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0001A0"/>
+              <line x1="100" y1="100" x2="100"    y2="28"  stroke="#FF0000"/>
+              <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#00FF00"/>
+              <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0000FF"/>
             </g>
-            <circle cx="100"    cy="28"  r="24" fill="#F32C09"/>
-            <circle cx="37.65"  cy="136" r="24" fill="#019C49"/>
-            <circle cx="162.35" cy="136" r="24" fill="#0001A0"/>
+            <circle cx="100"    cy="28"  r="24" fill="#FF0000"/>
+            <circle cx="37.65"  cy="136" r="24" fill="#00FF00"/>
+            <circle cx="162.35" cy="136" r="24" fill="#0000FF"/>
           </g>
           <g id="phosphor-hub">
-            <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#E5047F"/>
-            <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#F32C09"/>
-            <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FED105"/>
-            <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#019C49"/>
-            <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
-            <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>
+            <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#FF00FF"/>
+            <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#FF0000"/>
+            <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FFFF00"/>
+            <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#00FF00"/>
+            <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00FFFF"/>
+            <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0000FF"/>
           </g>
 
           <!-- ===== TRINITRON CRT TREATMENT =====
@@ -788,12 +788,13 @@
           -->
 
           <!-- RGB extract filters: each zeros out two color channels
-               and keeps one, multiplied by 2.5 so medium-intensity
-               channels (e.g. the B=127 in our magenta, the G=156 in
-               our green) reach full saturation; already-maxed channels
-               just clamp at 1.0. The stripes sit at 0.65 opacity over
-               the solid base, so we want them as punchy as possible
-               to make the subpixel structure visible. -->
+               and keeps one, multiplied by 2.5×. With pure-RGB sources
+               (lobes #FF0000/#00FF00/#0000FF, overlaps #FFFF00/#FF00FF/
+               #00FFFF) the boost is a no-op on solid fills — every
+               channel is 0 or 255, already-maxed clamps — but it
+               still punches up anti-aliased edge pixels. The stripes
+               sit at 0.65 opacity over the solid base, so edge
+               crispness helps the subpixel structure read. -->
           <filter id="extract-r" filterUnits="userSpaceOnUse"
                   x="0" y="0" width="200" height="200">
             <feColorMatrix in="SourceGraphic" type="matrix" values="
@@ -1121,25 +1122,28 @@
     return Math.atan2(parts[1], parts[0]);
   }
 
-  // Markup for the two phosphor source groups. Kept inline so the script is
-  // self-contained — and the design system explicitly uses these exact colors.
+  // Markup for the two phosphor source groups. Kept inline so the script
+  // is self-contained. Colors are pure RGB (lobes #FF0000/#00FF00/#0000FF)
+  // and pure additive secondaries (overlaps #FFFF00/#FF00FF/#00FFFF) —
+  // intentionally distinct from tokens.css's CMYK --ink-* palette so the
+  // Trinitron stripe decomposition reads as authentically additive.
   const ARMS_MARKUP = `
     <g fill="none" stroke-width="24" stroke-linecap="round">
-      <line x1="100" y1="100" x2="100"    y2="28"  stroke="#F32C09"/>
-      <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#019C49"/>
-      <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0001A0"/>
+      <line x1="100" y1="100" x2="100"    y2="28"  stroke="#FF0000"/>
+      <line x1="100" y1="100" x2="37.65"  y2="136" stroke="#00FF00"/>
+      <line x1="100" y1="100" x2="162.35" y2="136" stroke="#0000FF"/>
     </g>
-    <circle cx="100"    cy="28"  r="24" fill="#F32C09"/>
-    <circle cx="37.65"  cy="136" r="24" fill="#019C49"/>
-    <circle cx="162.35" cy="136" r="24" fill="#0001A0"/>`;
+    <circle cx="100"    cy="28"  r="24" fill="#FF0000"/>
+    <circle cx="37.65"  cy="136" r="24" fill="#00FF00"/>
+    <circle cx="162.35" cy="136" r="24" fill="#0000FF"/>`;
 
   const HUB_MARKUP = `
-    <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#E5047F"/>
-    <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#F32C09"/>
-    <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FED105"/>
-    <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#019C49"/>
-    <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00A8F3"/>
-    <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0001A0"/>`;
+    <path d="M 100 100 Q 114.736 88.487 134 100 A 34 34 0 0 0 117 70.555 Q 97.397 81.482 100 100 Z" fill="#FF00FF"/>
+    <path d="M 100 100 Q 97.397 81.482 117 70.555 A 34 34 0 0 0 83 70.555 Q 82.662 92.995 100 100 Z" fill="#FF0000"/>
+    <path d="M 100 100 Q 82.662 92.995 83 70.555 A 34 34 0 0 0 66 100 Q 85.264 111.513 100 100 Z" fill="#FFFF00"/>
+    <path d="M 100 100 Q 85.264 111.513 66 100 A 34 34 0 0 0 83 129.445 Q 102.603 118.518 100 100 Z" fill="#00FF00"/>
+    <path d="M 100 100 Q 102.603 118.518 83 129.445 A 34 34 0 0 0 117 129.445 Q 117.338 107.005 100 100 Z" fill="#00FFFF"/>
+    <path d="M 100 100 Q 117.338 107.005 117 129.445 A 34 34 0 0 0 134 100 Q 114.736 88.487 100 100 Z" fill="#0000FF"/>`;
 
   // Aqua-style gloss for the displayed image — three layered effects per
   // lobe (three pinwheel-tip balls + central hub disc), composited into
