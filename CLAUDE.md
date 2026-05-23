@@ -16,8 +16,9 @@ The maintainer (Chris) frames this as a long-term "tender of documents" repo. To
 
 ## File layout
 
-- `docs/index.html` — the entire page. All page-specific CSS is **inlined** in one `<style>` block. One `<script src="trinitron.js">` tag and one inline `<script>` block at the bottom — the only JS on the site (see "CSS-first, with one documented JS exception" below).
+- `docs/index.html` — the entire page. All page-specific CSS is **inlined** in one `<style>` block. Two `<script src="…">` tags (`trinitron.js`, `sprinkles.js`) and one inline `<script>` block at the bottom — the only JS on the site (see "CSS-first, with documented JS exceptions" below).
 - `docs/trinitron.js` — phosphor renderer (CPU canvas path + WebGL2 GPU path). Load-bearing for the hero screen (see "Trinitron renderer" below).
+- `docs/sprinkles.js` — runtime sprinkle distribution (Mitchell's best-candidate, seeded). The second documented JS exception (see "CSS-first, with documented JS exceptions" below).
 - `docs/tokens.css` — the canonical design-token sheet (colors, type, semantic vars). Imported by `index.html`. Anything reusable across future documents belongs here.
 - `docs/logo_CMYK*.svg`, `docs/logo_RGBW*.svg` — the two-media logo (see "Two media" below).
 - `docs/CNAME` — Pages custom-domain config.
@@ -49,11 +50,13 @@ Almost every dark-mode rule in `index.html` therefore appears twice — once for
 
 - `--stamp-ink` flips with theme (`--ink-0` in light, `--paper-0` in dark) so Memphis offset shadows and sticker outlines read against either background. New offset shadows must use `var(--stamp-ink)`, not a hardcoded near-black like `#0B0E1F`.
 
-### CSS-first, with one documented JS exception
+### CSS-first, with documented JS exceptions
 
 Effects that *look* like JS — CRT scanlines, Memphis sprinkles, theme-aware content swaps, day/night taglines, sprinkle flicker — are all CSS, using `:has()`, `prefers-color-scheme`, `data-*` attribute selectors, custom-property switches, pseudo-elements with `content:`, sibling combinators, etc. Before reaching for JS for any new behavior, exhaust the CSS toolbox first.
 
 The one place JS *is* load-bearing is the Trinitron phosphor renderer (see next section). It's a physical-model simulation of an aperture-grille CRT — per-channel RGB stripe decomposition, per-pixel persistence, convergence fringe, halo bleed — that CSS genuinely cannot do. Don't take this as license to bolt on more JS; the bar for new scripts is "CSS can't do this either, and here's why."
+
+The second exception is `docs/sprinkles.js` — a small (~120 line) IIFE that runs Mitchell's best-candidate algorithm on page load and on debounced resize to distribute the Memphis sprinkles into the page's empty area, avoiding the legible content (motto, logo + wordmark, CTA, footer). Like the Trinitron, this is something CSS genuinely can't do: CSS has no way to read sibling elements' computed bounding rects, and the wordmark's responsive width (`clamp()`-driven font sizing) is the whole reason hand-authored sprinkle positions were clumping into it. The script writes inline `style.top` / `style.left` on each `.sprinkle` and clears `bottom` / `right`. Everything else about the sprinkles (size, rotation, color via `--glow`, flicker timing) stays authored in CSS. Seed is fixed; distribution is deterministic per viewport. Design: `specs/2026-05-22-sprinkle-distribution-design.md`. Plan: `plans/2026-05-22-sprinkle-distribution-implementation.md`.
 
 ### Trinitron renderer
 
