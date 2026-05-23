@@ -59,6 +59,7 @@ uniform float uCellShimmerAmp;
 uniform float uRowShimmerAmp;
 uniform uint uShimmerSeed;
 uniform float uBeamSpreadPx;
+uniform float uBeamSpreadVerticalPx;
 uniform float uStripeEnabled;
 uniform float uCouplingEnabled;
 uniform float uPersistenceEnabled;
@@ -77,18 +78,26 @@ float lcg(uint seed) {
   return float(x) * (1.0 / 4294967296.0);
 }
 
-// Beam spread: isotropic 2D Gaussian via a 9-tap "plus" kernel
+// Beam spread: anisotropic 2D Gaussian via a 9-tap "plus" kernel
 // (5 taps along Y, 4 additional taps along X with the center shared).
-// CPU path applies cctx.filter = blur(spreadPx) which is an
-// isotropic 2D blur — earlier Y-only approximation here was wrong.
-vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPx) {
-  if (spreadPx < 0.7) return texture(tex, uv);  // sub-pixel-blur no-ops
-  float dx = spreadPx / uViewSize.x;
-  float dy = spreadPx / uViewSize.y;
-  // 1D Gaussian weights for sigma ≈ spreadPx (normalized to sum 1):
-  // center 0.252, ±1σ 0.226 each, ±2σ 0.148 each → sum ≈ 1.0.
-  // Applied separably along each axis with the center shared
-  // gives a 9-tap "plus" kernel that approximates the 2D blur.
+// Horizontal and vertical sigmas can differ — a real Trinitron's
+// horizontal "resolution" is quantized by the aperture grille pitch
+// (so horizontal blur should stay narrow to keep stripes crisp),
+// while the vertical axis is bounded only by the beam's gaussian
+// PSF and should typically spread further. CPU path's
+// cctx.filter = blur(spreadPx) is still isotropic; the anisotropy
+// is a GPU-path-only refinement of the otherwise-shared model.
+vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPxH, float spreadPxV) {
+  // Sub-pixel-blur no-ops on both axes → skip.
+  if (spreadPxH < 0.7 && spreadPxV < 0.7) return texture(tex, uv);
+  float dx = spreadPxH / uViewSize.x;
+  float dy = spreadPxV / uViewSize.y;
+  // 1D Gaussian weights tuned for sigma ≈ tap spacing (normalized to
+  // sum 1): center 0.252, ±1σ 0.226 each, ±2σ 0.148 each → sum ≈ 1.0.
+  // Applied separably along each axis with the center shared gives a
+  // 9-tap "plus" kernel that approximates the 2D blur. Widening dy
+  // beyond dx scales the V kernel without recomputing weights — the
+  // tap shape stays roughly gaussian for the sub-2px sigmas we use.
   vec4 sum = texture(tex, uv)                                * 0.252;
   sum     += texture(tex, uv + vec2(0.0, -1.0 * dy))          * 0.226;
   sum     += texture(tex, uv + vec2(0.0,  1.0 * dy))          * 0.226;
@@ -107,11 +116,15 @@ void main() {
   vec2 dG = (uConvergenceG / uViewSize) * uConvergenceEnabled;
   vec2 dB = (uConvergenceB / uViewSize) * uConvergenceEnabled;
 
-  float beamSpread = uBeamSpreadPx * uBeamSpreadEnabled;
-  float sR = sampleBeamSpread(uSignal, vUv + dR, beamSpread).r;
-  float sG = sampleBeamSpread(uSignal, vUv + dG, beamSpread).g;
-  float sB = sampleBeamSpread(uSignal, vUv + dB, beamSpread).b;
-  float sA = sampleBeamSpread(uSignal, vUv, beamSpread).a;
+  float beamSpreadH = uBeamSpreadPx * uBeamSpreadEnabled;
+  // Vertical sigma is at least the horizontal sigma — never let V be
+  // sharper than H. When uBeamSpreadVerticalPx is 0 (default) this
+  // collapses to the isotropic case.
+  float beamSpreadV = max(beamSpreadH, uBeamSpreadVerticalPx * uBeamSpreadEnabled);
+  float sR = sampleBeamSpread(uSignal, vUv + dR, beamSpreadH, beamSpreadV).r;
+  float sG = sampleBeamSpread(uSignal, vUv + dG, beamSpreadH, beamSpreadV).g;
+  float sB = sampleBeamSpread(uSignal, vUv + dB, beamSpreadH, beamSpreadV).b;
+  float sA = sampleBeamSpread(uSignal, vUv, beamSpreadH, beamSpreadV).a;
   vec4 live = vec4(sR, sG, sB, sA);
 
   vec4 prev = texture(uPersistencePrev, vUv);
@@ -393,14 +406,24 @@ void main() {
         // Post-stripe blur (CSS px) on the composite. Softens the
         // LCD-like sharp pixel edges into "lit phosphor through glass."
         phosphorBlurPx: 0.0,
-        // Electron-beam spread, applied as an isotropic Gaussian blur on
-        // the convergence canvases before sampling. A real Trinitron beam
+        // Electron-beam spread, applied as a Gaussian blur on the
+        // convergence canvases before sampling. A real Trinitron beam
         // has a fuzzy spot that spreads each scan line into adjacent ones;
         // without this, abrupt features (the bottom of an arm, the cap of
         // a curved edge) terminate razor-sharp mid-phosphor like an LCD.
         // Units are source pixels. Chromium's canvas filter blur no-ops
         // below ~0.7 px, so values under that have no effect.
         beamSpreadPx: 0.0,
+        // Additional vertical-only beam spread (GPU path only). When
+        // > beamSpreadPx, the kernel becomes anisotropic: horizontal
+        // sigma stays at beamSpreadPx (so aperture-grille stripes stay
+        // crisp), while vertical sigma widens to this value. Matches
+        // how a real Trinitron divides its detail budget — quantized
+        // horizontally by the grille pitch, soft-edged vertically by
+        // the beam's gaussian PSF. 0 (default) = isotropic, identical
+        // to beamSpreadPx on both axes. CPU path is unaffected (still
+        // isotropic via canvas filter blur).
+        beamSpreadVerticalPx: 0.0,
         // Barrel-distortion strength for the composite glass pass.
         // 0 = flat panel. Default 0 (CPU path doesn't use this).
         curvature: 0,
@@ -934,6 +957,7 @@ void main() {
         rowShimmerAmp:        gl.getUniformLocation(this._progPhosphor, 'uRowShimmerAmp'),
         shimmerSeed:          gl.getUniformLocation(this._progPhosphor, 'uShimmerSeed'),
         beamSpreadPx:         gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadPx'),
+        beamSpreadVerticalPx: gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadVerticalPx'),
         hotspotEnabled:       gl.getUniformLocation(this._progPhosphor, 'uHotspotEnabled'),
         cellShimmerEnabled:   gl.getUniformLocation(this._progPhosphor, 'uCellShimmerEnabled'),
         rowShimmerEnabled:    gl.getUniformLocation(this._progPhosphor, 'uRowShimmerEnabled'),
@@ -1331,7 +1355,8 @@ void main() {
       gl.uniform1f(this._uPhosphor.cellShimmerAmp,  this.opts.cellShimmer);
       gl.uniform1f(this._uPhosphor.rowShimmerAmp,   this.opts.rowShimmer);
       gl.uniform1ui(this._uPhosphor.shimmerSeed,    this.opts.shimmerSeed);
-      gl.uniform1f(this._uPhosphor.beamSpreadPx,    this.opts.beamSpreadPx);
+      gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
+      gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
       gl.uniform1f(this._uPhosphor.hotspotEnabled,     this.effects.perCellHotspot  ? 1 : 0);
       gl.uniform1f(this._uPhosphor.cellShimmerEnabled, this.effects.perCellShimmer  ? 1 : 0);
       gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer   ? 1 : 0);
