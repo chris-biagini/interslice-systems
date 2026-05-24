@@ -160,6 +160,180 @@
     :root.trinitron-active:not([data-theme="light"]) .brand::after { display: block; }
   }
 
+  /* ===================== CHANNEL BAR (cabinet bezel control) =====================
+     A plastic-overlay strip mounted on the bezel above the CRT face. The
+     real button is the underlying <button> (keyboard-accessible, focusable);
+     the visible chrome is a layered CSS stack — translucent acrylic base,
+     gloss highlight, soft inner bevel, drop shadow. Reads as something you
+     could press on a turn-of-the-90s home arcade cabinet.
+
+     Position: absolutely above .brand at top: -52px so the brand layout
+     stays put when channels are toggled. Hidden by default; revealed by
+     .trinitron-active in dark mode via the triple-activation pattern. */
+  .channel-bar {
+    position: absolute;
+    left: -8px;
+    right: -8px;
+    top: -54px;
+    z-index: 3;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    pointer-events: none; /* buttons re-enable on themselves */
+  }
+  :root.trinitron-active[data-theme="dark"] .channel-bar { display: flex; }
+  @media (prefers-color-scheme: dark) {
+    :root.trinitron-active:not([data-theme="light"]) .channel-bar { display: flex; }
+  }
+
+  /* Center plate — shows current channel number. Carries the same
+     plastic treatment as the buttons but isn't interactive. */
+  .channel-bar__tag {
+    pointer-events: none;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.28em;
+    color: rgba(220, 245, 255, 0.65);
+    text-transform: uppercase;
+    padding: 6px 14px 7px;
+    border-radius: 4px;
+    background:
+      linear-gradient(180deg,
+        rgba(255, 255, 255, 0.08) 0%,
+        rgba(255, 255, 255, 0.02) 35%,
+        rgba(0, 0, 0, 0.18) 100%),
+      rgba(0, 6, 24, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+      0 1px 0 rgba(0, 0, 0, 0.35);
+    text-shadow: 0 0 6px rgba(94, 226, 255, 0.35);
+  }
+  .channel-bar__num {
+    margin-left: 6px;
+    color: var(--crt-cyan);
+    font-weight: 700;
+    text-shadow: 0 0 8px rgba(94, 226, 255, 0.85);
+  }
+
+  /* The plastic button. The whole thing is one stacked background:
+       — Top gloss (a bright linear-gradient highlight, fading down)
+       — Acrylic translucent body (dark blue-cast smoked plastic)
+       — Inner bevel (inset white at top, inset shadow at bottom)
+       — Outer drop shadow (a low, soft offset — mounted on the bezel)
+     Text uses a faint cyan phosphor-glow to suggest electroluminescent
+     backlighting from inside the cabinet (which is exactly what would
+     light up a real arcade-cabinet plastic key). */
+  .channel-btn {
+    pointer-events: auto;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-top-color: rgba(255, 255, 255, 0.28);
+    border-bottom-color: rgba(0, 0, 0, 0.55);
+    border-radius: 6px;
+    padding: 7px 14px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(232, 248, 255, 0.92);
+    text-shadow: 0 0 6px rgba(94, 226, 255, 0.55);
+    /* layered background: gloss → acrylic base */
+    background:
+      linear-gradient(180deg,
+        rgba(255, 255, 255, 0.22) 0%,
+        rgba(255, 255, 255, 0.06) 38%,
+        rgba(255, 255, 255, 0.00) 50%,
+        rgba(0, 0, 0, 0.18) 100%),
+      linear-gradient(180deg,
+        rgba(36, 52, 86, 0.78) 0%,
+        rgba(14, 22, 48, 0.78) 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.42),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.50),
+      inset 0 0 0 1px rgba(120, 180, 220, 0.06),
+      0 2px 0 rgba(0, 0, 0, 0.55),
+      0 4px 10px -3px rgba(0, 0, 0, 0.7);
+    transition:
+      transform 90ms var(--ease-clack),
+      box-shadow 90ms var(--ease-clack),
+      filter 140ms ease-out;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .channel-btn__chevron {
+    font-size: 13px;
+    line-height: 1;
+    color: var(--crt-cyan);
+    text-shadow: 0 0 6px rgba(94, 226, 255, 0.9);
+  }
+
+  .channel-btn:hover {
+    filter: brightness(1.18);
+  }
+  .channel-btn:focus-visible {
+    outline: none;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.55),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.50),
+      0 0 0 2px rgba(94, 226, 255, 0.85),
+      0 2px 0 rgba(0, 0, 0, 0.55),
+      0 4px 12px -2px rgba(94, 226, 255, 0.45);
+  }
+  /* Press: depress into the bezel — translate, swap bevel direction, kill drop shadow */
+  .channel-btn:active {
+    transform: translateY(2px);
+    box-shadow:
+      inset 0 1px 0 rgba(0, 0, 0, 0.35),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.10),
+      inset 0 2px 5px rgba(0, 0, 0, 0.55),
+      0 0 0 rgba(0, 0, 0, 0);
+    filter: brightness(0.95);
+  }
+
+  /* ===================== CTA INTERACTIVITY GATING =====================
+     On non-Channel-1 in dark mode, the canvas stops painting the CTA.
+     The live <a> stays in the DOM (accessibility), but pointer events
+     must be killed so the user can't click an invisible target where
+     Pong is currently being shown. data-channel lives on .brand and is
+     toggled by the JS. The :not("1") selector covers "2", "3", and any
+     future channel. */
+  :root.trinitron-active[data-theme="dark"] .brand:not([data-channel="1"]) .cta,
+  :root.trinitron-active[data-theme="dark"] .brand:not([data-channel="1"]) .cta-label,
+  :root.trinitron-active[data-theme="dark"] .brand:not([data-channel="1"]) .cta-sub {
+    pointer-events: none;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root.trinitron-active:not([data-theme="light"]) .brand:not([data-channel="1"]) .cta,
+    :root.trinitron-active:not([data-theme="light"]) .brand:not([data-channel="1"]) .cta-label,
+    :root.trinitron-active:not([data-theme="light"]) .brand:not([data-channel="1"]) .cta-sub {
+      pointer-events: none;
+    }
+  }
+
+  /* Visually-hidden aria-live region — SR-only announcement of channel
+     changes. Standard SR-only pattern. */
+  .channel-live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   /* When canvas is active in a dark-mode path, hide every SVG dark-mode
      layer — the canvas bakes all of them (phosphors, bleed, scanlines,
      hotspots, glass gloss) into a single composited signal. Same
@@ -775,7 +949,31 @@
   <!-- ============ HERO: LOGO + WORDMARK + CTA ============ -->
   <section class="hero">
     <div class="stack">
-      <div class="brand">
+      <div class="brand" data-channel="1">
+      <!-- ============ CHANNEL CHANGER ============
+           Plastic-overlay tap targets mounted on the cabinet bezel
+           above the CRT. Dark-mode only — channels only exist when
+           the Trinitron is painting. CSS gates visibility on
+           .trinitron-active (same triple-activation pattern as the
+           rest of the dark-mode UI).
+
+           Live <button>s host the click/keyboard targets; the visible
+           paint is CSS. JS reads currentChannel from <html dataset>
+           and branches the signal() callback accordingly. -->
+      <div class="channel-bar" aria-label="Channel selector">
+        <button type="button" class="channel-btn channel-btn--prev" aria-label="Previous channel">
+          <span class="channel-btn__chevron" aria-hidden="true">◂</span>
+          <span class="channel-btn__label">PREV</span>
+        </button>
+        <span class="channel-bar__tag" aria-hidden="true">CH<span class="channel-bar__num">1</span></span>
+        <button type="button" class="channel-btn channel-btn--next" aria-label="Next channel">
+          <span class="channel-btn__label">NEXT</span>
+          <span class="channel-btn__chevron" aria-hidden="true">▸</span>
+        </button>
+      </div>
+      <!-- aria-live announcer for channel changes — visually hidden,
+           updated from JS so SR users hear "Channel 2, Demo Reel". -->
+      <div class="channel-live" role="status" aria-live="polite" aria-atomic="true"></div>
       <canvas class="hero-screen" aria-hidden="true"></canvas>
       <svg class="mark" viewBox="0 0 200 200" width="168" height="168" role="img" aria-label="Interslice mark">
         <defs>
@@ -1427,6 +1625,31 @@
   const HERO_CTA_PRESS_TX_PX    = 5;   // .cta:active { transform: translate(5px, 5px) }
   const HERO_CTA_BORDER_PX      = 3;   // matches --bw-bold
 
+  // ===== CHANNELS =====
+  // The CRT is a multi-channel set. CH1 is the regular programming
+  // (logo + wordmark + CTA). CH2 and CH3 are bonus channels painted
+  // entirely on the signal canvas — so they go through the same
+  // phosphor/persistence/halo/gap-mask pipeline as everything else and
+  // pick up the CRT look for free.
+  //
+  // Adding a fourth channel: extend CHANNEL_LABELS, write a paintChannelN
+  // function, add a branch in signal(). The OSD plate and the button
+  // wiring already cycle modulo CHANNEL_LABELS.length.
+  const CHANNEL_LABELS = ['INTERSLICE', 'DEMO REEL', 'PONG'];
+
+  // On-screen-display notification — the OSD plate that pops up when
+  // the channel changes, like a 90s TV's volume/channel overlay. Tucked
+  // into the top-right of the screen, fades in fast and out a bit slower.
+  const CH_OSD_DURATION_MS = 2200;
+  const CH_OSD_FADE_IN_MS  = 220;
+  const CH_OSD_FADE_OUT_MS = 480;
+
+  // OSD typography. Space Grotesk gets used because it's already
+  // loaded for the wordmark, so the first OSD frame after the very
+  // first channel change isn't waiting on a font swap.
+  const CH_OSD_FONT_PX     = 13;
+  const CH_OSD_FONT_WEIGHT = '700';
+
   // ===== LASER GRID =====
   // Synthwave perspective floor. Geometry is authored in a 1200×600
   // viewBox space (horizon at y=0, near plane at y=600). The
@@ -1740,6 +1963,81 @@
     let layout = null;
     let trinitron = null;
 
+    // ===== CHANNEL STATE =====
+    // The current channel (0-indexed; user-facing labels add 1). The
+    // signal() callback branches on this each frame. Persists across
+    // theme toggles (channel choice survives going to light mode and back).
+    let currentChannel = 0;
+
+    // Per-channel runtime state. Each channel resets its state when first
+    // entered after a layout change (initialized = false on layout swap)
+    // so positions land in the new screen rect. Otherwise state persists
+    // across channel cycles — if you bounce away from CH2 and come back,
+    // the bounce counter survives.
+    const ch2State = { x: 0, y: 0, vx: 0, vy: 0, bounces: 0, lastMs: 0, initialized: false };
+    const ch3State = {
+      ballX: 0, ballY: 0, ballVx: 0, ballVy: 0,
+      leftY: 0, rightY: 0,
+      scoreL: 0, scoreR: 0,
+      lastMs: 0, initialized: false,
+    };
+
+    // OSD notification — when channel changes, set to performance.now().
+    // The signal callback paints the OSD plate with alpha computed from
+    // (timeMs - shownAt). -Infinity == "never shown" so the gate skips
+    // entirely until the user first interacts.
+    let channelOsdShownAtMs = -Infinity;
+
+    // Honor prefers-reduced-motion: keep channel content static (no
+    // bouncing, no Pong rallies). The OSD still appears since fade
+    // transitions are short and informational.
+    const reducedMotionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    function changeChannel(delta) {
+      const next = ((currentChannel + delta) % CHANNEL_LABELS.length + CHANNEL_LABELS.length) % CHANNEL_LABELS.length;
+      if (next === currentChannel) return;
+      currentChannel = next;
+      brand.dataset.channel = String(currentChannel + 1);
+      const numEl = document.querySelector('.channel-bar__num');
+      if (numEl) numEl.textContent = String(currentChannel + 1);
+      const live = document.querySelector('.channel-live');
+      if (live) live.textContent = `Channel ${currentChannel + 1}, ${CHANNEL_LABELS[currentChannel]}`;
+      channelOsdShownAtMs = performance.now();
+      // Force the per-channel scene to reset its motion state — so a
+      // fresh ball direction and a center-of-screen bouncing logo
+      // greet the user each time they arrive on the channel.
+      ch2State.initialized = false;
+      ch3State.initialized = false;
+      // CTA hover/press state can get "stuck" if the user was hovering
+      // it and then switched channels (mouseleave won't necessarily fire
+      // when pointer-events drops to none). Snap targets and current to
+      // rest so the button is at rest the next time the user returns.
+      ctaHoverTarget = 0; ctaPressTarget = 0;
+      ctaHover = 0;       ctaPress = 0;
+    }
+
+    // Button wiring. The chevron + label are <span>s for typography,
+    // so the click target is the parent <button>. Pointer events on
+    // the button were re-enabled in CSS (the parent .channel-bar is
+    // pointer-events: none so it can't shadow the underlying canvas).
+    const prevBtn = document.querySelector('.channel-btn--prev');
+    const nextBtn = document.querySelector('.channel-btn--next');
+    if (prevBtn) prevBtn.addEventListener('click', () => changeChannel(-1));
+    if (nextBtn) nextBtn.addEventListener('click', () => changeChannel(+1));
+
+    // Document-level keyboard shortcuts for channel cycling. Active
+    // only in dark mode (no CRT, no channels). Modifier keys and form
+    // inputs short-circuit so the page doesn't hijack normal page
+    // interactions (Ctrl+Right to jump words in DevTools console, etc.).
+    document.addEventListener('keydown', (e) => {
+      if (!isDark()) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.matches && t.matches('input, textarea, select') || t.isContentEditable)) return;
+      if (e.key === 'ArrowLeft')      { e.preventDefault(); changeChannel(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); changeChannel(+1); }
+    });
+
     // Read live geometry from the DOM. Returns null if any element has
     // zero width/height (e.g. display:none during light-mode).
     function readLayout() {
@@ -1902,37 +2200,17 @@
       };
     }
 
-    // Signal callback closure — reads `layout` (outer scope) plus the
-    // module-scope phosphor sources (armsImg/hubImg/aquaImg) and
-    // logoCanvas. Recreated implicitly each frame; layout is mutated
-    // by createTrinitron(), not by the callback.
-    function signal(ctx, timeMs) {
-      if (!layout) return;
+    // ===== CHANNEL PAINTERS =====
+    // Each channel is a function that paints onto the signal canvas
+    // assuming the substrate + halftone wash have already been laid down
+    // by signal(). Painters branch on currentChannel inside signal(),
+    // so adding a new channel = add a label + a painter + a branch.
 
-      // 1. Substrate — opaque CRT face under everything. Matches --bg
-      //    so the page reads continuously through the screen.
-      ctx.fillStyle = HERO_SUBSTRATE;
-      ctx.fillRect(0, 0, layout.width, layout.height);
-
-      // 1b. Halftone wash — replicates .page::before inside the screen,
-      //     phase-aligned to the page grid so dots are continuous across
-      //     the screen edge. (Page tile origin is at (0,0) in page coords,
-      //     dot center at (11,11). Canvas top-left in page coords is
-      //     (canvasPageX, canvasPageY), so the first dot in the canvas
-      //     lives at (tileCenter - canvasPageX) mod period.)
-      const period = HERO_DOT_PERIOD;
-      const tc = HERO_DOT_TILE_CENTER;
-      const startX = ((tc - layout.canvasPageX) % period + period) % period;
-      const startY = ((tc - layout.canvasPageY) % period + period) % period;
-      ctx.fillStyle = HERO_DOT_COLOR;
-      for (let y = startY; y < layout.height; y += period) {
-        for (let x = startX; x < layout.width; x += period) {
-          ctx.beginPath();
-          ctx.arc(x, y, HERO_DOT_RADIUS, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
+    // CH1: the regular programming — laser grid, sprinkles, logo,
+    // wordmark, CTA. This is the original signal() body, factored
+    // unchanged into a function. The CTA still rides the live <a>
+    // for click targeting; the paint just mirrors its hover/press.
+    function paintChannel1(ctx, timeMs) {
       // 1bb. Laser grid — re-paint the page's perspective floor inside
       //      the screen so lines pixelate through the phosphor pipeline
       //      when they cross the canvas edge (same dual-paint trick as
@@ -2141,6 +2419,361 @@
       }
     }
 
+    // CH2 — DEMO REEL. The IS mark bouncing around the screen at
+    // ~70 px/s, "will it hit the corner?" energy. The hub still spins
+    // (driven by hubAngleDeg(timeMs), shared with CH1) so the
+    // brand-mark life signs survive. Bounce count compounds in a small
+    // counter at the bottom of the screen — a low-key "uptime ticker"
+    // for the channel. Reduced-motion: hold still in the center.
+    function paintChannel2(ctx, timeMs) {
+      const W = layout.width, H = layout.height;
+      // Stage padding leaves room for the OSD plate top-right and the
+      // bounce counter bottom-center without overlap.
+      const STAGE_PAD_X = 28;
+      const STAGE_PAD_TOP = 40;
+      const STAGE_PAD_BOT = 32;
+      const stageX0 = STAGE_PAD_X;
+      const stageY0 = STAGE_PAD_TOP;
+      const stageX1 = W - STAGE_PAD_X;
+      const stageY1 = H - STAGE_PAD_BOT;
+
+      // Logo size proportional to the screen — wide screens get a
+      // proportionally larger logo so the bounce reads from a glance.
+      const logoSize = Math.max(48, Math.round(Math.min(stageX1 - stageX0, stageY1 - stageY0) * 0.34));
+
+      if (!ch2State.initialized) {
+        ch2State.x = (stageX0 + stageX1 - logoSize) / 2;
+        ch2State.y = (stageY0 + stageY1 - logoSize) / 2;
+        // Pick an off-axis launch direction so the path doesn't
+        // immediately fall into a boring straight cycle. Seed from
+        // performance.now() so repeat visits feel different.
+        const ang = (performance.now() * 0.0017) % (Math.PI * 2);
+        const speed = 72;
+        // Bias away from cardinal directions for a more interesting path.
+        ch2State.vx = Math.cos(ang + 0.6) * speed;
+        ch2State.vy = Math.sin(ang + 0.6) * speed * 0.78;
+        if (Math.abs(ch2State.vx) < 20) ch2State.vx = ch2State.vx >= 0 ? 30 : -30;
+        if (Math.abs(ch2State.vy) < 20) ch2State.vy = ch2State.vy >= 0 ? 25 : -25;
+        ch2State.lastMs = timeMs;
+        ch2State.initialized = true;
+      }
+
+      if (!reducedMotionMq.matches) {
+        // Cap dt so a tab being backgrounded then refocused doesn't
+        // teleport the logo through three walls in one frame.
+        const dt = Math.min(0.05, Math.max(0, (timeMs - ch2State.lastMs) / 1000));
+        ch2State.lastMs = timeMs;
+        ch2State.x += ch2State.vx * dt;
+        ch2State.y += ch2State.vy * dt;
+        if (ch2State.x <= stageX0) {
+          ch2State.x = stageX0;
+          ch2State.vx = Math.abs(ch2State.vx);
+          ch2State.bounces++;
+        }
+        if (ch2State.x + logoSize >= stageX1) {
+          ch2State.x = stageX1 - logoSize;
+          ch2State.vx = -Math.abs(ch2State.vx);
+          ch2State.bounces++;
+        }
+        if (ch2State.y <= stageY0) {
+          ch2State.y = stageY0;
+          ch2State.vy = Math.abs(ch2State.vy);
+          ch2State.bounces++;
+        }
+        if (ch2State.y + logoSize >= stageY1) {
+          ch2State.y = stageY1 - logoSize;
+          ch2State.vy = -Math.abs(ch2State.vy);
+          ch2State.bounces++;
+        }
+      }
+
+      // Composite into logoCanvas the same way CH1 does so the rotating
+      // hub gets the same arms+hub+aqua-gloss treatment. logoCanvas was
+      // sized to layout.logoSize in createTrinitron(); we draw at logoSize
+      // (CH2-local) by passing destination dimensions to drawImage so the
+      // offscreen canvas doesn't need a resize per frame.
+      logoCtx.clearRect(0, 0, layout.logoSize, layout.logoSize);
+      logoCtx.drawImage(armsImg, 0, 0, layout.logoSize, layout.logoSize);
+      logoCtx.save();
+      const hubC = layout.logoSize / 2;
+      logoCtx.translate(hubC, hubC);
+      logoCtx.rotate(hubAngleDeg(timeMs) * Math.PI / 180);
+      logoCtx.translate(-hubC, -hubC);
+      logoCtx.drawImage(hubImg, 0, 0, layout.logoSize, layout.logoSize);
+      logoCtx.restore();
+      logoCtx.save();
+      logoCtx.globalCompositeOperation = 'source-atop';
+      logoCtx.drawImage(aquaImg, 0, 0, layout.logoSize, layout.logoSize);
+      logoCtx.restore();
+      ctx.drawImage(logoCanvas, ch2State.x, ch2State.y, logoSize, logoSize);
+
+      // Bounce counter — phosphor-mono ticker at bottom-center. Pads to
+      // 4 digits so the layout is stable up to 9999 bounces. The mono
+      // font is already preloaded for the CTA captions.
+      ctx.fillStyle = '#9BC8E0';
+      ctx.font = '700 11px ' + HERO_CTA_MONO_FONT;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '2.5px';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('BOUNCES ' + String(ch2State.bounces).padStart(4, '0'), W / 2, H - 16);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      ctx.textAlign = 'start';
+    }
+
+    // CH3 — PONG. Autoplay match between two equally-skilled CPU
+    // paddles. Paddles chase the ball y with a fixed pursuit speed
+    // (so a fast vertical ball can outrun them — meaning the score
+    // actually advances). Ball speed scales modestly on each paddle
+    // hit; we cap it so the rally doesn't escalate into a blur.
+    // Reduced-motion: static frozen frame.
+    function paintChannel3(ctx, timeMs) {
+      const W = layout.width, H = layout.height;
+      const COURT_PAD_X = 20;
+      const COURT_PAD_TOP = 42;  // room for score
+      const COURT_PAD_BOT = 18;
+      const courtX0 = COURT_PAD_X;
+      const courtY0 = COURT_PAD_TOP;
+      const courtX1 = W - COURT_PAD_X;
+      const courtY1 = H - COURT_PAD_BOT;
+
+      const paddleW = 4, paddleH = 28;
+      const ballSize = 5;
+      const paddleInset = 10;
+
+      if (!ch3State.initialized) {
+        ch3State.ballX = (courtX0 + courtX1) / 2 - ballSize / 2;
+        ch3State.ballY = (courtY0 + courtY1) / 2 - ballSize / 2;
+        // Random initial side + vertical drift so a freshly-entered
+        // channel doesn't show the same opening every time.
+        const dir = Math.random() < 0.5 ? -1 : 1;
+        ch3State.ballVx = 115 * dir;
+        ch3State.ballVy = (Math.random() - 0.5) * 130;
+        ch3State.leftY  = (courtY0 + courtY1) / 2 - paddleH / 2;
+        ch3State.rightY = (courtY0 + courtY1) / 2 - paddleH / 2;
+        ch3State.scoreL = 0;
+        ch3State.scoreR = 0;
+        ch3State.lastMs = timeMs;
+        ch3State.initialized = true;
+      }
+
+      if (!reducedMotionMq.matches) {
+        const dt = Math.min(0.05, Math.max(0, (timeMs - ch3State.lastMs) / 1000));
+        ch3State.lastMs = timeMs;
+
+        ch3State.ballX += ch3State.ballVx * dt;
+        ch3State.ballY += ch3State.ballVy * dt;
+
+        // Top/bottom wall bounce
+        if (ch3State.ballY <= courtY0) {
+          ch3State.ballY = courtY0;
+          ch3State.ballVy = Math.abs(ch3State.ballVy);
+        }
+        if (ch3State.ballY + ballSize >= courtY1) {
+          ch3State.ballY = courtY1 - ballSize;
+          ch3State.ballVy = -Math.abs(ch3State.ballVy);
+        }
+
+        // Paddle AI — chase ball y with a fixed top speed. The fixed
+        // speed (rather than instant follow) means a steeply-angled
+        // ball can outrun a paddle, which is exactly what produces a
+        // miss and a score. AI_SPEED also caps the visual "twitchiness"
+        // of the paddles.
+        const AI_SPEED = 110;
+        const ballCenterY = ch3State.ballY + ballSize / 2;
+        function chase(curY) {
+          const center = curY + paddleH / 2;
+          const diff = ballCenterY - center;
+          const move = Math.sign(diff) * Math.min(Math.abs(diff), AI_SPEED * dt);
+          let y = curY + move;
+          if (y < courtY0) y = courtY0;
+          if (y + paddleH > courtY1) y = courtY1 - paddleH;
+          return y;
+        }
+        ch3State.leftY  = chase(ch3State.leftY);
+        ch3State.rightY = chase(ch3State.rightY);
+
+        // Paddle collision. Each hit reverses horizontal velocity and
+        // adds a small "english" based on where on the paddle the ball
+        // landed — top of paddle deflects upward, bottom deflects down.
+        // Speeds up by 4% per hit so rallies build, capped at MAX_VX.
+        const leftX  = courtX0 + paddleInset;
+        const rightX = courtX1 - paddleInset - paddleW;
+        const MAX_VX = 260, MAX_VY = 260;
+        if (ch3State.ballVx < 0 &&
+            ch3State.ballX <= leftX + paddleW &&
+            ch3State.ballX + ballSize >= leftX &&
+            ch3State.ballY + ballSize >= ch3State.leftY &&
+            ch3State.ballY <= ch3State.leftY + paddleH) {
+          ch3State.ballX = leftX + paddleW;
+          ch3State.ballVx = Math.min(MAX_VX, Math.abs(ch3State.ballVx) * 1.04);
+          const offset = (ballCenterY - (ch3State.leftY + paddleH / 2)) / (paddleH / 2);
+          ch3State.ballVy += offset * 70;
+        }
+        if (ch3State.ballVx > 0 &&
+            ch3State.ballX + ballSize >= rightX &&
+            ch3State.ballX <= rightX + paddleW &&
+            ch3State.ballY + ballSize >= ch3State.rightY &&
+            ch3State.ballY <= ch3State.rightY + paddleH) {
+          ch3State.ballX = rightX - ballSize;
+          ch3State.ballVx = -Math.min(MAX_VX, Math.abs(ch3State.ballVx) * 1.04);
+          const offset = (ballCenterY - (ch3State.rightY + paddleH / 2)) / (paddleH / 2);
+          ch3State.ballVy += offset * 70;
+        }
+        if (Math.abs(ch3State.ballVy) > MAX_VY) {
+          ch3State.ballVy = Math.sign(ch3State.ballVy) * MAX_VY;
+        }
+
+        // Score + serve. Loser of the point serves toward the winner
+        // (classic Pong convention), so the volley restarts from
+        // center and heads toward whoever just scored.
+        if (ch3State.ballX + ballSize < courtX0) {
+          ch3State.scoreR++;
+          ch3State.ballX = (courtX0 + courtX1) / 2 - ballSize / 2;
+          ch3State.ballY = (courtY0 + courtY1) / 2 - ballSize / 2;
+          ch3State.ballVx = 115;
+          ch3State.ballVy = (Math.random() - 0.5) * 130;
+        } else if (ch3State.ballX > courtX1) {
+          ch3State.scoreL++;
+          ch3State.ballX = (courtX0 + courtX1) / 2 - ballSize / 2;
+          ch3State.ballY = (courtY0 + courtY1) / 2 - ballSize / 2;
+          ch3State.ballVx = -115;
+          ch3State.ballVy = (Math.random() - 0.5) * 130;
+        }
+      }
+
+      // Court center net — vertical dashed line, classic Pong.
+      ctx.fillStyle = 'rgba(220, 245, 255, 0.55)';
+      const dashH = 9, dashGap = 7, dashW = 2;
+      const cx = Math.round((courtX0 + courtX1) / 2 - dashW / 2);
+      for (let y = courtY0 + 4; y + dashH < courtY1; y += dashH + dashGap) {
+        ctx.fillRect(cx, y, dashW, dashH);
+      }
+
+      // Paddles + ball — pure white so all three phosphor stripes light
+      // at max. The pipeline will give them the soft aperture-grille
+      // bloom + scanline texture that makes them feel like real CRT
+      // phosphor instead of crisp rectangles.
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(courtX0 + paddleInset, ch3State.leftY, paddleW, paddleH);
+      ctx.fillRect(courtX1 - paddleInset - paddleW, ch3State.rightY, paddleW, paddleH);
+      ctx.fillRect(ch3State.ballX, ch3State.ballY, ballSize, ballSize);
+
+      // Score — large VT323 numerals top-center, flanking the net.
+      // VT323 is loaded by tokens.css's @import; if it hasn't arrived
+      // by first frame the fallback monospace still reads as period-
+      // appropriate. Always two digits so the layout doesn't jump
+      // when crossing 10.
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '400 34px "VT323", "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const scoreY = 6;
+      ctx.fillText(String(ch3State.scoreL).padStart(2, '0'), W / 2 - 36, scoreY);
+      ctx.fillText(String(ch3State.scoreR).padStart(2, '0'), W / 2 + 36, scoreY);
+      ctx.textAlign = 'start';
+    }
+
+    // OSD plate — pops up top-right when the channel changes, fades
+    // out after CH_OSD_DURATION_MS. Painted into the signal canvas so
+    // it goes through the phosphor pipeline (period-correct fuzziness).
+    // Sits inside the brand box (insets past HERO_HALO_MARGIN_PX) so
+    // it doesn't overlap the bezel cutout shadow.
+    //
+    // Uses performance.now() rather than the signal callback's `timeMs`
+    // because timeMs is renderer-relative (since the Trinitron started)
+    // and resets to 0 when the renderer is recreated on resize/theme
+    // toggle. channelOsdShownAtMs is set in changeChannel() against the
+    // same wall clock so the elapsed math is stable across resizes.
+    function paintChannelOSD(ctx, _timeMs) {
+      const elapsed = performance.now() - channelOsdShownAtMs;
+      if (elapsed < 0 || elapsed > CH_OSD_DURATION_MS) return;
+      const fadeIn = Math.min(1, elapsed / CH_OSD_FADE_IN_MS);
+      const fadeOut = Math.min(1, (CH_OSD_DURATION_MS - elapsed) / CH_OSD_FADE_OUT_MS);
+      const alpha = Math.max(0, Math.min(fadeIn, fadeOut));
+      if (alpha <= 0.001) return;
+
+      const text = 'CH ' + (currentChannel + 1) + '   ' + CHANNEL_LABELS[currentChannel];
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = `${CH_OSD_FONT_WEIGHT} ${CH_OSD_FONT_PX}px ${HERO_WORDMARK_FONT}`;
+      ctx.textBaseline = 'middle';
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0.12em';
+      const padX = 11, padY = 7;
+      const textW = ctx.measureText(text).width;
+      const plateW = Math.round(textW + padX * 2);
+      const plateH = 24;
+      // The .brand::after bezel cutout paints a heavy inset shadow
+      // (36px blur + 8px spread) plus an extra top-edge band — about
+      // 45px of darkness in from each canvas edge. The plate has to
+      // clear that or the phosphor pipeline + bezel together render
+      // it invisible. inset 48 puts the plate top ~32px past the
+      // brand's top edge, well into the lit screen area.
+      const inset = HERO_HALO_MARGIN_PX + 32;
+      const plateX = layout.width - plateW - 16;
+      const plateY = inset;
+
+      // Plate body — translucent navy so the channel content reads
+      // faintly through it (very 90s OSD).
+      ctx.fillStyle = 'rgba(2, 14, 38, 0.78)';
+      ctx.fillRect(plateX, plateY, plateW, plateH);
+      // Top edge: bright cyan phosphor sliver. The bottom edge gets a
+      // dimmer sliver — like a 1px bezel highlight at top + shadow at bottom.
+      ctx.fillStyle = 'rgba(120, 230, 255, 0.95)';
+      ctx.fillRect(plateX, plateY, plateW, 1);
+      ctx.fillStyle = 'rgba(70, 160, 200, 0.35)';
+      ctx.fillRect(plateX, plateY + plateH - 1, plateW, 1);
+
+      // Text — pure white phosphor, sits roughly centered vertically.
+      ctx.fillStyle = '#F0FAFF';
+      ctx.fillText(text, plateX + padX, plateY + plateH / 2 + 0.5);
+
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      ctx.restore();
+    }
+
+    // Signal callback closure — reads `layout` (outer scope) plus the
+    // module-scope phosphor sources (armsImg/hubImg/aquaImg) and
+    // logoCanvas. Recreated implicitly each frame; layout is mutated
+    // by createTrinitron(), not by the callback.
+    function signal(ctx, timeMs) {
+      if (!layout) return;
+
+      // 1. Substrate — opaque CRT face under everything. Matches --bg
+      //    so the page reads continuously through the screen. Shared
+      //    across all channels.
+      ctx.fillStyle = HERO_SUBSTRATE;
+      ctx.fillRect(0, 0, layout.width, layout.height);
+
+      // 1b. Halftone wash — replicates .page::before inside the screen,
+      //     phase-aligned to the page grid so dots are continuous across
+      //     the screen edge. Kept on every channel so the CRT face never
+      //     looks plain (it reads as the same paper-tinted glow the page
+      //     bg has — the channel content sits *on top* of it).
+      const period = HERO_DOT_PERIOD;
+      const tc = HERO_DOT_TILE_CENTER;
+      const startX = ((tc - layout.canvasPageX) % period + period) % period;
+      const startY = ((tc - layout.canvasPageY) % period + period) % period;
+      ctx.fillStyle = HERO_DOT_COLOR;
+      for (let y = startY; y < layout.height; y += period) {
+        for (let x = startX; x < layout.width; x += period) {
+          ctx.beginPath();
+          ctx.arc(x, y, HERO_DOT_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // 2. Channel content. Painters assume substrate + dots are already
+      //    laid down. Sprinkles + laser grid are CH1-only because they're
+      //    part of the page composition, not the CRT.
+      if      (currentChannel === 0) paintChannel1(ctx, timeMs);
+      else if (currentChannel === 1) paintChannel2(ctx, timeMs);
+      else if (currentChannel === 2) paintChannel3(ctx, timeMs);
+
+      // 3. OSD plate — always last so it sits on top of channel content.
+      paintChannelOSD(ctx, timeMs);
+    }
+
     function createTrinitron(newLayout) {
       if (!newLayout) return;
       const wasRunning = trinitron && trinitron._wasStartedByUser;
@@ -2153,6 +2786,13 @@
       // Resize the offscreen logo canvas to match the live mark size.
       logoCanvas.width  = layout.logoSize;
       logoCanvas.height = layout.logoSize;
+
+      // Force per-channel scenes to re-init against the new screen
+      // rect on the next frame they paint. Without this, a viewport
+      // resize while on CH2 could leave the bouncing logo trapped
+      // outside the new stage rect (jittering at the wall forever).
+      ch2State.initialized = false;
+      ch3State.initialized = false;
 
       try {
         trinitron = new window.Trinitron(canvas, {
