@@ -148,9 +148,9 @@ void main() {
 
   // Per-row shimmer. Stable hash per source-pixel row (dividing the
   // output Y by cellSize.y undoes the integer upscale, mapping output
-  // pixels back to source rows) — the only spatial micro-texture left
-  // in the phosphor model (fixed pattern; uShimmerSeed is a static
-  // uniform, so the noise doesn't change frame-to-frame).
+  // pixels back to source rows) — the only animated micro-texture in
+  // the phosphor model (uShimmerSeed is uploaded per-frame in
+  // _renderGpu, throttled to reseed at ~30 fps).
   uint rowIdx = uint(floor(px.y / uCellSize.y));
   // 4099u prime stride retained for hash stability — original rationale
   // (decorrelating from per-cell shimmer) is moot now that cell shimmer
@@ -920,7 +920,7 @@ void main() {
               desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
               params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
             { key: 'perRowShimmer',    label: 'per-row shimmer',
-              desc: 'Per-scanline brightness noise. The only spatial micro-texture in the model (fixed pattern, not animated).',
+              desc: 'Per-scanline brightness noise. The only animated micro-texture in the model (reseeds at ~30 fps).',
               params: [{ opt: 'rowShimmer', min: 0, max: 0.1, step: 0.005, sub: 'amount' }] },
             { key: 'beamSpread',       label: 'beam spread',
               desc: 'Gaussian PSF blur on signal. Softens razor edges into glowing phosphor.',
@@ -1196,8 +1196,9 @@ void main() {
     //
     // Uniforms still uploaded per frame in _renderGpu: the *Enabled
     // toggles (?debug=1 panel mutates them at runtime), brightness
-    // (warmup/breathing modulate it), and convergence R/B when drift
-    // is active.
+    // (warmup/breathing modulate it), convergence R/B when drift
+    // is active, and shimmerSeed (frame-counter-derived, so the row
+    // shimmer pattern reseeds at ~30 fps instead of holding fixed).
     _uploadStaticUniforms() {
       const gl = this._gl;
       const [vw, vh] = this.opts.viewSize;
@@ -1211,7 +1212,8 @@ void main() {
       gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
       gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
       gl.uniform1f(this._uPhosphor.rowShimmerAmp,    this.opts.rowShimmer);
-      gl.uniform1ui(this._uPhosphor.shimmerSeed,     this.opts.shimmerSeed);
+      // shimmerSeed is uploaded per-frame in _renderGpu (derived from
+      // the frame counter so the row pattern reseeds at ~30 fps).
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
       gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
 
@@ -1358,6 +1360,14 @@ void main() {
       gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread       ? 1 : 0);
+
+      // Per-row shimmer seed: throttle to ~30 fps by shifting the frame
+      // counter right by 1 (one new pattern every 2 render frames). The
+      // option value seeds the sequence; the frame counter advances it.
+      // `>>> 0` coerces to uint32 (matches the uniform1ui type and the
+      // shader's `uint uShimmerSeed`).
+      const animatedSeed = (this.opts.shimmerSeed + (this._frameCount >> 1)) >>> 0;
+      gl.uniform1ui(this._uPhosphor.shimmerSeed, animatedSeed);
 
       // Convergence drift: override base R/B per-frame while active.
       // G never drifts (it's the reference channel). On the transition
