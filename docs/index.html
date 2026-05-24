@@ -1300,18 +1300,10 @@
   const HERO_WORDMARK_FONT = '"Space Grotesk", "Hanken Grotesk", system-ui, sans-serif';
 
   // Wordmark letter-spacing in em units — matches the live .wordmark's
-  // letter-spacing: -0.06em. Multiplied by the live font-size at paint
-  // time to get pixels.
+  // letter-spacing: -0.06em. Applied to canvas paints so glyph-internal
+  // tracking matches CSS; between-parts spacing comes from each part's
+  // own DOM rect, which already encodes the .wordmark i overrides.
   const HERO_WORDMARK_LETTER_SPACING_EM = -0.06;
-
-  // Wordmark glyph parts, in document order. The middle "·" is drawn
-  // separately so its margins can match the live .wordmark's CSS
-  // (.wordmark i { margin-left: 0.22em; margin-right: 0.10em; }).
-  const HERO_WORDMARK_PARTS = [
-    { text: 'interslice', weight: 700 },
-    { text: '·',          weight: 700, marginLeftEm: 0.22, marginRightEm: 0.10 },
-    { text: 'systems',    weight: 500 },
-  ];
 
   // Halo bleed margin around the live brand box, in display px. The
   // canvas extends this many CSS pixels beyond .brand on each side so
@@ -1422,6 +1414,24 @@
     const mark   = document.querySelector('.mark');
     const wordmark = document.querySelector('.wordmark');
     if (!canvas || !brand || !mark || !wordmark || !window.Trinitron) return;
+
+    // Wrap each top-level child of .wordmark so all three glyph parts
+    // (interslice, ·, systems) have queryable bounding rects. Bare
+    // text nodes get a transparent <span>; existing element children
+    // just get the marker attribute. CSS inherits into the new spans,
+    // so visual layout is unchanged. Done once here so readLayout()
+    // can use [data-wordmark-part] as a stable selector.
+    for (const node of Array.from(wordmark.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (!node.textContent.trim()) continue;
+        const span = document.createElement('span');
+        span.dataset.wordmarkPart = '';
+        span.textContent = node.textContent;
+        wordmark.replaceChild(span, node);
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        node.dataset.wordmarkPart = '';
+      }
+    }
 
     // CTA elements — optional. If any are missing the CTA paint phase
     // in signal() short-circuits via layout.ctaButton === null.
@@ -1601,27 +1611,20 @@
         });
       }
 
-      // Wordmark part widths and total layout width. Measured once per
-      // layout — font and text don't change between frames; fontPx only
-      // changes on resize, which recreates the layout. Replaces 6
-      // measureText calls per frame in the signal callback (one
-      // measureText per part, twice over).
-      const wmCanvas = document.createElement('canvas');
-      const wmCtx = wmCanvas.getContext('2d');
-      if ('letterSpacing' in wmCtx) {
-        wmCtx.letterSpacing = (fontPx * HERO_WORDMARK_LETTER_SPACING_EM) + 'px';
-      }
-      const wordmarkPartWidths = HERO_WORDMARK_PARTS.map((part) => {
-        wmCtx.font = `${part.weight} ${fontPx}px ${HERO_WORDMARK_FONT}`;
-        return wmCtx.measureText(part.text).width;
+      // Wordmark parts — each glyph piece (interslice, ·, systems) is
+      // anchored to its own DOM bounding rect, so canvas measureText
+      // semantics and CSS layout never disagree about widths or middot
+      // positioning. Per-part computed font-weight is captured because
+      // the middle <b> overrides the wordmark's default 700 with 500.
+      const wordmarkParts = Array.from(wordmark.querySelectorAll('[data-wordmark-part]')).map((el) => {
+        const r = el.getBoundingClientRect();
+        const st = window.getComputedStyle(el);
+        return {
+          text: el.textContent,
+          x: Math.round(r.left - brandRect.left + M),
+          weight: st.fontWeight || '400',
+        };
       });
-      let wordmarkTotalW = 0;
-      for (let i = 0; i < HERO_WORDMARK_PARTS.length; i++) {
-        const part = HERO_WORDMARK_PARTS[i];
-        wordmarkTotalW += wordmarkPartWidths[i];
-        if (part.marginLeftEm)  wordmarkTotalW += part.marginLeftEm  * fontPx;
-        if (part.marginRightEm) wordmarkTotalW += part.marginRightEm * fontPx;
-      }
 
       // CTA layout — captured per-resize like the wordmark. Reads
       // bounding rects at rest (hover/press transforms aren't applied
@@ -1650,8 +1653,7 @@
         canvasPageX: brandRect.left - pageRect.left - M,
         canvasPageY: brandRect.top  - pageRect.top  - M,
         sprinkles,
-        wordmarkPartWidths,
-        wordmarkTotalW,
+        wordmarkParts,
         ctaButton: ctaButtonLayout,
         ctaLabel:  ctaLabelLayout,
         ctaSub:    ctaSubLayout,
@@ -1730,9 +1732,12 @@
 
       ctx.drawImage(logoCanvas, layout.logoX, layout.logoY);
 
-      // 3. Wordmark — three fillText calls using the live font-size,
-      //    placed so the text registers against the (invisible) live
-      //    wordmark. textBaseline 'top' aligns to the em-box top;
+      // 3. Wordmark — paint each glyph part at its own DOM-anchored x.
+      //    The spans were injected at init time so all three parts
+      //    (interslice, ·, systems) have queryable bounding rects;
+      //    between-parts spacing (including the middot's .wordmark i
+      //    margins and letter-spacing: 0 override) comes from CSS for
+      //    free. textBaseline 'top' aligns to the em-box top;
       //    wordmarkTopY already includes the em-vs-line-box offset.
       ctx.fillStyle = HERO_WORDMARK_COLOR;
       ctx.textBaseline = 'top';
@@ -1740,21 +1745,9 @@
       if ('letterSpacing' in ctx) {
         ctx.letterSpacing = (fontPx * HERO_WORDMARK_LETTER_SPACING_EM) + 'px';
       }
-
-      // Widths and total were pre-measured in readLayout(); fill the
-      // glyphs using those cached values. Center text horizontally based
-      // on the brand width (wordmarkX accounts for live H1's leading
-      // whitespace, which can differ from canvas-measured width);
-      // centering on .brand width gives a stable position even if widths
-      // drift slightly.
-      let x = (layout.width - layout.wordmarkTotalW) / 2;
-      for (let i = 0; i < HERO_WORDMARK_PARTS.length; i++) {
-        const part = HERO_WORDMARK_PARTS[i];
-        if (part.marginLeftEm) x += part.marginLeftEm * fontPx;
+      for (const part of layout.wordmarkParts) {
         ctx.font = `${part.weight} ${fontPx}px ${HERO_WORDMARK_FONT}`;
-        ctx.fillText(part.text, x, layout.wordmarkTopY);
-        x += layout.wordmarkPartWidths[i];
-        if (part.marginRightEm) x += part.marginRightEm * fontPx;
+        ctx.fillText(part.text, part.x, layout.wordmarkTopY);
       }
 
       // 4. CTA — paint the "Visit our new web-site!" label, the
@@ -1835,13 +1828,17 @@
         const bp = HERO_CTA_BORDER_PX / 2;
         ctx.strokeRect(B.x + tx + bp, B.y + ty + bp, B.w - HERO_CTA_BORDER_PX, B.h - HERO_CTA_BORDER_PX);
 
-        // "mirepoix.recipes" — rect-anchored. .cta has line-height: 1,
-        // so the b's line-box top ≈ its em-box top; textBaseline 'top'
-        // lands the glyphs right where the live text would sit.
+        // "mirepoix.recipes" — center-anchored in the <b>'s bbox.
+        // baseline:'middle' matches the .cta-label and .cta-sub
+        // convention and is robust to the canvas/CSS ascent metric
+        // disagreement that pulls textBaseline 'top' visibly upward
+        // even when the parent's line-height is 1.
         if (layout.ctaText) {
           paintCRTText(ctx, layout.ctaText, {
             fontFamily: HERO_WORDMARK_FONT,
             color: HERO_CTA_TEXT_COLOR,
+            align: 'center',
+            baseline: 'middle',
             tx, ty,
           });
         }
