@@ -458,9 +458,12 @@ void main() {
         // wires only show when opts.damperWires has positions in it
         // (default [0.32, 0.68]) and damperStrength < 1.
         damperWires: true,
-        // Composite pass — both off (selectiveBloom interacts oddly
-        // with the stripe profile; gapMask is broken at the current
-        // sampling resolution, see commit history).
+        // Composite pass — both off by default. selectiveBloom interacts
+        // oddly with the stripe profile, so callers opt in. gapMask is
+        // off because it's only meaningful when gapMaskAlpha > 0 and the
+        // caller has sized canvasSize so the stripe region (or close to
+        // it) fills the canvas — otherwise the period drifts off the
+        // stripe grid in the bleed margin. The hero opts in.
         selectiveBloom: false,
         gapMask: false,
         // Horizontal scanlines — periodic dim/bright bands along Y in
@@ -1131,9 +1134,18 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
       // GAP MASK: vertical-line pattern at twice the source resolution.
-      // Period 2 canvas-px → every other column 25% dim. Tile vertically
-      // via WRAP_T REPEAT (no per-row variation needed). The 4-px height
-      // keeps the texture tiny.
+      // Period N canvas-px → one in N columns darkened by gapMaskAlpha.
+      // Tile vertically via WRAP_T REPEAT (no per-row variation needed).
+      // The 4-px height keeps the texture tiny.
+      //
+      // Offset is `period - 1` (the last column of each period bucket),
+      // preserving the historical hero behavior at period=2 (darken
+      // every x=1, 3, 5...). Comments in the option block describe the
+      // intent at larger periods (e.g., period=6 with stripeUpscale=2
+      // puts roughly one dark column per RGB triad).
+      const period = Math.max(1, Math.floor(this.opts.gapMaskPeriod || 2));
+      const offset = period - 1;
+      const alpha = Math.max(0, Math.min(1, this.opts.gapMaskAlpha || 0));
       const gapW = vw * 2;
       const gapH = 4;
       const gapCanvas = document.createElement('canvas');
@@ -1142,8 +1154,8 @@ void main() {
       const gpctx = gapCanvas.getContext('2d');
       gpctx.fillStyle = 'white';
       gpctx.fillRect(0, 0, gapW, gapH);
-      gpctx.fillStyle = 'rgba(0,0,0,0.25)';
-      for (let x = 1; x < gapW; x += 2) {
+      gpctx.fillStyle = `rgba(0,0,0,${alpha})`;
+      for (let x = offset; x < gapW; x += period) {
         gpctx.fillRect(x, 0, 1, gapH);
       }
       this._texGapMask = gl.createTexture();
