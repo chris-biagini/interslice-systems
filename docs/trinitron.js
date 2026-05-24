@@ -276,23 +276,32 @@ void main() {
   oColor = vec4(c.rgb * overshoot, c.a);
 }`;
 
+  // Separable Gaussian. The base 9-tap kernel (weights 0.227027,
+  // 0.194594, 0.121622, 0.054054, 0.016216 at offsets 0..4) corresponds
+  // to a sigma of ~2 texels in the bloom (half-res) texture. uBlurRadius
+  // scales the offsets — keeping the weights fixed and just stretching
+  // the kernel widens the visible halo without re-tuning weights. The
+  // CPU side picks the reference so that bleedRadius=30 → uBlurRadius=1
+  // (i.e., the original visible spread).
   const BLOOM_BLUR_H_FS = `#version 300 es
 precision highp float;
 in vec2 vUv;
 uniform sampler2D uTex;
 uniform vec2 uTexSize;
+uniform float uBlurRadius;
 out vec4 oColor;
 void main() {
   vec2 px = 1.0 / uTexSize;
+  float r = uBlurRadius;
   vec4 sum = texture(uTex, vUv) * 0.227027;
-  sum += texture(uTex, vUv + vec2( px.x * 1.0, 0.0)) * 0.194594;
-  sum += texture(uTex, vUv + vec2(-px.x * 1.0, 0.0)) * 0.194594;
-  sum += texture(uTex, vUv + vec2( px.x * 2.0, 0.0)) * 0.121622;
-  sum += texture(uTex, vUv + vec2(-px.x * 2.0, 0.0)) * 0.121622;
-  sum += texture(uTex, vUv + vec2( px.x * 3.0, 0.0)) * 0.054054;
-  sum += texture(uTex, vUv + vec2(-px.x * 3.0, 0.0)) * 0.054054;
-  sum += texture(uTex, vUv + vec2( px.x * 4.0, 0.0)) * 0.016216;
-  sum += texture(uTex, vUv + vec2(-px.x * 4.0, 0.0)) * 0.016216;
+  sum += texture(uTex, vUv + vec2( px.x * 1.0 * r, 0.0)) * 0.194594;
+  sum += texture(uTex, vUv + vec2(-px.x * 1.0 * r, 0.0)) * 0.194594;
+  sum += texture(uTex, vUv + vec2( px.x * 2.0 * r, 0.0)) * 0.121622;
+  sum += texture(uTex, vUv + vec2(-px.x * 2.0 * r, 0.0)) * 0.121622;
+  sum += texture(uTex, vUv + vec2( px.x * 3.0 * r, 0.0)) * 0.054054;
+  sum += texture(uTex, vUv + vec2(-px.x * 3.0 * r, 0.0)) * 0.054054;
+  sum += texture(uTex, vUv + vec2( px.x * 4.0 * r, 0.0)) * 0.016216;
+  sum += texture(uTex, vUv + vec2(-px.x * 4.0 * r, 0.0)) * 0.016216;
   oColor = sum;
 }`;
 
@@ -301,18 +310,20 @@ precision highp float;
 in vec2 vUv;
 uniform sampler2D uTex;
 uniform vec2 uTexSize;
+uniform float uBlurRadius;
 out vec4 oColor;
 void main() {
   vec2 px = 1.0 / uTexSize;
+  float r = uBlurRadius;
   vec4 sum = texture(uTex, vUv) * 0.227027;
-  sum += texture(uTex, vUv + vec2(0.0,  px.y * 1.0)) * 0.194594;
-  sum += texture(uTex, vUv + vec2(0.0, -px.y * 1.0)) * 0.194594;
-  sum += texture(uTex, vUv + vec2(0.0,  px.y * 2.0)) * 0.121622;
-  sum += texture(uTex, vUv + vec2(0.0, -px.y * 2.0)) * 0.121622;
-  sum += texture(uTex, vUv + vec2(0.0,  px.y * 3.0)) * 0.054054;
-  sum += texture(uTex, vUv + vec2(0.0, -px.y * 3.0)) * 0.054054;
-  sum += texture(uTex, vUv + vec2(0.0,  px.y * 4.0)) * 0.016216;
-  sum += texture(uTex, vUv + vec2(0.0, -px.y * 4.0)) * 0.016216;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 1.0 * r)) * 0.194594;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 1.0 * r)) * 0.194594;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 2.0 * r)) * 0.121622;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 2.0 * r)) * 0.121622;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 3.0 * r)) * 0.054054;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 3.0 * r)) * 0.054054;
+  sum += texture(uTex, vUv + vec2(0.0,  px.y * 4.0 * r)) * 0.016216;
+  sum += texture(uTex, vUv + vec2(0.0, -px.y * 4.0 * r)) * 0.016216;
   oColor = sum;
 }`;
 
@@ -369,8 +380,14 @@ void main() {
         // gapMaskPeriod=6 with stripeUpscale=2 puts one gap per triad
         // (cs=4-style between-triads gap).
         gapMaskPeriod: 2,
+        // Selective-bloom kernel spread in source pixels. The base
+        // separable-Gaussian kernel is ~2 texels of the half-res bloom
+        // FBO; this value scales the kernel offsets, so bleedRadius=30
+        // is the no-scaling baseline (uBlurRadius=1). Lower values get
+        // a tighter "phosphor glow at the surface"; higher values get a
+        // diffuse "halo through glass." Re-uploaded only via the debug
+        // panel — there's no per-frame cost.
         bleedRadius: 30,
-        bleedIntensity: 1.0,
         persistence: 0.85,
         convergence: { r: [-0.5, -0.5], g: [0.0, 0.0], b: [0.5, 0.5] },
         // Trinitron's two horizontal damper wires. Fractional Y positions
@@ -385,9 +402,6 @@ void main() {
         // uniform along Y within each source row.
         rowShimmer: 0.0,
         shimmerSeed: 1983,
-        // Post-stripe blur (CSS px) on the composite. Softens the
-        // LCD-like sharp pixel edges into "lit phosphor through glass."
-        phosphorBlurPx: 0.0,
         // Electron-beam spread, applied as a Gaussian blur on the
         // convergence canvases before sampling. A real Trinitron beam
         // has a fuzzy spot that spreads each scan line into adjacent ones;
@@ -719,8 +733,9 @@ void main() {
       gl.deleteShader(bhFs);
       this._programs.push(this._progBloomH);
       this._uBloomH = {
-        tex:     gl.getUniformLocation(this._progBloomH, 'uTex'),
-        texSize: gl.getUniformLocation(this._progBloomH, 'uTexSize'),
+        tex:        gl.getUniformLocation(this._progBloomH, 'uTex'),
+        texSize:    gl.getUniformLocation(this._progBloomH, 'uTexSize'),
+        blurRadius: gl.getUniformLocation(this._progBloomH, 'uBlurRadius'),
       };
 
       const bvVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
@@ -732,8 +747,9 @@ void main() {
       gl.deleteShader(bvFs);
       this._programs.push(this._progBloomV);
       this._uBloomV = {
-        tex:     gl.getUniformLocation(this._progBloomV, 'uTex'),
-        texSize: gl.getUniformLocation(this._progBloomV, 'uTexSize'),
+        tex:        gl.getUniformLocation(this._progBloomV, 'uTex'),
+        texSize:    gl.getUniformLocation(this._progBloomV, 'uTexSize'),
+        blurRadius: gl.getUniformLocation(this._progBloomV, 'uBlurRadius'),
       };
 
       // Half-res bloom textures + FBOs.
@@ -806,6 +822,7 @@ void main() {
         'phosphorCoupling', 'persistence',
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
+        'bleedRadius',
         'damperStrength', 'scanlineDepth', 'scanlinePeriod',
       ];
       const snapshotOpts = () => {
@@ -920,8 +937,9 @@ void main() {
             { key: 'selectiveBloom', label: 'selective bloom',
               desc: 'Bright-pixel halo. Threshold the phosphor, blur, add back as bloom.',
               params: [
-                { opt: 'bloomThreshold', min: 0, max: 1, step: 0.05, sub: 'threshold' },
-                { opt: 'bloomStrength',  min: 0, max: 3, step: 0.1,  sub: 'strength' },
+                { opt: 'bloomThreshold', min: 0, max: 1,   step: 0.05, sub: 'threshold' },
+                { opt: 'bloomStrength',  min: 0, max: 3,   step: 0.1,  sub: 'strength' },
+                { opt: 'bleedRadius',    min: 0, max: 100, step: 1,    sub: 'radius (src px)' },
               ] },
             { key: 'gapMask',        label: 'gap mask',
               desc: 'Dark vertical lines between stripes. Texture-baked; alpha fixed at init.' },
@@ -1233,13 +1251,22 @@ void main() {
       gl.uniform1i(this._uBloomThresh.phosphor,  0);
       gl.uniform1f(this._uBloomThresh.threshold, this.opts.bloomThreshold);
 
+      // Bloom blur radius: the base kernel sigma is ~2 texels in the
+      // half-res bloom texture, which gives a visibly nice halo at the
+      // historical default bleedRadius of 30 source pixels. We pick 30
+      // as the reference so uBlurRadius = bleedRadius / 30 — meaning
+      // bleedRadius=30 → 1.0 (no scaling), bleedRadius=60 → 2.0 (twice
+      // as wide), bleedRadius=15 → 0.5 (half as wide).
+      const blurRadius = (this.opts.bleedRadius ?? 30) / 30;
       gl.useProgram(this._progBloomH);
       gl.uniform1i(this._uBloomH.tex, 0);
       gl.uniform2f(this._uBloomH.texSize, this._bloomW, this._bloomH);
+      gl.uniform1f(this._uBloomH.blurRadius, blurRadius);
 
       gl.useProgram(this._progBloomV);
       gl.uniform1i(this._uBloomV.tex, 0);
       gl.uniform2f(this._uBloomV.texSize, this._bloomW, this._bloomH);
+      gl.uniform1f(this._uBloomV.blurRadius, blurRadius);
     }
 
     _renderGpu(timeMs) {
