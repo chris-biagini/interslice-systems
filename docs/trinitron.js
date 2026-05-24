@@ -39,8 +39,8 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
-  // Phosphor fragment shader — cell shimmer, row shimmer,
-  // beam spread. Full phosphor pass.
+  // Phosphor fragment shader — row shimmer, beam spread.
+  // Full phosphor pass.
   // MRT: slot 0 = phosphor output, slot 1 = persistence next-frame.
   const PHOSPHOR_FS = `#version 300 es
 precision highp float;
@@ -54,7 +54,6 @@ uniform float uPersistence;
 uniform vec2 uConvergenceR;
 uniform vec2 uConvergenceG;
 uniform vec2 uConvergenceB;
-uniform float uCellShimmerAmp;
 uniform float uRowShimmerAmp;
 uniform uint uShimmerSeed;
 uniform float uBeamSpreadPx;
@@ -63,7 +62,6 @@ uniform float uStripeEnabled;
 uniform float uCouplingEnabled;
 uniform float uPersistenceEnabled;
 uniform float uConvergenceEnabled;
-uniform float uCellShimmerEnabled;
 uniform float uRowShimmerEnabled;
 uniform float uBeamSpreadEnabled;
 
@@ -148,22 +146,14 @@ void main() {
   // subX >= 3: stays at coupling (gap column for cs=4+)
   weights = mix(vec3(1.0), weights, uStripeEnabled);
 
-  // Per-cell shimmer: stable hash by cell index.
-  vec2 cellCoord = floor(px / uCellSize);
-  uint cellGridW = uint(uViewSize.x / uCellSize.x);
-  uint cellIdx = uint(cellCoord.y) * cellGridW + uint(cellCoord.x);
-  float cellShim = 1.0 + uCellShimmerAmp * (2.0 * lcg(cellIdx + uShimmerSeed) - 1.0);
-  cellShim = mix(1.0, cellShim, uCellShimmerEnabled);
-
-  // Per-row shimmer. Multiplies by a large prime to stride row seeds
-  // well clear of the cell-shimmer seed domain — otherwise the row at
-  // y=N hashes identically to cell (N, 0) and the two shimmers
-  // correlate at the top band.
-  float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(uint(cellCoord.y) * 4099u + uShimmerSeed) - 1.0);
+  // Per-row shimmer. Stable hash per scanline (the cell row, since the
+  // signal is upscaled by cellSize) — the only animated micro-texture
+  // left in the phosphor model.
+  uint rowIdx = uint(floor(px.y / uCellSize.y));
+  float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(rowIdx * 4099u + uShimmerSeed) - 1.0);
   rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
 
-  float cellMod = cellShim * rowShim;
-  vec3 stripeOut = lerped.rgb * weights * cellMod;
+  vec3 stripeOut = lerped.rgb * weights * rowShim;
   oPhosphor = vec4(stripeOut, lerped.a);
 }`;
 
@@ -390,10 +380,6 @@ void main() {
         // the line-to-line beam-current fluctuation a real CRT exhibits;
         // does not reassert the cell grid.
         rowShimmer: 0.0,
-        // Per-cell brightness noise. 0 = off. Static per-cell jitter,
-        // intentionally reasserts the cell grid — that's what makes each
-        // cell read as a distinct phosphor dot rather than a flat tile.
-        cellShimmer: 0.0,
         shimmerSeed: 1983,
         // Post-stripe blur (CSS px) on the composite. Softens the
         // LCD-like sharp pixel edges into "lit phosphor through glass."
@@ -461,13 +447,12 @@ void main() {
       // from the content. Callers can pass any subset via
       // opts.effects to flip individual defaults.
       this.effects = Object.assign({
-        // Phosphor pass — four effects on, four off.
+        // Phosphor pass — four effects on, three off.
         stripeProfile: true,
         phosphorCoupling: true,
         convergence: false,
         convergenceDrift: false,
         persistence: true,
-        perCellShimmer: false,
         perRowShimmer: false,
         beamSpread: true,
         // Damper wires — Trinitron's two horizontal stabilizer strands.
@@ -658,14 +643,12 @@ void main() {
       // produces the desired multiplicative dim.
       this.damperOpacity = 1 - this.opts.damperStrength;
 
-      // Per-row brightness LUT. Static — both effects baked in here would
-      // otherwise be one multiply per pixel each in the hot loop; folded
-      // into a single number per row, the inner loop pays for one.
+      // Per-row brightness LUT. Static — baked here so the hot loop
+      // does one read per scanline instead of recomputing each pixel.
       const rowShimAmp = this.opts.rowShimmer;
       const rowMod = new Float32Array(vh);
-      // Single LCG drives both row shimmer (vh samples) and per-cell
-      // shimmer (cellCount samples) so the seed deterministically picks a
-      // single texture across both.
+      // Seeded LCG for the row-shimmer noise so the texture is
+      // deterministic per shimmerSeed.
       let lcg = this.opts.shimmerSeed >>> 0;
       const lcgNext = () => {
         lcg = (Math.imul(lcg, 1664525) + 1013904223) >>> 0;
@@ -679,26 +662,6 @@ void main() {
         rowMod.fill(1);
       }
       this.rowMod = rowMod;
-
-      // Per-cell modulation LUT: per-cell shimmer (one stable noise value
-      // per cell). Looked up by `cellShim[cellIdx]` in the hot loop — one
-      // table read, no per-pixel arithmetic. Setting cellShimmer to 0
-      // collapses its contribution to 1.0 so the multiply still runs but
-      // doesn't perturb.
-      const cellGridW = Math.floor(vw / cs);
-      const cellGridH = Math.floor(vh / cs);
-      this.cellGridW = cellGridW;
-      const cellCount = cellGridW * cellGridH;
-      const cellShimAmp = Math.max(0, this.opts.cellShimmer);
-      const cellShim = new Float32Array(cellCount);
-      if (cellShimAmp > 0) {
-        for (let i = 0; i < cellCount; i++) {
-          cellShim[i] = 1 + cellShimAmp * lcgNext();
-        }
-      } else {
-        cellShim.fill(1);
-      }
-      this.cellShim = cellShim;
 
       // Per-pixel persistence buffers. Snapshot of the previous frame's
       // smoothed (lerped, pre-stripe-profile) per-channel values, used to
@@ -947,12 +910,10 @@ void main() {
         couplingEnabled:      gl.getUniformLocation(this._progPhosphor, 'uCouplingEnabled'),
         persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
         convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
-        cellShimmerAmp:       gl.getUniformLocation(this._progPhosphor, 'uCellShimmerAmp'),
         rowShimmerAmp:        gl.getUniformLocation(this._progPhosphor, 'uRowShimmerAmp'),
         shimmerSeed:          gl.getUniformLocation(this._progPhosphor, 'uShimmerSeed'),
         beamSpreadPx:         gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadPx'),
         beamSpreadVerticalPx: gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadVerticalPx'),
-        cellShimmerEnabled:   gl.getUniformLocation(this._progPhosphor, 'uCellShimmerEnabled'),
         rowShimmerEnabled:    gl.getUniformLocation(this._progPhosphor, 'uRowShimmerEnabled'),
         beamSpreadEnabled:    gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadEnabled'),
       };
@@ -1128,7 +1089,7 @@ void main() {
       // change since page load." Deep-copies convergence (object) so we
       // don't alias.
       const PANEL_OPT_KEYS = [
-        'phosphorCoupling', 'persistence', 'cellShimmer',
+        'phosphorCoupling', 'persistence',
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
         'damperStrength', 'scanlineDepth', 'scanlinePeriod',
@@ -1255,11 +1216,8 @@ void main() {
             { key: 'persistence',      label: 'persistence',
               desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
               params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
-            { key: 'perCellShimmer',   label: 'per-cell shimmer',
-              desc: 'Static brightness jitter per cell. Asserts the phosphor-dot grid.',
-              params: [{ opt: 'cellShimmer', min: 0, max: 0.2, step: 0.01, sub: 'amount' }] },
             { key: 'perRowShimmer',    label: 'per-row shimmer',
-              desc: 'Per-scanline brightness noise. Beam-current line-to-line fluctuation.',
+              desc: 'Per-scanline brightness noise. The only animated micro-texture in the model.',
               params: [{ opt: 'rowShimmer', min: 0, max: 0.1, step: 0.005, sub: 'amount' }] },
             { key: 'beamSpread',       label: 'beam spread',
               desc: 'Gaussian PSF blur on signal. Softens razor edges into glowing phosphor.',
@@ -1522,7 +1480,7 @@ void main() {
     // Upload uniforms that don't change for the lifetime of this
     // renderer — sampler unit bindings, viewSize/cellSize, the
     // base option values (phosphorCoupling, persistence,
-    // shimmer amplitudes, beam spread, bloom threshold, composite
+    // row-shimmer amp, beam spread, bloom threshold, composite
     // geometry, opaque background flag), and the convergence base
     // (R/B get overridden per-frame when effects.convergenceDrift
     // is on; G never drifts). Called once at the end of _initGpu,
@@ -1544,7 +1502,6 @@ void main() {
       gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
       gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
       gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
-      gl.uniform1f(this._uPhosphor.cellShimmerAmp,   this.opts.cellShimmer);
       gl.uniform1f(this._uPhosphor.rowShimmerAmp,    this.opts.rowShimmer);
       gl.uniform1ui(this._uPhosphor.shimmerSeed,     this.opts.shimmerSeed);
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
@@ -1696,14 +1653,13 @@ void main() {
 
       // Per-frame *Enabled toggles. The ?debug=1 panel mutates
       // this.effects at runtime, so these must stay dynamic. Static
-      // option values (phosphorCoupling, persistence, shimmer
-      // amps, beam spread, viewSize/cellSize, sampler bindings, base
+      // option values (phosphorCoupling, persistence, row-shimmer
+      // amp, beam spread, viewSize/cellSize, sampler bindings, base
       // convergence) are uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.couplingEnabled,    this.effects.phosphorCoupling ? 1 : 0);
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.cellShimmerEnabled, this.effects.perCellShimmer   ? 1 : 0);
       gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread       ? 1 : 0);
 
@@ -2028,19 +1984,13 @@ void main() {
       const stripeG = this.stripeG;
       const stripeB = this.stripeB;
       const rowMod = this.rowMod;
-      const cellShim = this.cellShim;
-      const cellGridW = this.cellGridW;
-      const invCs = 1 / cs;
 
       let pi = 0, pix = 0;
       for (let py = 0; py < vh; py++) {
         const rm = rowMod[py];
-        const cyBase = (py * invCs) | 0;
-        const cellRowBase = cyBase * cellGridW;
 
         for (let px = 0; px < vw; px++) {
-          const cxBase = (px * invCs) | 0;
-          const subX = px - cxBase * cs;
+          const subX = px % cs;
 
           // Sample alpha-premultiplied RGB.
           const sR_raw = pxR[pi]     * (pxR[pi + 3] / 255);
@@ -2061,16 +2011,11 @@ void main() {
           prB[pix] = lerpB;
           prA[pix] = lerpA;
 
-          // Per-cell shimmer (one value per cell). Collapses to 1.0 when
-          // the amplitude is 0, so this multiply is harmless when the
-          // effect is off.
-          const cellMod = cellShim[cellRowBase + cxBase];
-
           // Stripe geometry: weighted contribution from each lit position
           // (with optional overlap bleeding into adjacent columns).
-          const r = lerpR * stripeR[subX] * rm * cellMod;
-          const g = lerpG * stripeG[subX] * rm * cellMod;
-          const b = lerpB * stripeB[subX] * rm * cellMod;
+          const r = lerpR * stripeR[subX] * rm;
+          const g = lerpG * stripeG[subX] * rm;
+          const b = lerpB * stripeB[subX] * rm;
 
           out[pi]     = r > 255 ? 255 : r;
           out[pi + 1] = g > 255 ? 255 : g;
