@@ -38,9 +38,9 @@
      The VT323 typeface has its own color language: phosphor inks
      glowing on glass, molded-plastic bezel, side knobs. Used only
      inside hardware-themed UI (Mirepoix Diagnostics, BootSplash,
-     IS-2200 monitor widget, type-crt preview). Do NOT use these
-     on paper or for body copy. Theme-invariant — phosphor looks
-     the same in light and dark mode. */
+     type-crt preview, and any future CRT-faced widgets). Do NOT
+     use these on paper or for body copy. Theme-invariant —
+     phosphor looks the same in light and dark mode. */
 
   /* phosphor inks (the four CRT type colors) */
   --crt-green:        #44FF8A;

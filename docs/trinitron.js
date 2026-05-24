@@ -80,9 +80,8 @@ float lcg(uint seed) {
 // horizontal "resolution" is quantized by the aperture grille pitch
 // (so horizontal blur should stay narrow to keep stripes crisp),
 // while the vertical axis is bounded only by the beam's gaussian
-// PSF and should typically spread further. CPU path's
-// cctx.filter = blur(spreadPx) is still isotropic; the anisotropy
-// is a GPU-path-only refinement of the otherwise-shared model.
+// PSF and should typically spread further. Setting beamSpreadVerticalPx
+// equal to beamSpreadPx collapses to the isotropic case.
 vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPxH, float spreadPxV) {
   // Sub-pixel-blur no-ops on both axes → skip.
   if (spreadPxH < 0.7 && spreadPxV < 0.7) return texture(tex, uv);
@@ -135,9 +134,10 @@ void main() {
 
   // Stripe weights. General layout: subX=0→R primary, 1→G, 2→B,
   // anything else → gap (only coupling). Works for cs=2 (R+G, no B
-  // primary — B via coupling only, matches original IS-2200 identity),
-  // cs=3 (R+G+B triad, no gap — matches dark-mode logo), cs=4
-  // (R+G+B+gap — proper aperture grille with darkened gap column).
+  // primary — B via coupling only, the original 2-stripe identity),
+  // cs=3 (R+G+B triad, no gap — the hero screen's contiguous-triad
+  // layout), cs=4 (R+G+B+gap — proper aperture grille with darkened
+  // gap column).
   float coupling = uPhosphorCoupling * uCouplingEnabled;
   vec3 weights = vec3(coupling, coupling, coupling);
   if (subX == 0) weights.r = 1.0;
@@ -216,8 +216,8 @@ void main() {
 
   // Remap to stripe-region UV: the phosphor texture occupies the
   // central (viewSize * stripeUpscale) / canvasSize fraction of the
-  // canvas, with bleed-margin space on each side. Matches the CPU
-  // path's drawImage(stripeCanvas, bleedMargin, bleedMargin, ...).
+  // canvas, with bleed-margin space on each side reserved for the
+  // bloom halo to spread into.
   vec2 stripeUv = (sampleUv - vec2(uStripeMargin)) / uStripeFraction;
   bool inStripe = stripeUv.x >= 0.0 && stripeUv.x <= 1.0 &&
                   stripeUv.y >= 0.0 && stripeUv.y <= 1.0;
@@ -225,7 +225,7 @@ void main() {
   vec3 color = vec3(0.0);
   // Canvas alpha tracks the silhouette mask (phos.a) — sharp edge,
   // softened only by the upstream beam-spread blur on the signal.
-  // When opaqueBackground=true (e.g., IS-2200 CRT screen), the
+  // When opaqueBackground=true (any opaque CRT face), the
   // uniform mix below forces alpha to 1 regardless.
   float alpha = 0.0;
   if (inStripe) {
@@ -256,9 +256,9 @@ void main() {
 
   color *= uBrightness;
 
-  // opaqueBackground=true → canvas is always fully opaque (IS-2200
-  // CRT screen). false → alpha follows the silhouette+bloom mask
-  // (logo on transparent page background).
+  // opaqueBackground=true → canvas is always fully opaque (e.g.,
+  // a CRT face filling its card). false → alpha follows the
+  // silhouette+bloom mask (e.g., a logo on transparent page bg).
   float finalAlpha = mix(alpha, 1.0, uOpaqueBackground);
   oColor = vec4(color, finalAlpha);
 }`;
@@ -396,23 +396,22 @@ void main() {
         // Units are source pixels. Chromium's canvas filter blur no-ops
         // below ~0.7 px, so values under that have no effect.
         beamSpreadPx: 0.0,
-        // Additional vertical-only beam spread (GPU path only). When
-        // > beamSpreadPx, the kernel becomes anisotropic: horizontal
-        // sigma stays at beamSpreadPx (so aperture-grille stripes stay
-        // crisp), while vertical sigma widens to this value. Matches
-        // how a real Trinitron divides its detail budget — quantized
-        // horizontally by the grille pitch, soft-edged vertically by
-        // the beam's gaussian PSF. 0 (default) = isotropic, identical
-        // to beamSpreadPx on both axes. CPU path is unaffected (still
-        // isotropic via canvas filter blur).
+        // Additional vertical-only beam spread. When > beamSpreadPx,
+        // the kernel becomes anisotropic: horizontal sigma stays at
+        // beamSpreadPx (so aperture-grille stripes stay crisp), while
+        // vertical sigma widens to this value. Matches how a real
+        // Trinitron divides its detail budget — quantized horizontally
+        // by the grille pitch, soft-edged vertically by the beam's
+        // gaussian PSF. 0 (default) = isotropic, identical to
+        // beamSpreadPx on both axes.
         beamSpreadVerticalPx: 0.0,
         // Barrel-distortion strength for the composite glass pass.
-        // 0 = flat panel. Default 0 (CPU path doesn't use this).
+        // 0 = flat panel.
         curvature: 0,
         // Curvature axis distribution. 'spherical' = generic CRT barrel
         // (warp on both axes, by r²). 'cylindrical' = Trinitron face
         // (warp X only, by x²) — verticals stay straight, horizontals
-        // curve. GPU path only.
+        // curve.
         curvatureMode: 'spherical',
         // Horizontal scanlines (GPU composite pass). scanlineDepth = 0
         // means flat brightness; 1 means troughs go to black.
@@ -433,9 +432,9 @@ void main() {
         // vignette/gap mask are visible across the entire surface.
         // When false, canvas alpha tracks the phosphor silhouette
         // (plus the bloom feather), so the canvas reads as a
-        // cut-out of the page background. The IS-2200 wants opaque
-        // (it's a CRT screen sitting in a card); the dark-mode logo
-        // wants transparent (the logo floats on the page).
+        // cut-out of the page background. The hero screen wants
+        // opaque (it's a bounded CRT face); a free-floating logo
+        // sim would want transparent.
         opaqueBackground: true,
       }, opts);
 
@@ -505,8 +504,9 @@ void main() {
 
       // Float textures for persistence (no extension needed in WebGL2).
       // EXT_color_buffer_float lets us render TO float — required because
-      // the phosphor/persistence attachments are RGBA32F.
-      // Check BEFORE mutating this.* so 'auto' can cleanly fall back to CPU.
+      // the phosphor/persistence attachments are RGBA32F. Check (and
+      // throw) BEFORE mutating this.* so the constructor leaves no
+      // half-initialized GPU state behind on failure.
       const cbf = gl.getExtension('EXT_color_buffer_float');
       if (!cbf) throw new Error('EXT_color_buffer_float unavailable');
       // OES_texture_float_linear lets us sample RGBA32F textures with
@@ -515,8 +515,7 @@ void main() {
       // just a black phosphor read — because LINEAR on a float texture
       // is "texture-incomplete" in WebGL2. The phosphor and persistence
       // textures use LINEAR (Task 9 consistency fix), so this extension
-      // is load-bearing. Check before mutating this.* so 'auto' can
-      // cleanly fall back to CPU.
+      // is load-bearing. Same throw-before-mutate discipline as above.
       const tfl = gl.getExtension('OES_texture_float_linear');
       if (!tfl) throw new Error('OES_texture_float_linear unavailable');
 
@@ -531,12 +530,11 @@ void main() {
 
       // Stripe-region geometry: the phosphor texture occupies the
       // central `min(viewSize * stripeUpscale, canvasSize)` canvas
-      // pixels, matching the CPU path's `drawImage(stripeCanvas,
-      // bleedMargin, bleedMargin, vw*stripeUpscale, vh*stripeUpscale)`.
-      // When viewSize*stripeUpscale ≥ canvasSize (e.g., the IS-2200's
-      // 1280-source / 640-canvas config), stripeFraction = 1 and
-      // there's no margin — phosphor fills the canvas. Otherwise the
-      // margin is reserved for the bleed halo.
+      // pixels. When viewSize*stripeUpscale ≥ canvasSize (i.e. the
+      // source resolution already exceeds the canvas backing),
+      // stripeFraction = 1 and there's no margin — phosphor fills
+      // the canvas. Otherwise the margin is reserved for the bleed
+      // halo so the bloom feather has somewhere to spread.
       const su = Math.max(1, Math.floor(this.opts.stripeUpscale || 1));
       const stripeRegionPx = Math.min(vw * su, cw);
       this._stripeFraction = stripeRegionPx / cw;
@@ -578,9 +576,8 @@ void main() {
       // produce chromatic-fringe blending consistent with the signal
       // sample. The phosphor output texture is NEAREST so the composite
       // pass's upscale (canvas backing ≫ viewSize) tiles each phosphor
-      // source pixel as a sharp block — matches the CPU path's
-      // imageSmoothingEnabled=false drawImage. LINEAR on this texture
-      // averaged adjacent stripes into mush.
+      // source pixel as a sharp block; LINEAR on this texture averaged
+      // adjacent stripes into mush.
       const makeFloatTex = (w, h, filter) => {
         const t = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, t);
@@ -1247,7 +1244,7 @@ void main() {
       // fringe, persistence, beam spread, and bloom from the rest of
       // the pipeline. damperStrength names the fraction of substrate
       // brightness that REMAINS at the wire row (0 = fully black wire,
-      // 1 = invisible) — same semantics as the CPU path.
+      // 1 = invisible).
       if (this.effects.damperWires &&
           this.opts.damperWires &&
           this.opts.damperWires.length > 0 &&
@@ -1432,14 +1429,16 @@ void main() {
       if (this._rafHandle != null) return;
       // Zero the persistence trail so a stop/restart (e.g. theme toggle)
       // doesn't leave the last paused frame ghosted into the next session.
-      // Clear both persistence textures by binding each FBO and
-      // clearing all attachments. MUST use clearBufferfv for
-      // RGBA32F attachments — `gl.clear()` on float color buffers
-      // is undefined per the WebGL2 spec and produces NaN on some
-      // drivers, which then propagates forever through the
-      // persistence lerp (NaN * anything = NaN) and poisons every
-      // subsequent frame to black.
+      // Guarded on _gl because destroy() nulls it; start() after destroy
+      // is a no-op for the clear (and the tick below will early-out too).
       if (this._gl) {
+        // Clear both persistence textures by binding each FBO and
+        // clearing all attachments. MUST use clearBufferfv for
+        // RGBA32F attachments — `gl.clear()` on float color buffers
+        // is undefined per the WebGL2 spec and produces NaN on some
+        // drivers, which then propagates forever through the
+        // persistence lerp (NaN * anything = NaN) and poisons every
+        // subsequent frame to black.
         const gl = this._gl;
         const zeros = new Float32Array([0, 0, 0, 0]);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithA);
