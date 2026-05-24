@@ -17,7 +17,7 @@ The maintainer (Chris) frames this as a long-term "tender of documents" repo. To
 ## File layout
 
 - `docs/index.html` — the entire page. All page-specific CSS is **inlined** in one `<style>` block. Two `<script src="…">` tags (`trinitron.js`, `sprinkles.js`) and one inline `<script>` block at the bottom — the only JS on the site (see "CSS-first, with documented JS exceptions" below).
-- `docs/trinitron.js` — phosphor renderer (CPU canvas path + WebGL2 GPU path). Load-bearing for the hero screen (see "Trinitron renderer" below).
+- `docs/trinitron.js` — WebGL2 phosphor renderer. Load-bearing for the hero screen (see "Trinitron renderer" below).
 - `docs/sprinkles.js` — runtime sprinkle distribution (Mitchell's best-candidate, seeded). The second documented JS exception (see "CSS-first, with documented JS exceptions" below).
 - `docs/tokens.css` — the canonical design-token sheet (colors, type, semantic vars). Imported by `index.html`. Anything reusable across future documents belongs here.
 - `docs/logo_CMYK*.svg`, `docs/logo_RGBW*.svg` — the two-media logo (see "Two media" below).
@@ -60,24 +60,26 @@ The second exception is `docs/sprinkles.js` — a small (~190 line) IIFE that ru
 
 ### Trinitron renderer
 
-`docs/trinitron.js` defines a single `Trinitron` class. It takes a `<canvas>`, an options object, and a `signal(ctx, timeMs)` callback. Each RAF tick it:
+`docs/trinitron.js` defines a single `Trinitron` class. It takes a `<canvas>`, an options object, and a `signal(ctx, timeMs)` callback. The renderer is **GPU-only** — the constructor opens a WebGL2 context and requires `EXT_color_buffer_float` and `OES_texture_float_linear`; any of those failing throws synchronously before mutating GPU state, so callers can wrap construction in `try { … } catch` and fall through to a static fallback.
 
-1. Lets the callback paint into a small offscreen "signal" canvas.
-2. Bakes stationary damper-wire bands into the signal (optional).
-3. Creates three per-channel pre-shifted copies for convergence.
-4. Runs one fused per-output-pixel pass: sample → persistence lerp → multiply by stripe profile (R lights at subX=0, G at 1, B at 2 for `cellSize: 3`) → per-cell hotspot + shimmer → write.
-5. Blurs the original signal into a separate canvas for the halo bleed.
-6. Composites bleed under stripes, optional blur on top, optional gap mask via `source-atop`.
+Each RAF tick it:
+
+1. Lets the callback paint into a small 2D "signal" canvas, which is uploaded to a GPU texture.
+2. Runs the phosphor pass: per-channel convergence offsets, optional anisotropic beam-spread blur, then a stripe-profile multiply (R lights at subX=0, G at 1, B at 2 for `cellSize: 3`) and a persistence lerp against the previous frame's MRT slot. Outputs phosphor (slot 0) + next-frame persistence (slot 1) in one pass.
+3. Auxiliary bloom passes: bright-pass extraction, horizontal blur, vertical blur into a halo texture.
+4. Composite pass: stripes + halo + optional gap-mask / scanlines / glass curvature / gloss / vignette, plus optional damper-wire bands and warmup / breathing modulators.
 
 One consumer in `docs/index.html`:
 
 - **The hero screen** (`canvas.hero-screen`): a single bounded Trinitron display that holds both the rotating arms+hub logo and the "interslice·systems" wordmark. Signal callback paints a near-black CRT substrate, then rasterized SVG of the rotating logo, then `fillText` of the wordmark in three weight-split parts. The live `<h1>` wordmark stays in the DOM and accessibility tree but goes `color: transparent` in dark mode so it doesn't double-paint. A `MutationObserver` on `data-theme` plus a `prefers-color-scheme` listener toggles `start()` / `stop()` to drop animation cost in light mode.
 
-The renderer is *option-driven*: same code, different look. The hero screen runs on the **GPU path** (`renderer: 'auto'` with automatic CPU fallback on WebGL2 context failure), `cellSize: 3` (contiguous-triad `[R, G, B]` layout — no source-pixel gap column; aperture-grille shadows come from the `gapMask` overlay alone), opaque substrate, contained halo, big aperture-grille mask, `viewSize: [800, 320]`.
+The renderer is *option-driven*: same code, different look. The hero screen uses `cellSize: 3` (contiguous-triad `[R, G, B]` layout — no source-pixel gap column; aperture-grille shadows come from the `gapMask` overlay alone), opaque substrate, contained halo, `viewSize: [layout.width, layout.height]`.
 
-The GPU pipeline is a three-pass setup (signal upload → phosphor/persistence → composite) plus three auxiliary bloom passes. All 18 effects are togglable at runtime via `window.__trinitronLogo.effects`. Add `?debug=1` to the URL to expose a per-effect override panel in the top-right corner. The original GPU pipeline design lives in `specs/2026-05-22-is2200-gpu-trinitron-design.md` and `plans/2026-05-22-is2200-gpu-trinitron-implementation.md`. The current single-consumer hero-screen consolidation is documented in `specs/2026-05-22-hero-trinitron-design.md` and `plans/2026-05-22-hero-trinitron-implementation.md`.
+The **WebGL2-unavailable fallback** is the static SVG `.m-dark` layer in the markup — the hero's `try { new Trinitron(…) } catch` swallows the failure silently and the SVG (which is always in the DOM, hidden by CSS only when `.trinitron-active` is set on `<html>`) keeps rendering the dark-mode logo. The previously-existing CPU canvas path and `renderer: 'auto'` option have been removed; there is no software fallback inside the renderer itself.
 
-There are two memory entries about deliberate aesthetic choices in this renderer — gap-mask striations bleeding into the halo, and the per-cell hotspot/shimmer texture. Both are "leave it alone, this is the look I want" entries. Don't refactor either away as accidental.
+The GPU pipeline is a three-pass setup (signal upload → phosphor/persistence → composite) plus three auxiliary bloom passes. All 16 effects (`stripeProfile`, `phosphorCoupling`, `convergence`, `convergenceDrift`, `persistence`, `perRowShimmer`, `beamSpread`, `damperWires`, `selectiveBloom`, `gapMask`, `scanlines`, `curvature`, `gloss`, `vignette`, `warmup`, `breathing`) are togglable at runtime via `window.__trinitronLogo.effects`. Add `?debug=1` to the URL to expose a per-effect override panel in the top-right corner. The original GPU pipeline design lives in `specs/2026-05-22-is2200-gpu-trinitron-design.md` and `plans/2026-05-22-is2200-gpu-trinitron-implementation.md`. The single-consumer hero-screen consolidation is documented in `specs/2026-05-22-hero-trinitron-design.md` and `plans/2026-05-22-hero-trinitron-implementation.md`. The vertical-resolution refactor that removed the CPU path and per-cell shadow-mask kernels is in `specs/2026-05-24-trinitron-vertical-resolution-design.md`; the extracted kernels are stashed (unloaded) in `docs/shadow-mask.js` for a possible future shadow-mask renderer.
+
+One memory entry still applies as a "leave it alone, this is the look I want" — the gap-mask striations bleeding into the halo. The older cell-grid memory has been **inverted** by the vertical-resolution refactor: continuous vertical phosphor stripes are now the design intent (that's what a real Trinitron does), and the per-cell hotspot / per-cell shimmer 2D dot pattern was a shadow-mask CRT visual that was mis-attributed to Trinitron. Don't reintroduce the cell-grid texture into this renderer; if the dot pattern is wanted somewhere, it belongs in a separate shadow-mask renderer built from the `shadow-mask.js` stash.
 
 ## Working conventions
 
