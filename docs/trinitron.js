@@ -424,11 +424,6 @@ void main() {
         bloomStrength: 1.0,
         signal: () => {},
         respectReducedMotion: true,
-        // Whether the GPU path should create a sibling 2D canvas
-        // for master-mode bypass rendering. Required when a UI
-        // element (e.g., the IS-2200 power sticker) calls
-        // setMasterMode(false). Skip when there's no toggle UI.
-        bypassCanvas: true,
         // Whether the GPU path should create the ?debug=1 effect-
         // toggle overlay. Only one Trinitron per page should claim
         // it; secondary instances opt out.
@@ -487,16 +482,6 @@ void main() {
       }, opts.effects || {});
 
       this._initGpu();
-
-      // Master A/B initial state. Default on. Read from localStorage so the
-      // user's last choice persists across reloads.
-      this._masterOn = true;
-      try {
-        const stored = localStorage.getItem('interslice-systems:is2200:crt-mode');
-        if (stored === 'off') this._masterOn = false;
-      } catch (e) {
-        // Default to on if storage unavailable.
-      }
 
       this._wasStartedByUser = false;
       this._setupReducedMotionListener();
@@ -779,37 +764,6 @@ void main() {
       this._buildStaticTextures();
       this._uploadStaticUniforms();
 
-      // Bypass mode draws the signal canvas directly to the visible
-      // canvas via a separate 2D context. WebGL2 already owns this.canvas,
-      // so we use a hidden secondary canvas overlaid via CSS and toggle
-      // between them via display:none / display:block.
-      // Skipped when opts.bypassCanvas is false (e.g., for the dark-mode
-      // logo, which has no master-mode toggle UI and would have its
-      // bypass canvas mis-positioned by the .trinitron absolute layout).
-      if (this.opts.bypassCanvas) {
-        this._bypassCanvas = document.createElement('canvas');
-        this._bypassCanvas.width = this.canvas.width;
-        this._bypassCanvas.height = this.canvas.height;
-        this._bypassCanvas.style.cssText = this.canvas.style.cssText;
-        this._bypassCanvas.className = this.canvas.className;
-        this._bypassCanvas.style.position = 'absolute';
-        this._bypassCanvas.style.top = '0';
-        this._bypassCanvas.style.left = '0';
-        this._bypassCanvas.style.display = this._masterOn ? 'none' : 'block';
-        this._bypassCtx = this._bypassCanvas.getContext('2d');
-        this._bypassCtx.imageSmoothingEnabled = false;
-        // Mount alongside the WebGL canvas. Parent must be position:relative
-        // (or position:absolute/fixed) for absolute positioning to anchor
-        // correctly; ensure that.
-        if (this.canvas.parentElement) {
-          const parent = this.canvas.parentElement;
-          if (getComputedStyle(parent).position === 'static') {
-            parent.style.position = 'relative';
-          }
-          parent.appendChild(this._bypassCanvas);
-        }
-      }
-
       // Frame counter for diagnostics.
       this._frameCount = 0;
 
@@ -926,34 +880,6 @@ void main() {
         setTimeout(restore, 1400);
       });
       panel.appendChild(copyBtn);
-
-      // View CSS fallback toggle. Stops the renderer and removes
-      // .trinitron-active from <html>, which is the single switch
-      // index.html uses to gate "canvas painting" vs "static SVG
-      // fallback" (canvas display:none, .mark .m-dark layers visible).
-      // Same state a visitor sees if WebGL/JS fails. Note: if the
-      // user toggles the theme while bypassed, the index.html
-      // MutationObserver re-runs syncWithTheme() and re-adds the
-      // class — re-check the box to bypass again.
-      const bypassRow = document.createElement('label');
-      bypassRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 0 8px;margin-bottom:8px;border-bottom:1px solid #444;';
-      const bypassCb = document.createElement('input');
-      bypassCb.type = 'checkbox';
-      bypassCb.checked = false;
-      bypassCb.addEventListener('change', () => {
-        if (bypassCb.checked) {
-          this.stop();
-          document.documentElement.classList.remove('trinitron-active');
-        } else {
-          document.documentElement.classList.add('trinitron-active');
-          this.start();
-        }
-      });
-      bypassRow.appendChild(bypassCb);
-      const bypassLbl = document.createElement('span');
-      bypassLbl.textContent = 'view CSS fallback';
-      bypassRow.appendChild(bypassLbl);
-      panel.appendChild(bypassRow);
 
       // Captioned effect groups with inline sliders for tunable scalars.
       // Order mirrors the GPU pass order (phosphor → composite → glass);
@@ -1152,11 +1078,6 @@ void main() {
       if (this._texBloomB) gl.deleteTexture(this._texBloomB);
       if (this._fboBloomA) gl.deleteFramebuffer(this._fboBloomA);
       if (this._fboBloomB) gl.deleteFramebuffer(this._fboBloomB);
-      if (this._bypassCanvas && this._bypassCanvas.parentNode) {
-        this._bypassCanvas.parentNode.removeChild(this._bypassCanvas);
-      }
-      this._bypassCanvas = null;
-      this._bypassCtx = null;
       this._gl = null;
       if (this._debugPanel && this._debugPanel.parentNode) {
         this._debugPanel.parentNode.removeChild(this._debugPanel);
@@ -1339,33 +1260,12 @@ void main() {
         }
       }
 
-      // Bypass mode only triggers if both the user toggled it off AND
-      // this instance owns a bypass canvas. Instances constructed with
-      // bypassCanvas:false ignore _masterOn and always render via GPU.
-      if (!this._masterOn && this._bypassCanvas) {
-        this._bypassCanvas.style.display = 'block';
-        this.canvas.style.visibility = 'hidden';
-        this._bypassCtx.clearRect(0, 0, this._bypassCanvas.width, this._bypassCanvas.height);
-        this._bypassCtx.drawImage(
-          this._signalCanvas,
-          0, 0, vw, vh,
-          0, 0, this._bypassCanvas.width, this._bypassCanvas.height
-        );
-        this._frameCount++;
-        return;
-      }
-
-      // Master mode "on": show WebGL canvas, hide bypass (if present).
-      if (this._bypassCanvas) this._bypassCanvas.style.display = 'none';
-      this.canvas.style.visibility = 'visible';
-
       // Slow modulators driven by time. All amplitudes are tiny so the
       // effects coexist quietly with the content. Compound multiplicatively
       // into the final brightness uniform; convergence drift modulates the
       // per-channel UV offsets.
 
-      // 1. Warmup curve: 0 → 1 over the first ~1.2s after start or since
-      //    the last master-mode "on" toggle.
+      // 1. Warmup curve: 0 → 1 over the first ~1.2s after start.
       const warmupDur = 1200; // ms
       const tWarm = timeMs - (this._warmupStartMs || 0);
       let warmupFactor = 1.0;
@@ -1573,27 +1473,6 @@ void main() {
       if (this._rafHandle != null) {
         cancelAnimationFrame(this._rafHandle);
         this._rafHandle = null;
-      }
-    }
-
-    // Master A/B mode. true = CRT effects on, false = bypass to raw signal
-    // (only effective when bypassCanvas:true at construction; the hero
-    // screen passes false and ignores master mode). localStorage-persisted.
-    setMasterMode(on) {
-      const wasOn = this._masterOn;
-      this._masterOn = !!on;
-      if (this._masterOn && !wasOn) {
-        // Reset warmup so the "on" transition feels like turning the tube on.
-        this._warmupStartMs = performance.now() - (this._startTime || performance.now());
-      }
-      try {
-        localStorage.setItem(
-          'interslice-systems:is2200:crt-mode',
-          this._masterOn ? 'on' : 'off'
-        );
-      } catch (e) {
-        // localStorage may be unavailable (private mode, etc.). State
-        // still tracks in-memory for this session.
       }
     }
 
