@@ -146,10 +146,15 @@ void main() {
   // subX >= 3: stays at coupling (gap column for cs=4+)
   weights = mix(vec3(1.0), weights, uStripeEnabled);
 
-  // Per-row shimmer. Stable hash per scanline (the cell row, since the
-  // signal is upscaled by cellSize) — the only animated micro-texture
-  // left in the phosphor model.
+  // Per-row shimmer. Stable hash per source-pixel row (dividing the
+  // output Y by cellSize.y undoes the integer upscale, mapping output
+  // pixels back to source rows) — the only spatial micro-texture left
+  // in the phosphor model (fixed pattern; uShimmerSeed is a static
+  // uniform, so the noise doesn't change frame-to-frame).
   uint rowIdx = uint(floor(px.y / uCellSize.y));
+  // 4099u prime stride retained for hash stability — original rationale
+  // (decorrelating from per-cell shimmer) is moot now that cell shimmer
+  // is gone, but changing it would shift the visible shimmer pattern.
   float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(rowIdx * 4099u + uShimmerSeed) - 1.0);
   rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
 
@@ -378,7 +383,7 @@ void main() {
         damperStrength: 0.62,
         // Optional per-row brightness noise. 0 = off. Cheap stand-in for
         // the line-to-line beam-current fluctuation a real CRT exhibits;
-        // does not reassert the cell grid.
+        // uniform along Y within each source row.
         rowShimmer: 0.0,
         shimmerSeed: 1983,
         // Post-stripe blur (CSS px) on the composite. Softens the
@@ -1217,7 +1222,7 @@ void main() {
               desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
               params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
             { key: 'perRowShimmer',    label: 'per-row shimmer',
-              desc: 'Per-scanline brightness noise. The only animated micro-texture in the model.',
+              desc: 'Per-scanline brightness noise. The only spatial micro-texture in the model (fixed pattern, not animated).',
               params: [{ opt: 'rowShimmer', min: 0, max: 0.1, step: 0.005, sub: 'amount' }] },
             { key: 'beamSpread',       label: 'beam spread',
               desc: 'Gaussian PSF blur on signal. Softens razor edges into glowing phosphor.',
