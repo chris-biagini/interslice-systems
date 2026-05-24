@@ -39,7 +39,7 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
-  // Phosphor fragment shader — Task 9: hotspot, cell shimmer, row shimmer,
+  // Phosphor fragment shader — cell shimmer, row shimmer,
   // beam spread. Full phosphor pass.
   // MRT: slot 0 = phosphor output, slot 1 = persistence next-frame.
   const PHOSPHOR_FS = `#version 300 es
@@ -54,7 +54,6 @@ uniform float uPersistence;
 uniform vec2 uConvergenceR;
 uniform vec2 uConvergenceG;
 uniform vec2 uConvergenceB;
-uniform float uHotspot;
 uniform float uCellShimmerAmp;
 uniform float uRowShimmerAmp;
 uniform uint uShimmerSeed;
@@ -64,7 +63,6 @@ uniform float uStripeEnabled;
 uniform float uCouplingEnabled;
 uniform float uPersistenceEnabled;
 uniform float uConvergenceEnabled;
-uniform float uHotspotEnabled;
 uniform float uCellShimmerEnabled;
 uniform float uRowShimmerEnabled;
 uniform float uBeamSpreadEnabled;
@@ -136,7 +134,6 @@ void main() {
 
   vec2 px = vUv * uViewSize;
   int subX = int(mod(px.x, uCellSize.x));
-  int subY = int(mod(px.y, uCellSize.y));
 
   // Stripe weights. General layout: subX=0→R primary, 1→G, 2→B,
   // anything else → gap (only coupling). Works for cs=2 (R+G, no B
@@ -150,26 +147,6 @@ void main() {
   else if (subX == 2) weights.b = 1.0;
   // subX >= 3: stays at coupling (gap column for cs=4+)
   weights = mix(vec3(1.0), weights, uStripeEnabled);
-
-  // Per-cell hotspot — vertically extended phosphor "dot."
-  // X is narrow (only the center column of each cell gets any
-  // boost) so the hotspot aligns with the phosphor stripe.
-  // Y fades linearly across the cell height: full boost at the
-  // center row, dropping to ~50% at the cell edges. The result
-  // reads as a soft vertical streak rather than a single bright
-  // pixel — matches how an aperture-grille phosphor "slot" lights
-  // up along its length.
-  int centerInt = int(uCellSize.x) / 2;
-  int dx = abs(subX - centerInt);
-  int dy = abs(subY - centerInt);
-  float xMask = float(dx == 0);
-  // Y falloff: 2× steeper than the cell-spanning soft version
-  // (1 - dy/cellSize.y). Half the spread → drops to 0 by the cell
-  // edge for small cells (cs=3,4) while still giving the center
-  // row a softer streak than the single-pixel original.
-  float yFall = max(0.0, 1.0 - 2.0 * float(dy) / uCellSize.y);
-  float hotBoost = 1.0 + uHotspot * xMask * yFall;
-  float hotMul = mix(1.0, hotBoost, uHotspotEnabled);
 
   // Per-cell shimmer: stable hash by cell index.
   vec2 cellCoord = floor(px / uCellSize);
@@ -185,7 +162,7 @@ void main() {
   float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(uint(cellCoord.y) * 4099u + uShimmerSeed) - 1.0);
   rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
 
-  float cellMod = hotMul * cellShim * rowShim;
+  float cellMod = cellShim * rowShim;
   vec3 stripeOut = lerped.rgb * weights * cellMod;
   oPhosphor = vec4(stripeOut, lerped.a);
 }`;
@@ -418,12 +395,6 @@ void main() {
         // cell read as a distinct phosphor dot rather than a flat tile.
         cellShimmer: 0.0,
         shimmerSeed: 1983,
-        // Beam hotspot — Manhattan-distance brightness boost at the dead-
-        // center pixel of each cell. With cs=3 this is the (subX=1,
-        // subY=1) pixel — one of every nine source pixels. Combined with
-        // cellShimmer, this is what produces the "dot grid" texture that
-        // makes the rendered image read as phosphor dots through glass.
-        hotspot: 0.0,
         // Post-stripe blur (CSS px) on the composite. Softens the
         // LCD-like sharp pixel edges into "lit phosphor through glass."
         phosphorBlurPx: 0.0,
@@ -485,18 +456,17 @@ void main() {
 
       // Per-effect runtime toggles. Mutable; setters take effect on
       // the next frame. The default subset (stripeProfile, coupling,
-      // persistence, hotspot, beamSpread) is the minimum that reads
-      // as a CRT without piling on effects that fight each other or
-      // pull focus from the content. Callers can pass any subset via
+      // persistence, beamSpread) is the minimum that reads as a CRT
+      // without piling on effects that fight each other or pull focus
+      // from the content. Callers can pass any subset via
       // opts.effects to flip individual defaults.
       this.effects = Object.assign({
-        // Phosphor pass — five effects on, four off.
+        // Phosphor pass — four effects on, four off.
         stripeProfile: true,
         phosphorCoupling: true,
         convergence: false,
         convergenceDrift: false,
         persistence: true,
-        perCellHotspot: true,
         perCellShimmer: false,
         perRowShimmer: false,
         beamSpread: true,
@@ -710,33 +680,15 @@ void main() {
       }
       this.rowMod = rowMod;
 
-      // Per-cell modulation LUT: combines the hotspot (a sub-cell Manhattan-
-      // distance pattern, identical across every cell) and the per-cell
-      // shimmer (one stable noise value per cell). The combined factor is
-      // looked up by `cellShim[cellIdx] * hotLUT[subY * cs + subX]` in the
-      // hot loop — two table reads and one multiply, no per-pixel
-      // arithmetic. Setting either to 0 collapses its contribution to 1.0
-      // so the multiply still runs but doesn't perturb.
+      // Per-cell modulation LUT: per-cell shimmer (one stable noise value
+      // per cell). Looked up by `cellShim[cellIdx]` in the hot loop — one
+      // table read, no per-pixel arithmetic. Setting cellShimmer to 0
+      // collapses its contribution to 1.0 so the multiply still runs but
+      // doesn't perturb.
       const cellGridW = Math.floor(vw / cs);
       const cellGridH = Math.floor(vh / cs);
       this.cellGridW = cellGridW;
       const cellCount = cellGridW * cellGridH;
-      const hotspot = Math.max(0, this.opts.hotspot);
-      const hotLUT = new Float32Array(cs * cs);
-      if (hotspot > 0) {
-        const cellCenter = cs >> 1;
-        for (let sy = 0; sy < cs; sy++) {
-          for (let sx = 0; sx < cs; sx++) {
-            const dx = sx < cellCenter ? cellCenter - sx : sx - cellCenter;
-            const dy = sy < cellCenter ? cellCenter - sy : sy - cellCenter;
-            const d = dx + dy;
-            hotLUT[sy * cs + sx] = d > 1 ? 1 : 1 + hotspot * (1 - d);
-          }
-        }
-      } else {
-        hotLUT.fill(1);
-      }
-      this.hotLUT = hotLUT;
       const cellShimAmp = Math.max(0, this.opts.cellShimmer);
       const cellShim = new Float32Array(cellCount);
       if (cellShimAmp > 0) {
@@ -920,7 +872,7 @@ void main() {
       // pass's upscale (canvas backing ≫ viewSize) tiles each phosphor
       // source pixel as a sharp block — matches the CPU path's
       // imageSmoothingEnabled=false drawImage. LINEAR on this texture
-      // averaged adjacent stripes and the per-cell hotspot into mush.
+      // averaged adjacent stripes into mush.
       const makeFloatTex = (w, h, filter) => {
         const t = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, t);
@@ -995,13 +947,11 @@ void main() {
         couplingEnabled:      gl.getUniformLocation(this._progPhosphor, 'uCouplingEnabled'),
         persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
         convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
-        hotspot:              gl.getUniformLocation(this._progPhosphor, 'uHotspot'),
         cellShimmerAmp:       gl.getUniformLocation(this._progPhosphor, 'uCellShimmerAmp'),
         rowShimmerAmp:        gl.getUniformLocation(this._progPhosphor, 'uRowShimmerAmp'),
         shimmerSeed:          gl.getUniformLocation(this._progPhosphor, 'uShimmerSeed'),
         beamSpreadPx:         gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadPx'),
         beamSpreadVerticalPx: gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadVerticalPx'),
-        hotspotEnabled:       gl.getUniformLocation(this._progPhosphor, 'uHotspotEnabled'),
         cellShimmerEnabled:   gl.getUniformLocation(this._progPhosphor, 'uCellShimmerEnabled'),
         rowShimmerEnabled:    gl.getUniformLocation(this._progPhosphor, 'uRowShimmerEnabled'),
         beamSpreadEnabled:    gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadEnabled'),
@@ -1178,7 +1128,7 @@ void main() {
       // change since page load." Deep-copies convergence (object) so we
       // don't alias.
       const PANEL_OPT_KEYS = [
-        'phosphorCoupling', 'persistence', 'hotspot', 'cellShimmer',
+        'phosphorCoupling', 'persistence', 'cellShimmer',
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
         'damperStrength', 'scanlineDepth', 'scanlinePeriod',
@@ -1305,9 +1255,6 @@ void main() {
             { key: 'persistence',      label: 'persistence',
               desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
               params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
-            { key: 'perCellHotspot',   label: 'per-cell hotspot',
-              desc: 'Brightens the dead-center pixel of each cell — beam focus point.',
-              params: [{ opt: 'hotspot', min: 0, max: 1.5, step: 0.05, sub: 'amount' }] },
             { key: 'perCellShimmer',   label: 'per-cell shimmer',
               desc: 'Static brightness jitter per cell. Asserts the phosphor-dot grid.',
               params: [{ opt: 'cellShimmer', min: 0, max: 0.2, step: 0.01, sub: 'amount' }] },
@@ -1574,7 +1521,7 @@ void main() {
 
     // Upload uniforms that don't change for the lifetime of this
     // renderer — sampler unit bindings, viewSize/cellSize, the
-    // base option values (phosphorCoupling, persistence, hotspot,
+    // base option values (phosphorCoupling, persistence,
     // shimmer amplitudes, beam spread, bloom threshold, composite
     // geometry, opaque background flag), and the convergence base
     // (R/B get overridden per-frame when effects.convergenceDrift
@@ -1597,7 +1544,6 @@ void main() {
       gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
       gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
       gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
-      gl.uniform1f(this._uPhosphor.hotspot,          this.opts.hotspot);
       gl.uniform1f(this._uPhosphor.cellShimmerAmp,   this.opts.cellShimmer);
       gl.uniform1f(this._uPhosphor.rowShimmerAmp,    this.opts.rowShimmer);
       gl.uniform1ui(this._uPhosphor.shimmerSeed,     this.opts.shimmerSeed);
@@ -1750,14 +1696,13 @@ void main() {
 
       // Per-frame *Enabled toggles. The ?debug=1 panel mutates
       // this.effects at runtime, so these must stay dynamic. Static
-      // option values (phosphorCoupling, persistence, hotspot, shimmer
+      // option values (phosphorCoupling, persistence, shimmer
       // amps, beam spread, viewSize/cellSize, sampler bindings, base
       // convergence) are uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.couplingEnabled,    this.effects.phosphorCoupling ? 1 : 0);
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.hotspotEnabled,     this.effects.perCellHotspot   ? 1 : 0);
       gl.uniform1f(this._uPhosphor.cellShimmerEnabled, this.effects.perCellShimmer   ? 1 : 0);
       gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread       ? 1 : 0);
@@ -2083,7 +2028,6 @@ void main() {
       const stripeG = this.stripeG;
       const stripeB = this.stripeB;
       const rowMod = this.rowMod;
-      const hotLUT = this.hotLUT;
       const cellShim = this.cellShim;
       const cellGridW = this.cellGridW;
       const invCs = 1 / cs;
@@ -2092,8 +2036,6 @@ void main() {
       for (let py = 0; py < vh; py++) {
         const rm = rowMod[py];
         const cyBase = (py * invCs) | 0;
-        const subY = py - cyBase * cs;
-        const hotRowOff = subY * cs;
         const cellRowBase = cyBase * cellGridW;
 
         for (let px = 0; px < vw; px++) {
@@ -2119,11 +2061,10 @@ void main() {
           prB[pix] = lerpB;
           prA[pix] = lerpA;
 
-          // Cell mod combines per-cell shimmer (one value per cell) with
-          // the sub-cell hotspot pattern (boost at the cell center). Both
-          // collapse to 1.0 when their amplitudes are 0, so this multiply
-          // is harmless when both effects are off.
-          const cellMod = hotLUT[hotRowOff + subX] * cellShim[cellRowBase + cxBase];
+          // Per-cell shimmer (one value per cell). Collapses to 1.0 when
+          // the amplitude is 0, so this multiply is harmless when the
+          // effect is off.
+          const cellMod = cellShim[cellRowBase + cxBase];
 
           // Stripe geometry: weighted contribution from each lit position
           // (with optional overlap bleeding into adjacent columns).
