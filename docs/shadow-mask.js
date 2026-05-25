@@ -58,11 +58,13 @@ uniform uint uShimmerSeed;
 uniform float uBeamSpreadPx;
 uniform float uBeamSpreadVerticalPx;
 uniform float uDotRadius;
+uniform float uPhosphorCoupling;
 uniform float uStripeEnabled;
 uniform float uPersistenceEnabled;
 uniform float uConvergenceEnabled;
 uniform float uRowShimmerEnabled;
 uniform float uBeamSpreadEnabled;
+uniform float uCouplingEnabled;
 
 layout(location = 0) out vec4 oPhosphor;
 layout(location = 1) out vec4 oPersistenceNext;
@@ -157,11 +159,24 @@ void main() {
   float maskG = 1.0 - smoothstep(uDotRadius - 0.4, uDotRadius + 0.4, distance(local, posG));
   float maskB = 1.0 - smoothstep(uDotRadius - 0.4, uDotRadius + 0.4, distance(local, posB));
 
-  // Each dot emits in its assigned channel only, at the signal value
-  // that channel saw at the cell center. The mix() honors the
-  // stripeProfile toggle: OFF paints the raw signal everywhere,
-  // bypassing the triad mask.
-  vec3 dotColors = vec3(lerped.r * maskR, lerped.g * maskG, lerped.b * maskB);
+  // Per-dot emission with phosphor coupling. Each dot emits its
+  // primary channel at full signal, plus a fraction of the other two
+  // channels at coupling x their signal. This models cross-talk
+  // (UV bleed, phosphor cross-contamination, eye-surface blending)
+  // and softens the chromatic mismatch when individual dots are
+  // visually resolved — a pure-white signal still reads as white at
+  // each dot instead of one-channel-tinted. coupling=0 → strict
+  // architectural behavior (each dot lights only its primary
+  // channel). coupling=1 → all dots emit the full signal (equivalent
+  // to painting raw signal, just gated by the dot mask).
+  //
+  // The mix() honors the stripeProfile toggle: OFF paints the raw
+  // signal everywhere, bypassing the triad mask entirely.
+  float c = uPhosphorCoupling * uCouplingEnabled;
+  vec3 emR = vec3(lerped.r,     c * lerped.g, c * lerped.b);
+  vec3 emG = vec3(c * lerped.r, lerped.g,     c * lerped.b);
+  vec3 emB = vec3(c * lerped.r, c * lerped.g, lerped.b);
+  vec3 dotColors = emR * maskR + emG * maskG + emB * maskB;
   vec3 phosphor = mix(lerped.rgb, dotColors, uStripeEnabled);
 
   // Per-row shimmer — universal beam-current ripple, same hash as
@@ -356,6 +371,15 @@ void main() {
         // a continuous "phosphor field" texture, smaller values leave
         // more black mask area between dots.
         dotRadius: 0.7,
+        // Phosphor coupling — each dot emits its primary channel at
+        // full signal AND a fraction of the other two channels at
+        // `coupling × their signal`. Models phosphor cross-talk and
+        // softens the per-dot chromatic mismatch when individual dots
+        // are visually resolved (pure white reads as white at each dot
+        // rather than one-channel-tinted). 0 = strict architectural
+        // behavior, each dot lights only its primary channel; 0.3 ≈
+        // tasteful softening; 1 = every dot emits the full signal.
+        phosphorCoupling: 0,
         // Integer factor for stretching the signal canvas onto the main
         // canvas via nearest-neighbor drawImage. The shadow-mask phosphor
         // pass tiles dots over the upscaled canvas; an upscale > 1 lets
@@ -427,14 +451,15 @@ void main() {
       }, opts);
 
       // Per-effect runtime toggles. Mutable; setters take effect on
-      // the next frame. The default subset (stripeProfile, persistence,
-      // beamSpread) is the minimum that reads as a CRT
+      // the next frame. The default subset (stripeProfile, phosphorCoupling,
+      // persistence, beamSpread) is the minimum that reads as a CRT
       // without piling on effects that fight each other or pull focus
       // from the content. Callers can pass any subset via
       // opts.effects to flip individual defaults.
       this.effects = Object.assign({
-        // Phosphor pass — three effects on, two off.
+        // Phosphor pass — four effects on, three off.
         stripeProfile: true,
+        phosphorCoupling: true,
         convergence: false,
         convergenceDrift: false,
         persistence: true,
@@ -628,9 +653,11 @@ void main() {
         convergenceG:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceG'),
         convergenceB:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceB'),
         dotRadius:            gl.getUniformLocation(this._progPhosphor, 'uDotRadius'),
+        phosphorCoupling:     gl.getUniformLocation(this._progPhosphor, 'uPhosphorCoupling'),
         stripeEnabled:        gl.getUniformLocation(this._progPhosphor, 'uStripeEnabled'),
         persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
         convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
+        couplingEnabled:      gl.getUniformLocation(this._progPhosphor, 'uCouplingEnabled'),
         rowShimmerAmp:        gl.getUniformLocation(this._progPhosphor, 'uRowShimmerAmp'),
         shimmerSeed:          gl.getUniformLocation(this._progPhosphor, 'uShimmerSeed'),
         beamSpreadPx:         gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadPx'),
@@ -779,7 +806,7 @@ void main() {
       // change since page load." Deep-copies convergence (object) so we
       // don't alias.
       const PANEL_OPT_KEYS = [
-        'dotRadius', 'persistence',
+        'dotRadius', 'phosphorCoupling', 'persistence',
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
         'bleedRadius',
@@ -869,6 +896,9 @@ void main() {
             { key: 'stripeProfile',    label: 'phosphor mask',
               desc: 'Triad-per-cell dot tiling. Off = raw signal, no mask.',
               params: [{ opt: 'dotRadius', min: 0.2, max: 1.5, step: 0.05, sub: 'dot radius (src-px)' }] },
+            { key: 'phosphorCoupling', label: 'phosphor coupling',
+              desc: 'Each dot also emits other channels at this fraction. Cross-talk cheat that softens per-dot chromatic mismatch.',
+              params: [{ opt: 'phosphorCoupling', min: 0, max: 1, step: 0.05, sub: 'strength' }] },
             { key: 'convergence',      label: 'convergence',
               desc: 'Per-channel xy-offset. R and B sample from shifted positions — edges fringe.',
               params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread' }] },
@@ -1130,6 +1160,7 @@ void main() {
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
       gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
       gl.uniform1f(this._uPhosphor.dotRadius,            this.opts.dotRadius ?? 0.7);
+      gl.uniform1f(this._uPhosphor.phosphorCoupling,     this.opts.phosphorCoupling ?? 0);
 
       // Convergence base — R/B get overridden per-frame when drift is
       // active. On the transition back to inactive, _renderGpu re-uploads
@@ -1250,6 +1281,7 @@ void main() {
       // dotRadius, viewSize/cellSize, sampler bindings, base
       // convergence) are uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
+      gl.uniform1f(this._uPhosphor.couplingEnabled,    this.effects.phosphorCoupling ? 1 : 0);
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer    ? 1 : 0);
