@@ -168,7 +168,6 @@ in vec2 vUv;
 uniform sampler2D uPhosphor;
 uniform sampler2D uGloss;
 uniform sampler2D uVignette;
-uniform sampler2D uGapMask;
 uniform sampler2D uBloom;
 uniform vec2 uCanvasSize;
 uniform float uCurvature;
@@ -181,7 +180,6 @@ uniform float uOpaqueBackground;
 uniform float uCurvatureEnabled;
 uniform float uGlossEnabled;
 uniform float uVignetteEnabled;
-uniform float uGapMaskEnabled;
 uniform float uBloomEnabled;
 uniform float uScanlineEnabled;
 uniform float uScanlineCycles;      // number of bright/dim cycles across stripeUv.y = 1
@@ -250,9 +248,6 @@ void main() {
 
   vec4 vig = texture(uVignette, sampleUv);
   color *= mix(1.0, vig.r, uVignetteEnabled);
-
-  vec4 gap = texture(uGapMask, vec2(sampleUv.x, 0.0));
-  color *= mix(1.0, gap.r, uGapMaskEnabled);
 
   color *= uBrightness;
 
@@ -334,9 +329,7 @@ void main() {
         viewSize: [200, 200],
         canvasSize: [240, 240],
         // Cell pitch in source pixels. cs=3 keeps the shipped contiguous-
-        // triad layout (`[R, G, B]`, no gap column) — combined with
-        // `stripeUpscale > 1` and a `gapMaskAlpha` overlay, this gets the
-        // visible aperture-grille look at shipped per-pixel cost. cs=6
+        // triad layout (`[R, G, B]`, no gap column). cs=6
         // uses an interleaved layout (`[R, gap, G, gap, B, gap]`) where
         // the gap is part of the source-pixel model — heavier, but the
         // gap participates in convergence and bleed.
@@ -366,20 +359,6 @@ void main() {
         // the color (lit + 2 coupling) instead of just one (lit only).
         // Gap columns are unaffected — they stay pure black.
         phosphorCoupling: 0,
-        // Gap mask — post-composite overlay that paints thin vertical
-        // black lines on top of the stripe layer at canvas-pixel
-        // positions. Lets the renderer keep cs=3 (no source-pixel gap
-        // columns, shipped brightness and cost) while still showing the
-        // aperture-grille gap pattern at display. 0 = no mask; 1 = pure
-        // opaque black at each masked column. Mask is applied only over
-        // the stripe region (not the bleed margin around it).
-        gapMaskAlpha: 0,
-        // Mask line spacing in canvas pixels. With stripeUpscale=2 and
-        // gapMaskPeriod=2, every other canvas pixel is darkened — the
-        // visible result is gap-between-every-stripe (aperture grille).
-        // gapMaskPeriod=6 with stripeUpscale=2 puts one gap per triad
-        // (cs=4-style between-triads gap).
-        gapMaskPeriod: 2,
         // Selective-bloom kernel spread in source pixels. The base
         // separable-Gaussian kernel is ~2 texels of the half-res bloom
         // FBO; this value scales the kernel offsets, so bleedRadius=30
@@ -436,7 +415,7 @@ void main() {
         debugOverlay: true,
         // When true (default), canvas pixels are always opaque —
         // the canvas fills its parent's background and effects like
-        // vignette/gap mask are visible across the entire surface.
+        // vignette are visible across the entire surface.
         // When false, canvas alpha tracks the phosphor silhouette
         // (plus the bloom feather), so the canvas reads as a
         // cut-out of the page background. The hero screen wants
@@ -460,14 +439,9 @@ void main() {
         persistence: true,
         perRowShimmer: false,
         beamSpread: true,
-        // Composite pass — both off by default. selectiveBloom interacts
-        // oddly with the stripe profile, so callers opt in. gapMask is
-        // off because it's only meaningful when gapMaskAlpha > 0 and the
-        // caller has sized canvasSize so the stripe region (or close to
-        // it) fills the canvas — otherwise the period drifts off the
-        // stripe grid in the bleed margin. The hero opts in.
+        // Composite pass — selectiveBloom is off by default since it
+        // interacts oddly with the stripe profile; callers opt in.
         selectiveBloom: false,
-        gapMask: false,
         // Horizontal scanlines — periodic dim/bright bands along Y in
         // the composite pass. Off by default since it adds a strong
         // visual layer that compounds with the vertical stripe pattern.
@@ -678,13 +652,11 @@ void main() {
         phosphor:          gl.getUniformLocation(this._progComposite, 'uPhosphor'),
         gloss:             gl.getUniformLocation(this._progComposite, 'uGloss'),
         vignette:          gl.getUniformLocation(this._progComposite, 'uVignette'),
-        gapMask:           gl.getUniformLocation(this._progComposite, 'uGapMask'),
         canvasSize:        gl.getUniformLocation(this._progComposite, 'uCanvasSize'),
         curvature:         gl.getUniformLocation(this._progComposite, 'uCurvature'),
         curvatureEnabled:  gl.getUniformLocation(this._progComposite, 'uCurvatureEnabled'),
         glossEnabled:      gl.getUniformLocation(this._progComposite, 'uGlossEnabled'),
         vignetteEnabled:   gl.getUniformLocation(this._progComposite, 'uVignetteEnabled'),
-        gapMaskEnabled:    gl.getUniformLocation(this._progComposite, 'uGapMaskEnabled'),
         stripeFraction:    gl.getUniformLocation(this._progComposite, 'uStripeFraction'),
         stripeMargin:      gl.getUniformLocation(this._progComposite, 'uStripeMargin'),
         opaqueBackground:  gl.getUniformLocation(this._progComposite, 'uOpaqueBackground'),
@@ -926,8 +898,6 @@ void main() {
                 { opt: 'bloomStrength',  min: 0, max: 3,   step: 0.1,  sub: 'strength' },
                 { opt: 'bleedRadius',    min: 0, max: 100, step: 1,    sub: 'radius (src px)' },
               ] },
-            { key: 'gapMask',        label: 'gap mask',
-              desc: 'Dark vertical lines between stripes. Texture-baked; alpha fixed at init.' },
             { key: 'scanlines',      label: 'horizontal scanlines',
               desc: 'Periodic dim/bright bands along Y — the beam paints rows with gaps between.',
               params: [
@@ -1069,7 +1039,6 @@ void main() {
       if (this._fboPhosphorWithB) gl.deleteFramebuffer(this._fboPhosphorWithB);
       if (this._texGloss)    gl.deleteTexture(this._texGloss);
       if (this._texVignette) gl.deleteTexture(this._texVignette);
-      if (this._texGapMask)  gl.deleteTexture(this._texGapMask);
       if (this._texBloomA) gl.deleteTexture(this._texBloomA);
       if (this._texBloomB) gl.deleteTexture(this._texBloomB);
       if (this._fboBloomA) gl.deleteFramebuffer(this._fboBloomA);
@@ -1128,39 +1097,6 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-      // GAP MASK: vertical-line pattern at twice the source resolution.
-      // Period N canvas-px → one in N columns darkened by gapMaskAlpha.
-      // Tile vertically via WRAP_T REPEAT (no per-row variation needed).
-      // The 4-px height keeps the texture tiny.
-      //
-      // Offset is `period - 1` (the last column of each period bucket),
-      // preserving the historical hero behavior at period=2 (darken
-      // every x=1, 3, 5...). Comments in the option block describe the
-      // intent at larger periods (e.g., period=6 with stripeUpscale=2
-      // puts roughly one dark column per RGB triad).
-      const period = Math.max(1, Math.floor(this.opts.gapMaskPeriod || 2));
-      const offset = period - 1;
-      const alpha = Math.max(0, Math.min(1, this.opts.gapMaskAlpha || 0));
-      const gapW = vw * 2;
-      const gapH = 4;
-      const gapCanvas = document.createElement('canvas');
-      gapCanvas.width = gapW;
-      gapCanvas.height = gapH;
-      const gpctx = gapCanvas.getContext('2d');
-      gpctx.fillStyle = 'white';
-      gpctx.fillRect(0, 0, gapW, gapH);
-      gpctx.fillStyle = `rgba(0,0,0,${alpha})`;
-      for (let x = offset; x < gapW; x += period) {
-        gpctx.fillRect(x, 0, 1, gapH);
-      }
-      this._texGapMask = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, this._texGapMask);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, gapCanvas);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
     }
 
     // Upload uniforms that don't change for the lifetime of this
@@ -1208,8 +1144,7 @@ void main() {
       gl.uniform1i(this._uComposite.phosphor, 0);
       gl.uniform1i(this._uComposite.gloss,    1);
       gl.uniform1i(this._uComposite.vignette, 2);
-      gl.uniform1i(this._uComposite.gapMask,  3);
-      gl.uniform1i(this._uComposite.bloom,    4);
+      gl.uniform1i(this._uComposite.bloom,    3);
       gl.uniform2f(this._uComposite.canvasSize, this.canvas.width, this.canvas.height);
       gl.uniform1f(this._uComposite.curvature,        this.opts.curvature);
       gl.uniform1f(this._uComposite.curvatureMode,    this.opts.curvatureMode === 'cylindrical' ? 1 : 0);
@@ -1400,7 +1335,6 @@ void main() {
       gl.uniform1f(this._uComposite.curvatureEnabled, this.effects.curvature      ? 1 : 0);
       gl.uniform1f(this._uComposite.glossEnabled,     this.effects.gloss          ? 1 : 0);
       gl.uniform1f(this._uComposite.vignetteEnabled,  this.effects.vignette       ? 1 : 0);
-      gl.uniform1f(this._uComposite.gapMaskEnabled,   this.effects.gapMask        ? 1 : 0);
       gl.uniform1f(this._uComposite.bloomEnabled,     this.effects.selectiveBloom ? 1 : 0);
       gl.uniform1f(this._uComposite.scanlineEnabled,  this.effects.scanlines      ? 1 : 0);
       gl.uniform1f(this._uComposite.brightness,       this._brightness ?? 1.0);
@@ -1412,8 +1346,6 @@ void main() {
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, this._texVignette);
       gl.activeTexture(gl.TEXTURE3);
-      gl.bindTexture(gl.TEXTURE_2D, this._texGapMask);
-      gl.activeTexture(gl.TEXTURE4);
       gl.bindTexture(gl.TEXTURE_2D, this._texBloomA);
 
       gl.bindVertexArray(this._vao);
