@@ -57,7 +57,7 @@ uniform float uRowShimmerAmp;
 uniform uint uShimmerSeed;
 uniform float uBeamSpreadPx;
 uniform float uBeamSpreadVerticalPx;
-uniform float uMaskFrac;
+uniform float uDotRadius;
 uniform float uStripeEnabled;
 uniform float uPersistenceEnabled;
 uniform float uConvergenceEnabled;
@@ -96,112 +96,81 @@ vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPxH, float spreadPxV) 
 void main() {
   vec2 px = vUv * uViewSize;
 
-  // Delta-triad hex Voronoi tiling. Every other row is x-shifted by half
-  // a cell width; one phosphor cell per lattice point. To make each
-  // fragment belong to the *nearest* cell (not just the cell whose
-  // rectangular bounding box it sits in), walk a 3x3 neighborhood of
-  // candidate cells and pick the closest. The chosen cell's Voronoi
-  // region is a hexagon, so the phosphor cells tile the plane with no
-  // gaps — full coverage, no empty space between phosphors.
-  //
-  // We determine the cell FIRST, before sampling the signal, because the
-  // signal sample needs to happen at the cell center — not at the
-  // fragment position. Sampling per-fragment would let signal edges that
-  // cross through a cell light only one half of it, producing a
-  // "stained glass illuminated by a flashlight" effect: a sharp
-  // mid-phosphor transition tracking the underlying vector source. Real
-  // CRT phosphors emit as discrete units. One sample per cell.
-  int naiveRow = int(floor(px.y / uCellSize.y));
-  float naiveShift = float(naiveRow & 1) * uCellSize.x * 0.5;
-  int naiveCol = int(floor((px.x - naiveShift) / uCellSize.x));
+  // Hex-staggered rectangular cell grid. One cell = one phosphor triad =
+  // one image pixel on the simulated CRT. Within each cell we paint
+  // three small round dots (R top-left, G top-right, B bottom-center)
+  // co-located like the real shadow-mask geometry: the three electron
+  // guns converge on a single triad position, so R/G/B always live
+  // side-by-side at every image pixel rather than being scattered
+  // across the lattice. Adjacent rows are x-shifted by half a cell to
+  // give the dot field its characteristic honeycomb pattern.
+  int row = int(floor(px.y / uCellSize.y));
+  float shift = float(row & 1) * uCellSize.x * 0.5;
+  int col = int(floor((px.x - shift) / uCellSize.x));
 
-  int bestRow = naiveRow;
-  int bestCol = naiveCol;
-  vec2 bestCenter = vec2(0.0);
-  float bestDistSq = 1.0e9;
-  float secondDistSq = 1.0e9;
-  for (int dr = -1; dr <= 1; dr++) {
-    int tr = naiveRow + dr;
-    float ts = float(tr & 1) * uCellSize.x * 0.5;
-    for (int dc = -1; dc <= 1; dc++) {
-      int tc = naiveCol + dc;
-      vec2 c = vec2(
-        (float(tc) + 0.5) * uCellSize.x + ts,
-        (float(tr) + 0.5) * uCellSize.y
-      );
-      vec2 d = px - c;
-      float ds = dot(d, d);
-      if (ds < bestDistSq) {
-        secondDistSq = bestDistSq;
-        bestDistSq = ds;
-        bestRow = tr;
-        bestCol = tc;
-        bestCenter = c;
-      } else if (ds < secondDistSq) {
-        secondDistSq = ds;
-      }
-    }
-  }
+  vec2 cellCenter = vec2(
+    (float(col) + 0.5) * uCellSize.x + shift,
+    (float(row) + 0.5) * uCellSize.y
+  );
 
-  // Now sample the signal at the cell center. Beam spread, convergence,
-  // and persistence all read at this cellUv — so the entire cell sees
-  // one signal value and lights up as a unit (as a real phosphor does).
-  // The edge mask remains the only per-fragment variation, drawing the
-  // hex boundaries themselves.
-  vec2 cellUv = bestCenter / uViewSize;
+  // Sample the signal at the cell center (one sample per triad).
+  // Sampling per-fragment instead would let signal edges that cross
+  // through a cell slice it into bright/dim halves at the underlying
+  // source-vector boundary — real CRT phosphors emit as discrete
+  // units. Beam spread, convergence, and persistence all read at this
+  // cellUv so the whole triad responds to one signal value.
+  vec2 cellUv = cellCenter / uViewSize;
 
-  vec2 dR = (uConvergenceR / uViewSize) * uConvergenceEnabled;
-  vec2 dG = (uConvergenceG / uViewSize) * uConvergenceEnabled;
-  vec2 dB = (uConvergenceB / uViewSize) * uConvergenceEnabled;
+  vec2 cR = (uConvergenceR / uViewSize) * uConvergenceEnabled;
+  vec2 cG = (uConvergenceG / uViewSize) * uConvergenceEnabled;
+  vec2 cB = (uConvergenceB / uViewSize) * uConvergenceEnabled;
 
   float beamSpreadH = uBeamSpreadPx * uBeamSpreadEnabled;
   float beamSpreadV = max(beamSpreadH, uBeamSpreadVerticalPx * uBeamSpreadEnabled);
-  float sR = sampleBeamSpread(uSignal, cellUv + dR, beamSpreadH, beamSpreadV).r;
-  float sG = sampleBeamSpread(uSignal, cellUv + dG, beamSpreadH, beamSpreadV).g;
-  float sB = sampleBeamSpread(uSignal, cellUv + dB, beamSpreadH, beamSpreadV).b;
+  float sR = sampleBeamSpread(uSignal, cellUv + cR, beamSpreadH, beamSpreadV).r;
+  float sG = sampleBeamSpread(uSignal, cellUv + cG, beamSpreadH, beamSpreadV).g;
+  float sB = sampleBeamSpread(uSignal, cellUv + cB, beamSpreadH, beamSpreadV).b;
   float sA = sampleBeamSpread(uSignal, cellUv, beamSpreadH, beamSpreadV).a;
   vec4 live = vec4(sR, sG, sB, sA);
 
   vec4 prev = texture(uPersistencePrev, cellUv);
-  float dr = uPersistence * uPersistenceEnabled;
-  vec4 lerped = prev * dr + live * (1.0 - dr);
+  float decay = uPersistence * uPersistenceEnabled;
+  vec4 lerped = prev * decay + live * (1.0 - decay);
 
   oPersistenceNext = lerped;
 
-  // (col - row) mod 3 produces the delta-triad arrangement: every
-  // triangle of 3 nearby cells is one R + one G + one B. The +3-then-mod
-  // dance is GLSL int mod's negative-result safety net.
-  int colorIdx = ((bestCol - bestRow) % 3 + 3) % 3;
+  // Triad geometry — three dot positions within the cell, in source
+  // pixels relative to cell center. Inverted-equilateral-ish triangle:
+  // R top-left, G top-right, B bottom-center. Inset 30% horizontally
+  // and 25% vertically from cell edges so dots stay inside their cell
+  // with a small margin (no overflow into neighbor cells, which would
+  // get the wrong signal value).
+  vec2 local = px - cellCenter;
+  vec2 posR = vec2(-0.30, -0.22) * uCellSize;
+  vec2 posG = vec2( 0.30, -0.22) * uCellSize;
+  vec2 posB = vec2( 0.00,  0.28) * uCellSize;
 
-  // Edge mask: the metal mask between phosphors. Distance from the
-  // fragment to the Voronoi edge (the perpendicular bisector between
-  // best and second-best centers) is approximately
-  //     (secondDist - bestDist) * 0.5
-  // We darken fragments within uMaskFrac * cellSize.x of that edge,
-  // producing the thin dark mesh that gives a real shadow-mask CRT its
-  // structural character. uMaskFrac == 0 = full coverage, no mask.
-  float bestDist = sqrt(bestDistSq);
-  float secondDist = sqrt(secondDistSq);
-  float edgeDist = (secondDist - bestDist) * 0.5;
-  float maskWidth = uMaskFrac * uCellSize.x;
-  float edgeMask = maskWidth > 0.0
-    ? smoothstep(0.0, maskWidth, edgeDist)
-    : 1.0;
+  // Soft round dot masks. uDotRadius is in source pixels; the ±0.4 px
+  // smoothstep window softens dot edges into a glowing fall-off
+  // (suggesting phosphor light scatter, not a hard polygon edge).
+  float maskR = 1.0 - smoothstep(uDotRadius - 0.4, uDotRadius + 0.4, distance(local, posR));
+  float maskG = 1.0 - smoothstep(uDotRadius - 0.4, uDotRadius + 0.4, distance(local, posG));
+  float maskB = 1.0 - smoothstep(uDotRadius - 0.4, uDotRadius + 0.4, distance(local, posB));
 
-  // Only the lit channel emits. The mix() honors the stripeProfile
-  // toggle: OFF (debug-panel only) paints the raw signal everywhere.
-  vec3 weights = vec3(0);
-  weights[colorIdx] = edgeMask;
-  weights = mix(vec3(1.0), weights, uStripeEnabled);
+  // Each dot emits in its assigned channel only, at the signal value
+  // that channel saw at the cell center. The mix() honors the
+  // stripeProfile toggle: OFF paints the raw signal everywhere,
+  // bypassing the triad mask.
+  vec3 dotColors = vec3(lerped.r * maskR, lerped.g * maskG, lerped.b * maskB);
+  vec3 phosphor = mix(lerped.rgb, dotColors, uStripeEnabled);
 
   // Per-row shimmer — universal beam-current ripple, same hash as
   // Trinitron's. uShimmerSeed advances per-frame in _renderGpu.
-  uint rowIdx = uint(bestRow);
+  uint rowIdx = uint(row);
   float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(rowIdx * 4099u + uShimmerSeed) - 1.0);
   rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
 
-  vec3 stripeOut = lerped.rgb * weights * rowShim;
-  oPhosphor = vec4(stripeOut, lerped.a);
+  oPhosphor = vec4(phosphor * rowShim, lerped.a);
 }`;
 
   const COMPOSITE_FS = `#version 300 es
@@ -379,14 +348,14 @@ void main() {
         // which floors to 1 — slightly skewed hexes, but the
         // delta-triad geometry still reads.
         cellSize: [3, 3],
-        // Width of the dark "metal mask" between adjacent phosphor cells,
-        // as a fraction of cell width. The phosphor cells tile the plane
-        // as Voronoi hexagons (no gaps between phosphors); maskFrac
-        // darkens fragments near the hex boundaries to suggest the metal
-        // mesh that holds the phosphors in a real shadow-mask CRT.
-        // 0.0 = no mask, fully tiled phosphors; 0.10 ≈ 10% of each cell's
-        // perimeter darkened — modest mesh, hexes still read as distinct.
-        maskFrac: 0.10,
+        // Radius of each phosphor dot within its cell, in source pixels.
+        // Each cell holds a triad of three dots (R, G, B); this controls
+        // their size. Values that fit cleanly in cellSize=3 without dot
+        // centers (at ±0.30 cellSize from center) overflowing the cell
+        // edge: up to ~0.6 px. Larger values pack dots more tightly into
+        // a continuous "phosphor field" texture, smaller values leave
+        // more black mask area between dots.
+        dotRadius: 0.7,
         // Integer factor for stretching the signal canvas onto the main
         // canvas via nearest-neighbor drawImage. The shadow-mask phosphor
         // pass tiles dots over the upscaled canvas; an upscale > 1 lets
@@ -658,7 +627,7 @@ void main() {
         convergenceR:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceR'),
         convergenceG:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceG'),
         convergenceB:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceB'),
-        maskFrac:             gl.getUniformLocation(this._progPhosphor, 'uMaskFrac'),
+        dotRadius:            gl.getUniformLocation(this._progPhosphor, 'uDotRadius'),
         stripeEnabled:        gl.getUniformLocation(this._progPhosphor, 'uStripeEnabled'),
         persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
         convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
@@ -810,7 +779,7 @@ void main() {
       // change since page load." Deep-copies convergence (object) so we
       // don't alias.
       const PANEL_OPT_KEYS = [
-        'maskFrac', 'persistence',
+        'dotRadius', 'persistence',
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
         'bleedRadius',
@@ -898,8 +867,8 @@ void main() {
         { title: 'phosphor',
           items: [
             { key: 'stripeProfile',    label: 'phosphor mask',
-              desc: 'Delta-triad hex Voronoi tiling. Off = raw signal, no mask.',
-              params: [{ opt: 'maskFrac', min: 0.0, max: 0.40, step: 0.01, sub: 'metal mask (frac)' }] },
+              desc: 'Triad-per-cell dot tiling. Off = raw signal, no mask.',
+              params: [{ opt: 'dotRadius', min: 0.2, max: 1.5, step: 0.05, sub: 'dot radius (src-px)' }] },
             { key: 'convergence',      label: 'convergence',
               desc: 'Per-channel xy-offset. R and B sample from shifted positions — edges fringe.',
               params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread' }] },
@@ -1130,7 +1099,7 @@ void main() {
 
     // Upload uniforms that don't change for the lifetime of this
     // renderer — sampler unit bindings, viewSize/cellSize, the
-    // base option values (maskFrac, persistence,
+    // base option values (dotRadius, persistence,
     // row-shimmer amp, beam spread, bloom threshold, composite
     // geometry, opaque background flag), and the convergence base
     // (R/B get overridden per-frame when effects.convergenceDrift
@@ -1160,7 +1129,7 @@ void main() {
       // the frame counter so the row pattern reseeds at ~30 fps).
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
       gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
-      gl.uniform1f(this._uPhosphor.maskFrac,             this.opts.maskFrac ?? 0.10);
+      gl.uniform1f(this._uPhosphor.dotRadius,            this.opts.dotRadius ?? 0.7);
 
       // Convergence base — R/B get overridden per-frame when drift is
       // active. On the transition back to inactive, _renderGpu re-uploads
@@ -1278,7 +1247,7 @@ void main() {
       // Per-frame *Enabled toggles. The ?debug=1 panel mutates
       // this.effects at runtime, so these must stay dynamic. Static
       // option values (persistence, row-shimmer amp, beam spread,
-      // maskFrac, viewSize/cellSize, sampler bindings, base
+      // dotRadius, viewSize/cellSize, sampler bindings, base
       // convergence) are uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);

@@ -2809,20 +2809,26 @@
             persistence: 0.82,
             convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
             // Beam-spread sigma in source pixels. With cellSize [3, 3]
-            // and one signal sample per cell, the per-cell Gaussian
-            // sample needs to cover at least half a cell on either side
-            // to integrate finer signal features (laser grid lines, thin
-            // strokes) without aliasing the lattice. 1.5 source-px sigma
-            // gives a ~6-px effective footprint per cell, generously
-            // wider than the cell pitch. Isotropic — both axes are
-            // quantized on the dot lattice (no aperture-grille horizontal
-            // sharpness tradeoff to make).
+            // and one signal sample per triad, 1.5 source-px sigma gives
+            // a ~6-px effective footprint — twice the cell pitch — so
+            // adjacent triads aggregate the same signal feature and
+            // edges fall off across many triads instead of quantizing
+            // to one. Isotropic — both axes quantize identically.
             beamSpreadPx: 1.5,
             beamSpreadVerticalPx: 1.5,
             rowShimmer: 0.02,
-            bleedRadius: 18,
+            bleedRadius: 24,
+            // Triad-per-cell lights all three channels in every cell
+            // (proportional to signal), so total emission is much
+            // higher than the previous one-color-per-cell layout —
+            // bloom can come back down to ~Trinitron levels.
             bloomStrength: 1.2,
-            maskFrac: 0.10,
+            bloomThreshold: 0.3,
+            // Per-dot radius in source pixels. With dot centers inset
+            // 30% of cellSize (0.9 src-px from cell center) and the
+            // cell extending ±1.5 src-px, 0.7 keeps dots fully inside
+            // their cell with a small margin to the next triad over.
+            dotRadius: 0.7,
             debugOverlay: true,
           });
         } else {
