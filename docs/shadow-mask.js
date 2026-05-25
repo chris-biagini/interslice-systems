@@ -390,13 +390,6 @@ void main() {
         bleedRadius: 30,
         persistence: 0.85,
         convergence: { r: [-0.5, -0.5], g: [0.0, 0.0], b: [0.5, 0.5] },
-        // ShadowMask's two horizontal damper wires. Fractional Y positions
-        // of the signal region. Stationary — real damper wires don't move.
-        // Baked into the signal canvas before convergence so the wires
-        // inherit the same chromatic fringe and bleed treatment as every
-        // other feature. Set to [] to disable.
-        damperWires: [0.32, 0.68],
-        damperStrength: 0.62,
         // Optional per-row brightness noise. 0 = off. Cheap stand-in for
         // the line-to-line beam-current fluctuation a real CRT exhibits;
         // uniform along Y within each source row.
@@ -467,11 +460,6 @@ void main() {
         persistence: true,
         perRowShimmer: false,
         beamSpread: true,
-        // Damper wires — ShadowMask's two horizontal stabilizer strands.
-        // On by default for any ShadowMask sim worth the name; the
-        // wires only show when opts.damperWires has positions in it
-        // (default [0.32, 0.68]) and damperStrength < 1.
-        damperWires: true,
         // Composite pass — both off by default. selectiveBloom interacts
         // oddly with the stripe profile, so callers opt in. gapMask is
         // off because it's only meaningful when gapMaskAlpha > 0 and the
@@ -823,7 +811,7 @@ void main() {
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
         'bleedRadius',
-        'damperStrength', 'scanlineDepth', 'scanlinePeriod',
+        'scanlineDepth', 'scanlinePeriod',
       ];
       const snapshotOpts = () => {
         const snap = {};
@@ -928,9 +916,6 @@ void main() {
                 { opt: 'beamSpreadPx',         min: 0, max: 3, step: 0.1, sub: 'h (px)' },
                 { opt: 'beamSpreadVerticalPx', min: 0, max: 3, step: 0.1, sub: 'v (px)' },
               ] },
-            { key: 'damperWires',      label: 'damper wires',
-              desc: 'Two horizontal stabilizer strands across the aperture grille. The ShadowMask signature.',
-              params: [{ opt: '__damperDarkness', min: 0, max: 1, step: 0.05, sub: 'darkness' }] },
           ] },
         { title: 'composite',
           items: [
@@ -975,20 +960,13 @@ void main() {
 
       // Synthetic opts the panel exposes that don't map 1:1 to this.opts:
       //  __convergenceSpread → distributes to r=[-s,-s], b=[s,s], g=[0,0]
-      //  __damperDarkness    → 1 - damperStrength (so the slider reads
-      //                        "how dark are the wires" instead of the
-      //                        existing "fraction of brightness remaining"
-      //                        semantics buried in damperStrength)
       const readVal = (opt) => {
         if (opt === '__convergenceSpread') return Math.abs(this.opts.convergence?.r?.[0] ?? 0);
-        if (opt === '__damperDarkness')   return 1 - (this.opts.damperStrength ?? 0);
         return this.opts[opt] ?? 0;
       };
       const writeVal = (opt, v) => {
         if (opt === '__convergenceSpread') {
           this.opts.convergence = { r: [-v, -v], g: [0, 0], b: [v, v] };
-        } else if (opt === '__damperDarkness') {
-          this.opts.damperStrength = 1 - v;
         } else {
           this.opts[opt] = v;
         }
@@ -1279,24 +1257,6 @@ void main() {
       const [vw, vh] = this.opts.viewSize;
       this._signalCtx.clearRect(0, 0, vw, vh);
       this.opts.signal(this._signalCtx, timeMs);
-
-      // Damper wires — stamp the configured horizontal rows onto the
-      // signal canvas BEFORE upload, so the wires inherit convergence
-      // fringe, persistence, beam spread, and bloom from the rest of
-      // the pipeline. damperStrength names the fraction of substrate
-      // brightness that REMAINS at the wire row (0 = fully black wire,
-      // 1 = invisible).
-      if (this.effects.damperWires &&
-          this.opts.damperWires &&
-          this.opts.damperWires.length > 0 &&
-          this.opts.damperStrength < 1) {
-        const fillAlpha = 1 - this.opts.damperStrength;
-        this._signalCtx.fillStyle = `rgba(0,0,0,${fillAlpha})`;
-        for (const frac of this.opts.damperWires) {
-          const y = Math.round(frac * vh);
-          if (y >= 0 && y < vh) this._signalCtx.fillRect(0, y, vw, 1);
-        }
-      }
 
       // Slow modulators driven by time. All amplitudes are tiny so the
       // effects coexist quietly with the content. Compound multiplicatively
