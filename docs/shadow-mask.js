@@ -39,8 +39,8 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
-  // Phosphor fragment shader — row shimmer, beam spread.
-  // Full phosphor pass.
+  // Phosphor fragment shader — delta-triad hex-tiled dot lattice,
+  // row shimmer, beam spread.
   // MRT: slot 0 = phosphor output, slot 1 = persistence next-frame.
   const PHOSPHOR_FS = `#version 300 es
 precision highp float;
@@ -49,7 +49,6 @@ uniform sampler2D uSignal;
 uniform sampler2D uPersistencePrev;
 uniform vec2 uViewSize;
 uniform vec2 uCellSize;
-uniform float uPhosphorCoupling;
 uniform float uPersistence;
 uniform vec2 uConvergenceR;
 uniform vec2 uConvergenceG;
@@ -58,8 +57,8 @@ uniform float uRowShimmerAmp;
 uniform uint uShimmerSeed;
 uniform float uBeamSpreadPx;
 uniform float uBeamSpreadVerticalPx;
+uniform float uDotRadiusFrac;
 uniform float uStripeEnabled;
-uniform float uCouplingEnabled;
 uniform float uPersistenceEnabled;
 uniform float uConvergenceEnabled;
 uniform float uRowShimmerEnabled;
@@ -74,25 +73,14 @@ float lcg(uint seed) {
   return float(x) * (1.0 / 4294967296.0);
 }
 
-// Beam spread: anisotropic 2D Gaussian via a 9-tap "plus" kernel
-// (5 taps along Y, 4 additional taps along X with the center shared).
-// Horizontal and vertical sigmas can differ — a real ShadowMask's
-// horizontal "resolution" is quantized by the aperture grille pitch
-// (so horizontal blur should stay narrow to keep stripes crisp),
-// while the vertical axis is bounded only by the beam's gaussian
-// PSF and should typically spread further. Setting beamSpreadVerticalPx
-// equal to beamSpreadPx collapses to the isotropic case.
+// Same beam-spread sampler as Trinitron's — anisotropic 9-tap Gaussian.
+// Shadow-mask defaults to isotropic (V == H) since the dot lattice
+// quantizes both axes; the option exists for parity with the Trinitron
+// API.
 vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPxH, float spreadPxV) {
-  // Sub-pixel-blur no-ops on both axes → skip.
   if (spreadPxH < 0.7 && spreadPxV < 0.7) return texture(tex, uv);
   float dx = spreadPxH / uViewSize.x;
   float dy = spreadPxV / uViewSize.y;
-  // 1D Gaussian weights tuned for sigma ≈ tap spacing (normalized to
-  // sum 1): center 0.252, ±1σ 0.226 each, ±2σ 0.148 each → sum ≈ 1.0.
-  // Applied separably along each axis with the center shared gives a
-  // 9-tap "plus" kernel that approximates the 2D blur. Widening dy
-  // beyond dx scales the V kernel without recomputing weights — the
-  // tap shape stays roughly gaussian for the sub-2px sigmas we use.
   vec4 sum = texture(tex, uv)                                * 0.252;
   sum     += texture(tex, uv + vec2(0.0, -1.0 * dy))          * 0.226;
   sum     += texture(tex, uv + vec2(0.0,  1.0 * dy))          * 0.226;
@@ -102,7 +90,6 @@ vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPxH, float spreadPxV) 
   sum     += texture(tex, uv + vec2( 1.0 * dx, 0.0))          * 0.226;
   sum     += texture(tex, uv + vec2(-2.0 * dx, 0.0))          * 0.148;
   sum     += texture(tex, uv + vec2( 2.0 * dx, 0.0))          * 0.148;
-  // Sum of weights = 0.252 + 4*0.226 + 4*0.148 = 1.748. Normalize.
   return sum / 1.748;
 }
 
@@ -112,9 +99,6 @@ void main() {
   vec2 dB = (uConvergenceB / uViewSize) * uConvergenceEnabled;
 
   float beamSpreadH = uBeamSpreadPx * uBeamSpreadEnabled;
-  // Vertical sigma is at least the horizontal sigma — never let V be
-  // sharper than H. When uBeamSpreadVerticalPx is 0 (default) this
-  // collapses to the isotropic case.
   float beamSpreadV = max(beamSpreadH, uBeamSpreadVerticalPx * uBeamSpreadEnabled);
   float sR = sampleBeamSpread(uSignal, vUv + dR, beamSpreadH, beamSpreadV).r;
   float sG = sampleBeamSpread(uSignal, vUv + dG, beamSpreadH, beamSpreadV).g;
@@ -126,35 +110,41 @@ void main() {
   float dr = uPersistence * uPersistenceEnabled;
   vec4 lerped = prev * dr + live * (1.0 - dr);
 
-  // Store pre-stripe value so weights don't compound across frames.
   oPersistenceNext = lerped;
 
   vec2 px = vUv * uViewSize;
-  int subX = int(mod(px.x, uCellSize.x));
 
-  // Stripe weights. General layout: subX=0→R primary, 1→G, 2→B,
-  // anything else → gap (only coupling). Works for cs=2 (R+G, no B
-  // primary — B via coupling only, the original 2-stripe identity),
-  // cs=3 (R+G+B triad, no gap — the hero screen's contiguous-triad
-  // layout), cs=4 (R+G+B+gap — proper aperture grille with darkened
-  // gap column).
-  float coupling = uPhosphorCoupling * uCouplingEnabled;
-  vec3 weights = vec3(coupling, coupling, coupling);
-  if (subX == 0) weights.r = 1.0;
-  else if (subX == 1) weights.g = 1.0;
-  else if (subX == 2) weights.b = 1.0;
-  // subX >= 3: stays at coupling (gap column for cs=4+)
+  // Delta-triad hex tile lookup. Every other row is x-shifted by half
+  // a cell width; one dot per cell.
+  int row = int(floor(px.y / uCellSize.y));
+  float rowShift = float(row & 1) * uCellSize.x * 0.5;
+  int col = int(floor((px.x - rowShift) / uCellSize.x));
+
+  // (col - row) mod 3 produces the delta-triad arrangement: every
+  // triangle of 3 nearby dots is one R + one G + one B. The +3-then-mod
+  // dance is GLSL int mod's negative-result safety net.
+  int colorIdx = ((col - row) % 3 + 3) % 3;
+
+  // Radial soft-circle falloff from the cell center.
+  vec2 cellCenter = vec2(
+    (float(col) + 0.5) * uCellSize.x + rowShift,
+    (float(row) + 0.5) * uCellSize.y
+  );
+  float dist = length(px - cellCenter);
+  float dotRadius = uCellSize.x * uDotRadiusFrac;
+  float dotFalloff = smoothstep(dotRadius, dotRadius * 0.5, dist);
+
+  // Only the lit channel emits — between dots, weights = 0 → fully
+  // black before bloom. No phosphor coupling: the metal mask absorbs
+  // between-dot electrons cleanly. mix() honors the stripeProfile
+  // toggle: OFF (debug-panel only) paints the raw signal everywhere.
+  vec3 weights = vec3(0);
+  weights[colorIdx] = dotFalloff;
   weights = mix(vec3(1.0), weights, uStripeEnabled);
 
-  // Per-row shimmer. Stable hash per source-pixel row (dividing the
-  // output Y by cellSize.y undoes the integer upscale, mapping output
-  // pixels back to source rows) — the only animated micro-texture in
-  // the phosphor model (uShimmerSeed is uploaded per-frame in
-  // _renderGpu, throttled to reseed at ~30 fps).
-  uint rowIdx = uint(floor(px.y / uCellSize.y));
-  // 4099u prime stride retained for hash stability — original rationale
-  // (decorrelating from per-cell shimmer) is moot now that cell shimmer
-  // is gone, but changing it would shift the visible shimmer pattern.
+  // Per-row shimmer — universal beam-current ripple, same hash as
+  // Trinitron's. uShimmerSeed advances per-frame in _renderGpu.
+  uint rowIdx = uint(row);
   float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(rowIdx * 4099u + uShimmerSeed) - 1.0);
   rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
 
@@ -328,12 +318,16 @@ void main() {
       this.opts = Object.assign({
         viewSize: [200, 200],
         canvasSize: [240, 240],
-        // Cell pitch in source pixels. cs=3 keeps the shipped contiguous-
-        // triad layout (`[R, G, B]`, no gap column). cs=6
-        // uses an interleaved layout (`[R, gap, G, gap, B, gap]`) where
-        // the gap is part of the source-pixel model — heavier, but the
-        // gap participates in convergence and bleed.
+        // Cell pitch in source pixels. The delta-triad lattice maps
+        // one dot per cell, so cs=6 means each hex cell is 6 px wide
+        // and ~6 px tall (rows offset by half a cell). cs=3 works too
+        // but produces very small dots on typical viewSizes.
         cellSize: 3,
+        // Dot radius as a fraction of cell width. 0.30 is a balanced
+        // default — dots are clearly visible without dominating the
+        // cell. Bigger = more filled / less between-dot substrate;
+        // smaller = sparser dot lattice.
+        dotRadiusFrac: 0.30,
         // Integer factor for stretching the stripe canvas onto the main
         // canvas via nearest-neighbor drawImage. With cs=3 and upscale=2,
         // each source pixel becomes 2 canvas pixels — that second canvas
@@ -349,16 +343,6 @@ void main() {
         // stripe shadow look thinner than a real ShadowMask's. Pure-color
         // regions also gain brightness from the bleed into adjacent gaps.
         phosphorOverlap: 0,
-        // Phosphor coupling (the "cheat" the shipped version used). At a
-        // column where channel C is the primarily-lit one, the OTHER two
-        // channels' signals also emit at this fraction. This is a
-        // chromatic effect (every lit column shows all three channels'
-        // signals, just emphasized differently), distinct from
-        // phosphorOverlap which is geometric. Pure-color regions get
-        // significantly brighter because three of every six columns show
-        // the color (lit + 2 coupling) instead of just one (lit only).
-        // Gap columns are unaffected — they stay pure black.
-        phosphorCoupling: 0,
         // Selective-bloom kernel spread in source pixels. The base
         // separable-Gaussian kernel is ~2 texels of the half-res bloom
         // FBO; this value scales the kernel offsets, so bleedRadius=30
@@ -431,9 +415,8 @@ void main() {
       // from the content. Callers can pass any subset via
       // opts.effects to flip individual defaults.
       this.effects = Object.assign({
-        // Phosphor pass — four effects on, three off.
+        // Phosphor pass — three effects on, two off.
         stripeProfile: true,
-        phosphorCoupling: true,
         convergence: false,
         convergenceDrift: false,
         persistence: true,
@@ -622,13 +605,12 @@ void main() {
         persistencePrev:      gl.getUniformLocation(this._progPhosphor, 'uPersistencePrev'),
         viewSize:             gl.getUniformLocation(this._progPhosphor, 'uViewSize'),
         cellSize:             gl.getUniformLocation(this._progPhosphor, 'uCellSize'),
-        phosphorCoupling:     gl.getUniformLocation(this._progPhosphor, 'uPhosphorCoupling'),
         persistence:          gl.getUniformLocation(this._progPhosphor, 'uPersistence'),
         convergenceR:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceR'),
         convergenceG:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceG'),
         convergenceB:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceB'),
+        dotRadiusFrac:        gl.getUniformLocation(this._progPhosphor, 'uDotRadiusFrac'),
         stripeEnabled:        gl.getUniformLocation(this._progPhosphor, 'uStripeEnabled'),
-        couplingEnabled:      gl.getUniformLocation(this._progPhosphor, 'uCouplingEnabled'),
         persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
         convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
         rowShimmerAmp:        gl.getUniformLocation(this._progPhosphor, 'uRowShimmerAmp'),
@@ -779,7 +761,7 @@ void main() {
       // change since page load." Deep-copies convergence (object) so we
       // don't alias.
       const PANEL_OPT_KEYS = [
-        'phosphorCoupling', 'persistence',
+        'dotRadiusFrac', 'persistence',
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
         'bleedRadius',
@@ -867,10 +849,8 @@ void main() {
         { title: 'phosphor',
           items: [
             { key: 'stripeProfile',    label: 'stripe profile',
-              desc: 'RGB aperture-grille subpixel decomposition. Off = raw signal, no triad mask.' },
-            { key: 'phosphorCoupling', label: 'phosphor coupling',
-              desc: 'Each lit column also emits the other two channels. Brightens pure colors.',
-              params: [{ opt: 'phosphorCoupling', min: 0, max: 1, step: 0.05, sub: 'strength' }] },
+              desc: 'Delta-triad dot lattice: each hex cell emits one R, G, or B dot. Off = raw signal, no mask.',
+              params: [{ opt: 'dotRadiusFrac', min: 0.05, max: 0.65, step: 0.01, sub: 'dot radius (frac)' }] },
             { key: 'convergence',      label: 'convergence',
               desc: 'Per-channel xy-offset. R and B sample from shifted positions — edges fringe.',
               params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread' }] },
@@ -1101,7 +1081,7 @@ void main() {
 
     // Upload uniforms that don't change for the lifetime of this
     // renderer — sampler unit bindings, viewSize/cellSize, the
-    // base option values (phosphorCoupling, persistence,
+    // base option values (dotRadiusFrac, persistence,
     // row-shimmer amp, beam spread, bloom threshold, composite
     // geometry, opaque background flag), and the convergence base
     // (R/B get overridden per-frame when effects.convergenceDrift
@@ -1123,13 +1103,13 @@ void main() {
       gl.uniform1i(this._uPhosphor.persistencePrev, 1);
       gl.uniform2f(this._uPhosphor.viewSize, vw, vh);
       gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
-      gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
       gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
       gl.uniform1f(this._uPhosphor.rowShimmerAmp,    this.opts.rowShimmer);
       // shimmerSeed is uploaded per-frame in _renderGpu (derived from
       // the frame counter so the row pattern reseeds at ~30 fps).
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
       gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
+      gl.uniform1f(this._uPhosphor.dotRadiusFrac,        this.opts.dotRadiusFrac ?? 0.30);
 
       // Convergence base — R/B get overridden per-frame when drift is
       // active. On the transition back to inactive, _renderGpu re-uploads
@@ -1246,11 +1226,10 @@ void main() {
 
       // Per-frame *Enabled toggles. The ?debug=1 panel mutates
       // this.effects at runtime, so these must stay dynamic. Static
-      // option values (phosphorCoupling, persistence, row-shimmer
-      // amp, beam spread, viewSize/cellSize, sampler bindings, base
+      // option values (persistence, row-shimmer amp, beam spread,
+      // dotRadiusFrac, viewSize/cellSize, sampler bindings, base
       // convergence) are uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.couplingEnabled,    this.effects.phosphorCoupling ? 1 : 0);
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer    ? 1 : 0);
