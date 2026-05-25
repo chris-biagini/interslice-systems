@@ -161,7 +161,7 @@ uniform sampler2D uVignette;
 uniform sampler2D uBloom;
 uniform vec2 uCanvasSize;
 uniform float uCurvature;
-uniform float uCurvatureMode;       // 0 = spherical (generic), 1 = cylindrical (ShadowMask)
+uniform float uCurvatureMode;       // 0 = spherical (generic), 1 = cylindrical (Trinitron)
 uniform float uBloomStrength;
 uniform float uBrightness;
 uniform float uStripeFraction;
@@ -180,7 +180,7 @@ vec2 curveUv(vec2 uv, float cAmt, float mode) {
   vec2 c = uv - 0.5;
   vec2 warped;
   if (mode > 0.5) {
-    // Cylindrical (ShadowMask face): warp X only, by x-distance from
+    // Cylindrical (Trinitron face): warp X only, by x-distance from
     // the vertical center axis. Vertical lines stay straight.
     warped = vec2(c.x * (1.0 + cAmt * c.x * c.x * 4.0), c.y);
   } else {
@@ -360,18 +360,17 @@ void main() {
         beamSpreadPx: 0.0,
         // Additional vertical-only beam spread. When > beamSpreadPx,
         // the kernel becomes anisotropic: horizontal sigma stays at
-        // beamSpreadPx (so the dot lattice stays sharp), while
-        // vertical sigma widens to this value. Matches how a real
-        // ShadowMask divides its detail budget — quantized horizontally
-        // by the grille pitch, soft-edged vertically by the beam's
-        // gaussian PSF. 0 (default) = isotropic, identical to
-        // beamSpreadPx on both axes.
+        // beamSpreadPx, while vertical sigma widens to this
+        // value. Most shadow-mask CRTs are isotropic (the dot lattice
+        // quantizes both axes the same way), so the default of 0 leaves
+        // V == H. The option exists for API parity with the Trinitron
+        // renderer where the asymmetry is load-bearing.
         beamSpreadVerticalPx: 0.0,
         // Barrel-distortion strength for the composite glass pass.
         // 0 = flat panel.
         curvature: 0,
         // Curvature axis distribution. 'spherical' = generic CRT barrel
-        // (warp on both axes, by r²). 'cylindrical' = ShadowMask face
+        // (warp on both axes, by r²). 'cylindrical' = Trinitron face
         // (warp X only, by x²) — verticals stay straight, horizontals
         // curve.
         curvatureMode: 'spherical',
@@ -737,7 +736,7 @@ void main() {
         border: 1px solid #555; border-radius: 4px;
         max-width: 320px; max-height: 86vh; overflow: auto;
       `;
-      panel.innerHTML = `<div style="font-weight:700;margin-bottom:8px;">__trinitron debug</div>`;
+      panel.innerHTML = `<div style="font-weight:700;margin-bottom:8px;">shadow-mask debug</div>`;
 
       // FPS readout.
       const fpsEl = document.createElement('div');
@@ -808,8 +807,8 @@ void main() {
             else                        lines.push(`  opts.${k} = ${fmtNum(cv)}`);
           }
         }
-        if (lines.length === 0) return 'trinitron state: (no changes from page load)';
-        return ['trinitron state diff (from page load):', ...lines].join('\n');
+        if (lines.length === 0) return 'shadow-mask state: (no changes from page load)';
+        return ['shadow-mask state diff (from page load):', ...lines].join('\n');
       };
 
       // "Copy state" button. Writes the diff to clipboard; falls back
@@ -825,7 +824,7 @@ void main() {
           await navigator.clipboard.writeText(text);
           copyBtn.textContent = 'copied to clipboard';
         } catch (err) {
-          console.log('[trinitron]\n' + text);
+          console.log('[shadow-mask]\n' + text);
           copyBtn.textContent = 'clipboard failed — see console';
         }
         setTimeout(restore, 1400);
@@ -880,7 +879,7 @@ void main() {
         { title: 'glass',
           items: [
             { key: 'curvature', label: 'curvature',
-              desc: 'CRT face curvature. Spherical = generic barrel; cylindrical = ShadowMask (verticals stay straight).',
+              desc: 'CRT face curvature. Spherical = generic barrel; cylindrical = Trinitron (verticals stay straight).',
               params: [
                 { opt: 'curvature', min: 0, max: 0.3, step: 0.01, sub: 'amount' },
                 { opt: 'curvatureMode', kind: 'select', sub: 'mode',
