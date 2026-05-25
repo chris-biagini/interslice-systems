@@ -371,11 +371,14 @@ void main() {
         viewSize: [200, 200],
         canvasSize: [240, 240],
         // Hex-tile dimensions: cellSize.x is the horizontal pitch
-        // between adjacent dots in a row; cellSize.y is the row
-        // pitch. 5 ≈ sqrt(3)/2 × 6 gives equilateral triangle
-        // adjacency between dots — the visual character of the
-        // delta-triad reference image.
-        cellSize: [6, 5],
+        // between adjacent cells in a row; cellSize.y is the row pitch.
+        // [3, 3] matches the Trinitron's source-pixel resolution
+        // (Trinitron uses cellSize 3 for its stripe pitch), so each
+        // letter is resolved by the same number of phosphor positions
+        // in either renderer. The hex stagger is then ±1.5 source-px,
+        // which floors to 1 — slightly skewed hexes, but the
+        // delta-triad geometry still reads.
+        cellSize: [3, 3],
         // Width of the dark "metal mask" between adjacent phosphor cells,
         // as a fraction of cell width. The phosphor cells tile the plane
         // as Voronoi hexagons (no gaps between phosphors); maskFrac
