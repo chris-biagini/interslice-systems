@@ -57,7 +57,7 @@ uniform float uRowShimmerAmp;
 uniform uint uShimmerSeed;
 uniform float uBeamSpreadPx;
 uniform float uBeamSpreadVerticalPx;
-uniform float uDotRadiusFrac;
+uniform float uMaskFrac;
 uniform float uStripeEnabled;
 uniform float uPersistenceEnabled;
 uniform float uConvergenceEnabled;
@@ -114,37 +114,72 @@ void main() {
 
   vec2 px = vUv * uViewSize;
 
-  // Delta-triad hex tile lookup. Every other row is x-shifted by half
-  // a cell width; one dot per cell.
-  int row = int(floor(px.y / uCellSize.y));
-  float rowShift = float(row & 1) * uCellSize.x * 0.5;
-  int col = int(floor((px.x - rowShift) / uCellSize.x));
+  // Delta-triad hex Voronoi tiling. Every other row is x-shifted by half
+  // a cell width; one phosphor cell per lattice point. To make each
+  // fragment belong to the *nearest* cell (not just the cell whose
+  // rectangular bounding box it sits in), walk a 3x3 neighborhood of
+  // candidate cells and pick the closest. The chosen cell's Voronoi
+  // region is a hexagon, so the phosphor cells tile the plane with no
+  // gaps — full coverage, no empty space between phosphors.
+  int naiveRow = int(floor(px.y / uCellSize.y));
+  float naiveShift = float(naiveRow & 1) * uCellSize.x * 0.5;
+  int naiveCol = int(floor((px.x - naiveShift) / uCellSize.x));
+
+  int bestRow = naiveRow;
+  int bestCol = naiveCol;
+  float bestDistSq = 1.0e9;
+  float secondDistSq = 1.0e9;
+  for (int dr = -1; dr <= 1; dr++) {
+    int tr = naiveRow + dr;
+    float ts = float(tr & 1) * uCellSize.x * 0.5;
+    for (int dc = -1; dc <= 1; dc++) {
+      int tc = naiveCol + dc;
+      vec2 c = vec2(
+        (float(tc) + 0.5) * uCellSize.x + ts,
+        (float(tr) + 0.5) * uCellSize.y
+      );
+      vec2 d = px - c;
+      float ds = dot(d, d);
+      if (ds < bestDistSq) {
+        secondDistSq = bestDistSq;
+        bestDistSq = ds;
+        bestRow = tr;
+        bestCol = tc;
+      } else if (ds < secondDistSq) {
+        secondDistSq = ds;
+      }
+    }
+  }
 
   // (col - row) mod 3 produces the delta-triad arrangement: every
-  // triangle of 3 nearby dots is one R + one G + one B. The +3-then-mod
+  // triangle of 3 nearby cells is one R + one G + one B. The +3-then-mod
   // dance is GLSL int mod's negative-result safety net.
-  int colorIdx = ((col - row) % 3 + 3) % 3;
+  int colorIdx = ((bestCol - bestRow) % 3 + 3) % 3;
 
-  // Radial soft-circle falloff from the cell center.
-  vec2 cellCenter = vec2(
-    (float(col) + 0.5) * uCellSize.x + rowShift,
-    (float(row) + 0.5) * uCellSize.y
-  );
-  float dist = length(px - cellCenter);
-  float dotRadius = uCellSize.x * uDotRadiusFrac;
-  float dotFalloff = smoothstep(dotRadius, dotRadius * 0.5, dist);
+  // Edge mask: the metal mask between phosphors. Distance from the
+  // fragment to the Voronoi edge (the perpendicular bisector between
+  // best and second-best centers) is approximately
+  //     (secondDist - bestDist) * 0.5
+  // We darken fragments within uMaskFrac * cellSize.x of that edge,
+  // producing the thin dark mesh that gives a real shadow-mask CRT its
+  // structural character. uMaskFrac == 0 = full coverage, no mask.
+  float bestDist = sqrt(bestDistSq);
+  float secondDist = sqrt(secondDistSq);
+  float edgeDist = (secondDist - bestDist) * 0.5;
+  float maskWidth = uMaskFrac * uCellSize.x;
+  float edgeMask = maskWidth > 0.0
+    ? smoothstep(0.0, maskWidth, edgeDist)
+    : 1.0;
 
-  // Only the lit channel emits — between dots, weights = 0 → fully
-  // black before bloom. No phosphor coupling: the metal mask absorbs
-  // between-dot electrons cleanly. mix() honors the stripeProfile
+  // Only the lit channel emits. The mix() honors the stripeProfile
   // toggle: OFF (debug-panel only) paints the raw signal everywhere.
   vec3 weights = vec3(0);
-  weights[colorIdx] = dotFalloff;
+  weights[colorIdx] = edgeMask;
   weights = mix(vec3(1.0), weights, uStripeEnabled);
 
   // Per-row shimmer — universal beam-current ripple, same hash as
   // Trinitron's. uShimmerSeed advances per-frame in _renderGpu.
-  uint rowIdx = uint(row);
+  uint rowIdx = uint(bestRow);
   float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(rowIdx * 4099u + uShimmerSeed) - 1.0);
   rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
 
@@ -324,11 +359,14 @@ void main() {
         // adjacency between dots — the visual character of the
         // delta-triad reference image.
         cellSize: [6, 5],
-        // Dot radius as a fraction of cell width. 0.30 is a balanced
-        // default — dots are clearly visible without dominating the
-        // cell. Bigger = more filled / less between-dot substrate;
-        // smaller = sparser dot lattice.
-        dotRadiusFrac: 0.30,
+        // Width of the dark "metal mask" between adjacent phosphor cells,
+        // as a fraction of cell width. The phosphor cells tile the plane
+        // as Voronoi hexagons (no gaps between phosphors); maskFrac
+        // darkens fragments near the hex boundaries to suggest the metal
+        // mesh that holds the phosphors in a real shadow-mask CRT.
+        // 0.0 = no mask, fully tiled phosphors; 0.10 ≈ 10% of each cell's
+        // perimeter darkened — modest mesh, hexes still read as distinct.
+        maskFrac: 0.10,
         // Integer factor for stretching the signal canvas onto the main
         // canvas via nearest-neighbor drawImage. The shadow-mask phosphor
         // pass tiles dots over the upscaled canvas; an upscale > 1 lets
@@ -600,7 +638,7 @@ void main() {
         convergenceR:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceR'),
         convergenceG:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceG'),
         convergenceB:         gl.getUniformLocation(this._progPhosphor, 'uConvergenceB'),
-        dotRadiusFrac:        gl.getUniformLocation(this._progPhosphor, 'uDotRadiusFrac'),
+        maskFrac:             gl.getUniformLocation(this._progPhosphor, 'uMaskFrac'),
         stripeEnabled:        gl.getUniformLocation(this._progPhosphor, 'uStripeEnabled'),
         persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
         convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
@@ -752,7 +790,7 @@ void main() {
       // change since page load." Deep-copies convergence (object) so we
       // don't alias.
       const PANEL_OPT_KEYS = [
-        'dotRadiusFrac', 'persistence',
+        'maskFrac', 'persistence',
         'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
         'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
         'bleedRadius',
@@ -840,8 +878,8 @@ void main() {
         { title: 'phosphor',
           items: [
             { key: 'stripeProfile',    label: 'phosphor mask',
-              desc: 'Delta-triad dot decomposition. Off = raw signal, no dot mask.',
-              params: [{ opt: 'dotRadiusFrac', min: 0.05, max: 0.65, step: 0.01, sub: 'dot radius (frac)' }] },
+              desc: 'Delta-triad hex Voronoi tiling. Off = raw signal, no mask.',
+              params: [{ opt: 'maskFrac', min: 0.0, max: 0.40, step: 0.01, sub: 'metal mask (frac)' }] },
             { key: 'convergence',      label: 'convergence',
               desc: 'Per-channel xy-offset. R and B sample from shifted positions — edges fringe.',
               params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread' }] },
@@ -1072,7 +1110,7 @@ void main() {
 
     // Upload uniforms that don't change for the lifetime of this
     // renderer — sampler unit bindings, viewSize/cellSize, the
-    // base option values (dotRadiusFrac, persistence,
+    // base option values (maskFrac, persistence,
     // row-shimmer amp, beam spread, bloom threshold, composite
     // geometry, opaque background flag), and the convergence base
     // (R/B get overridden per-frame when effects.convergenceDrift
@@ -1102,7 +1140,7 @@ void main() {
       // the frame counter so the row pattern reseeds at ~30 fps).
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
       gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
-      gl.uniform1f(this._uPhosphor.dotRadiusFrac,        this.opts.dotRadiusFrac ?? 0.30);
+      gl.uniform1f(this._uPhosphor.maskFrac,             this.opts.maskFrac ?? 0.10);
 
       // Convergence base — R/B get overridden per-frame when drift is
       // active. On the transition back to inactive, _renderGpu re-uploads
@@ -1220,7 +1258,7 @@ void main() {
       // Per-frame *Enabled toggles. The ?debug=1 panel mutates
       // this.effects at runtime, so these must stay dynamic. Static
       // option values (persistence, row-shimmer amp, beam spread,
-      // dotRadiusFrac, viewSize/cellSize, sampler bindings, base
+      // maskFrac, viewSize/cellSize, sampler bindings, base
       // convergence) are uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
