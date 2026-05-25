@@ -2808,9 +2808,17 @@
             opaqueBackground: true,
             persistence: 0.82,
             convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
-            beamSpreadPx: 0.7,
-            // Isotropic on shadow-mask (no aperture-grille horizontal-
-            // quantization tradeoff). Leave V == H by not overriding.
+            // Beam-spread sigma in source pixels. With cellSize [3, 3]
+            // and one signal sample per cell, the per-cell Gaussian
+            // sample needs to cover at least half a cell on either side
+            // to integrate finer signal features (laser grid lines, thin
+            // strokes) without aliasing the lattice. 1.5 source-px sigma
+            // gives a ~6-px effective footprint per cell, generously
+            // wider than the cell pitch. Isotropic — both axes are
+            // quantized on the dot lattice (no aperture-grille horizontal
+            // sharpness tradeoff to make).
+            beamSpreadPx: 1.5,
+            beamSpreadVerticalPx: 1.5,
             rowShimmer: 0.02,
             bleedRadius: 18,
             bloomStrength: 1.2,
