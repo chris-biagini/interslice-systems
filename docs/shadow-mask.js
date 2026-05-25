@@ -318,11 +318,12 @@ void main() {
       this.opts = Object.assign({
         viewSize: [200, 200],
         canvasSize: [240, 240],
-        // Cell pitch in source pixels. The delta-triad lattice maps
-        // one dot per cell, so cs=6 means each hex cell is 6 px wide
-        // and ~6 px tall (rows offset by half a cell). cs=3 works too
-        // but produces very small dots on typical viewSizes.
-        cellSize: 3,
+        // Hex-tile dimensions: cellSize.x is the horizontal pitch
+        // between adjacent dots in a row; cellSize.y is the row
+        // pitch. 5 ≈ sqrt(3)/2 × 6 gives equilateral triangle
+        // adjacency between dots — the visual character of the
+        // delta-triad reference image.
+        cellSize: [6, 5],
         // Dot radius as a fraction of cell width. 0.30 is a balanced
         // default — dots are clearly visible without dominating the
         // cell. Bigger = more filled / less between-dot substrate;
@@ -839,8 +840,8 @@ void main() {
       const GROUPS = [
         { title: 'phosphor',
           items: [
-            { key: 'stripeProfile',    label: 'stripe profile',
-              desc: 'Delta-triad dot lattice: each hex cell emits one R, G, or B dot. Off = raw signal, no mask.',
+            { key: 'stripeProfile',    label: 'phosphor mask',
+              desc: 'Delta-triad dot decomposition. Off = raw signal, no dot mask.',
               params: [{ opt: 'dotRadiusFrac', min: 0.05, max: 0.65, step: 0.01, sub: 'dot radius (frac)' }] },
             { key: 'convergence',      label: 'convergence',
               desc: 'Per-channel xy-offset. R and B sample from shifted positions — edges fringe.',
@@ -1093,7 +1094,9 @@ void main() {
       gl.uniform1i(this._uPhosphor.signal,          0);
       gl.uniform1i(this._uPhosphor.persistencePrev, 1);
       gl.uniform2f(this._uPhosphor.viewSize, vw, vh);
-      gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
+      const csX = Array.isArray(this.opts.cellSize) ? this.opts.cellSize[0] : this.opts.cellSize;
+      const csY = Array.isArray(this.opts.cellSize) ? this.opts.cellSize[1] : this.opts.cellSize;
+      gl.uniform2f(this._uPhosphor.cellSize, csX, csY);
       gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
       gl.uniform1f(this._uPhosphor.rowShimmerAmp,    this.opts.rowShimmer);
       // shimmerSeed is uploaded per-frame in _renderGpu (derived from
