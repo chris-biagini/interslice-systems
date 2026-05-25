@@ -328,21 +328,12 @@ void main() {
         // cell. Bigger = more filled / less between-dot substrate;
         // smaller = sparser dot lattice.
         dotRadiusFrac: 0.30,
-        // Integer factor for stretching the stripe canvas onto the main
-        // canvas via nearest-neighbor drawImage. With cs=3 and upscale=2,
-        // each source pixel becomes 2 canvas pixels — that second canvas
-        // pixel is what the gap mask paints over, suggesting an
-        // aperture-grille wire between stripes without paying for source-
-        // pixel gap columns in the hot loop.
+        // Integer factor for stretching the signal canvas onto the main
+        // canvas via nearest-neighbor drawImage. The shadow-mask phosphor
+        // pass tiles dots over the upscaled canvas; an upscale > 1 lets
+        // the same source pixel light a larger area of the dot lattice
+        // without re-rendering the signal at higher resolution.
         stripeUpscale: 1,
-        // Phosphor overlap. Each lit stripe bleeds into its two adjacent
-        // columns at this fraction (cyclic — the R at position 0 bleeds
-        // into the gap at position 5 of the previous cell). 0 = strict
-        // aperture grille (the gap is pure black). Values > 0 widen the
-        // visible phosphor and narrow the visible gap, making the inter-
-        // stripe shadow look thinner than a real ShadowMask's. Pure-color
-        // regions also gain brightness from the bleed into adjacent gaps.
-        phosphorOverlap: 0,
         // Selective-bloom kernel spread in source pixels. The base
         // separable-Gaussian kernel is ~2 texels of the half-res bloom
         // FBO; this value scales the kernel offsets, so bleedRadius=30
@@ -368,7 +359,7 @@ void main() {
         beamSpreadPx: 0.0,
         // Additional vertical-only beam spread. When > beamSpreadPx,
         // the kernel becomes anisotropic: horizontal sigma stays at
-        // beamSpreadPx (so aperture-grille stripes stay crisp), while
+        // beamSpreadPx (so the dot lattice stays sharp), while
         // vertical sigma widens to this value. Matches how a real
         // ShadowMask divides its detail budget — quantized horizontally
         // by the grille pitch, soft-edged vertically by the beam's
@@ -409,8 +400,8 @@ void main() {
       }, opts);
 
       // Per-effect runtime toggles. Mutable; setters take effect on
-      // the next frame. The default subset (stripeProfile, coupling,
-      // persistence, beamSpread) is the minimum that reads as a CRT
+      // the next frame. The default subset (stripeProfile, persistence,
+      // beamSpread) is the minimum that reads as a CRT
       // without piling on effects that fight each other or pull focus
       // from the content. Callers can pass any subset via
       // opts.effects to flip individual defaults.
