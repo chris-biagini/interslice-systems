@@ -94,24 +94,6 @@ vec4 sampleBeamSpread(sampler2D tex, vec2 uv, float spreadPxH, float spreadPxV) 
 }
 
 void main() {
-  vec2 dR = (uConvergenceR / uViewSize) * uConvergenceEnabled;
-  vec2 dG = (uConvergenceG / uViewSize) * uConvergenceEnabled;
-  vec2 dB = (uConvergenceB / uViewSize) * uConvergenceEnabled;
-
-  float beamSpreadH = uBeamSpreadPx * uBeamSpreadEnabled;
-  float beamSpreadV = max(beamSpreadH, uBeamSpreadVerticalPx * uBeamSpreadEnabled);
-  float sR = sampleBeamSpread(uSignal, vUv + dR, beamSpreadH, beamSpreadV).r;
-  float sG = sampleBeamSpread(uSignal, vUv + dG, beamSpreadH, beamSpreadV).g;
-  float sB = sampleBeamSpread(uSignal, vUv + dB, beamSpreadH, beamSpreadV).b;
-  float sA = sampleBeamSpread(uSignal, vUv, beamSpreadH, beamSpreadV).a;
-  vec4 live = vec4(sR, sG, sB, sA);
-
-  vec4 prev = texture(uPersistencePrev, vUv);
-  float dr = uPersistence * uPersistenceEnabled;
-  vec4 lerped = prev * dr + live * (1.0 - dr);
-
-  oPersistenceNext = lerped;
-
   vec2 px = vUv * uViewSize;
 
   // Delta-triad hex Voronoi tiling. Every other row is x-shifted by half
@@ -121,12 +103,21 @@ void main() {
   // candidate cells and pick the closest. The chosen cell's Voronoi
   // region is a hexagon, so the phosphor cells tile the plane with no
   // gaps — full coverage, no empty space between phosphors.
+  //
+  // We determine the cell FIRST, before sampling the signal, because the
+  // signal sample needs to happen at the cell center — not at the
+  // fragment position. Sampling per-fragment would let signal edges that
+  // cross through a cell light only one half of it, producing a
+  // "stained glass illuminated by a flashlight" effect: a sharp
+  // mid-phosphor transition tracking the underlying vector source. Real
+  // CRT phosphors emit as discrete units. One sample per cell.
   int naiveRow = int(floor(px.y / uCellSize.y));
   float naiveShift = float(naiveRow & 1) * uCellSize.x * 0.5;
   int naiveCol = int(floor((px.x - naiveShift) / uCellSize.x));
 
   int bestRow = naiveRow;
   int bestCol = naiveCol;
+  vec2 bestCenter = vec2(0.0);
   float bestDistSq = 1.0e9;
   float secondDistSq = 1.0e9;
   for (int dr = -1; dr <= 1; dr++) {
@@ -145,11 +136,37 @@ void main() {
         bestDistSq = ds;
         bestRow = tr;
         bestCol = tc;
+        bestCenter = c;
       } else if (ds < secondDistSq) {
         secondDistSq = ds;
       }
     }
   }
+
+  // Now sample the signal at the cell center. Beam spread, convergence,
+  // and persistence all read at this cellUv — so the entire cell sees
+  // one signal value and lights up as a unit (as a real phosphor does).
+  // The edge mask remains the only per-fragment variation, drawing the
+  // hex boundaries themselves.
+  vec2 cellUv = bestCenter / uViewSize;
+
+  vec2 dR = (uConvergenceR / uViewSize) * uConvergenceEnabled;
+  vec2 dG = (uConvergenceG / uViewSize) * uConvergenceEnabled;
+  vec2 dB = (uConvergenceB / uViewSize) * uConvergenceEnabled;
+
+  float beamSpreadH = uBeamSpreadPx * uBeamSpreadEnabled;
+  float beamSpreadV = max(beamSpreadH, uBeamSpreadVerticalPx * uBeamSpreadEnabled);
+  float sR = sampleBeamSpread(uSignal, cellUv + dR, beamSpreadH, beamSpreadV).r;
+  float sG = sampleBeamSpread(uSignal, cellUv + dG, beamSpreadH, beamSpreadV).g;
+  float sB = sampleBeamSpread(uSignal, cellUv + dB, beamSpreadH, beamSpreadV).b;
+  float sA = sampleBeamSpread(uSignal, cellUv, beamSpreadH, beamSpreadV).a;
+  vec4 live = vec4(sR, sG, sB, sA);
+
+  vec4 prev = texture(uPersistencePrev, cellUv);
+  float dr = uPersistence * uPersistenceEnabled;
+  vec4 lerped = prev * dr + live * (1.0 - dr);
+
+  oPersistenceNext = lerped;
 
   // (col - row) mod 3 produces the delta-triad arrangement: every
   // triangle of 3 nearby cells is one R + one G + one B. The +3-then-mod
