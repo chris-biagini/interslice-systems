@@ -2795,35 +2795,59 @@
       ch2State.initialized = false;
       ch3State.initialized = false;
 
+      const useShadowMask = new URL(window.location).searchParams.get('crt') === 'shadow-mask';
+
       try {
-        trinitron = new window.Trinitron(canvas, {
-          signal,
-          // Source canvas dimensions match the .brand box + halo margin.
-          // 1 source px = 1 display px, so source content maps 1:1 to
-          // display coordinates. The renderer multiplies by DPR
-          // internally for the canvas backing buffer.
-          viewSize:   [layout.width, layout.height],
-          // 2× source → stripe-canvas pixels gives the aperture-grille
-          // texture room to breathe.
-          canvasSize: [layout.width * 2, layout.height * 2],
-          cellSize: 3,
-          stripeUpscale: 2,
-          opaqueBackground: true,
-          phosphorCoupling: 0.35,
-          persistence: 0.82,
-          convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
-          beamSpreadPx: 0.7,
-          beamSpreadVerticalPx: 1.4,
-          rowShimmer: 0.02,
-          damperStrength: 0.90,
-          bleedRadius: 18,
-          bloomStrength: 1.2,
-          gapMaskAlpha: 0.15,
-          gapMaskPeriod: 2,
-          effects: { gapMask: true },
-          debugOverlay: true,
-        });
-        window.__trinitronLogo = trinitron;
+        if (useShadowMask) {
+          trinitron = new window.ShadowMask(canvas, {
+            signal,
+            viewSize:   [layout.width, layout.height],
+            canvasSize: [layout.width * 2, layout.height * 2],
+            cellSize: [6, 5],
+            stripeUpscale: 2,
+            opaqueBackground: true,
+            persistence: 0.82,
+            convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+            beamSpreadPx: 0.7,
+            // Isotropic on shadow-mask (no aperture-grille horizontal-
+            // quantization tradeoff). Leave V == H by not overriding.
+            rowShimmer: 0.02,
+            bleedRadius: 18,
+            bloomStrength: 1.2,
+            dotRadiusFrac: 0.30,
+            debugOverlay: true,
+          });
+        } else {
+          trinitron = new window.Trinitron(canvas, {
+            signal,
+            // Source canvas dimensions match the .brand box + halo margin.
+            // 1 source px = 1 display px, so source content maps 1:1 to
+            // display coordinates. The renderer multiplies by DPR
+            // internally for the canvas backing buffer.
+            viewSize:   [layout.width, layout.height],
+            // 2× source → stripe-canvas pixels gives the aperture-grille
+            // texture room to breathe.
+            canvasSize: [layout.width * 2, layout.height * 2],
+            cellSize: 3,
+            stripeUpscale: 2,
+            opaqueBackground: true,
+            phosphorCoupling: 0.35,
+            persistence: 0.82,
+            convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+            beamSpreadPx: 0.7,
+            beamSpreadVerticalPx: 1.4,
+            rowShimmer: 0.02,
+            damperStrength: 0.90,
+            bleedRadius: 18,
+            bloomStrength: 1.2,
+            gapMaskAlpha: 0.15,
+            gapMaskPeriod: 2,
+            effects: { gapMask: true },
+            debugOverlay: true,
+          });
+        }
+        window.__crt = trinitron;
+        if (!useShadowMask) window.__trinitronLogo = trinitron;
         if (wasRunning && isDark()) trinitron.start();
       } catch (err) {
         // Silent fallback — SVG dark-mode logo remains as the static fallback.
