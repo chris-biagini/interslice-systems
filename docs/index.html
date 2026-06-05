@@ -464,7 +464,7 @@
   :root[data-theme="dark"] .cta {
     color: #FFF6FB;
     border-color: var(--crt-magenta);
-    background: rgba(20, 4, 16, 0.62);
+    background: #0C0618; /* opaque — hides the laser grid behind the button */
     text-shadow:
       0 0 8px  rgba(255, 108, 180, calc(0.90 * var(--glow-strength, 1))),
       0 0 22px rgba(229, 4, 127,  calc(0.60 * var(--glow-strength, 1)));
@@ -496,17 +496,26 @@
   :root[data-theme="dark"] .cta-sub {
     color: var(--crt-cyan);
     text-shadow: 0 0 6px rgba(94, 226, 255, calc(0.60 * var(--glow-strength, 1)));
+    text-decoration: none;
+    background: #0C0618;
+    border: 1px solid rgba(94, 226, 255, 0.45);
+    border-radius: 999px;
+    padding: 6px 18px;
+    box-shadow:
+      0 0 calc(7px * var(--glow-strength, 1)) rgba(94, 226, 255, 0.30),
+      inset 0 0 8px rgba(94, 226, 255, 0.12);
   }
+  /* Pill badge replaces the "— caption —" flanking bars in dark mode;
+     bars inside the pill would just clutter it. */
   :root[data-theme="dark"] .cta-label::before,
   :root[data-theme="dark"] .cta-label::after {
-    background: var(--crt-cyan);
-    box-shadow: 0 0 6px rgba(94, 226, 255, calc(0.80 * var(--glow-strength, 1)));
+    display: none;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .cta {
       color: #FFF6FB;
       border-color: var(--crt-magenta);
-      background: rgba(20, 4, 16, 0.62);
+      background: #0C0618; /* opaque — hides the laser grid behind the button */
       text-shadow:
         0 0 8px  rgba(255, 108, 180, calc(0.90 * var(--glow-strength, 1))),
         0 0 22px rgba(229, 4, 127,  calc(0.60 * var(--glow-strength, 1)));
@@ -538,11 +547,18 @@
     :root:not([data-theme="light"]) .cta-sub {
       color: var(--crt-cyan);
       text-shadow: 0 0 6px rgba(94, 226, 255, calc(0.60 * var(--glow-strength, 1)));
+      text-decoration: none;
+      background: #0C0618;
+      border: 1px solid rgba(94, 226, 255, 0.45);
+      border-radius: 999px;
+      padding: 6px 18px;
+      box-shadow:
+        0 0 calc(7px * var(--glow-strength, 1)) rgba(94, 226, 255, 0.30),
+        inset 0 0 8px rgba(94, 226, 255, 0.12);
     }
     :root:not([data-theme="light"]) .cta-label::before,
     :root:not([data-theme="light"]) .cta-label::after {
-      background: var(--crt-cyan);
-      box-shadow: 0 0 6px rgba(94, 226, 255, calc(0.80 * var(--glow-strength, 1)));
+      display: none;
     }
   }
 
