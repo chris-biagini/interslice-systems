@@ -511,6 +511,23 @@
   :root[data-theme="dark"] .cta-label::after {
     display: none;
   }
+  /* The Firefox sub-link is the only interactive caption — brighten its
+     glow and reveal an underline on hover / keyboard focus. */
+  :root[data-theme="dark"] .cta-sub {
+    transition: box-shadow 160ms ease, border-color 160ms ease, text-shadow 160ms ease;
+  }
+  :root[data-theme="dark"] .cta-sub:hover,
+  :root[data-theme="dark"] .cta-sub:focus-visible {
+    border-color: rgba(94, 226, 255, 0.85);
+    text-shadow: 0 0 9px rgba(94, 226, 255, calc(0.95 * var(--glow-strength, 1)));
+    box-shadow:
+      0 0 calc(13px * var(--glow-strength, 1)) rgba(94, 226, 255, 0.55),
+      inset 0 0 11px rgba(94, 226, 255, 0.22);
+    text-decoration: underline;
+    text-decoration-color: rgba(94, 226, 255, 0.90);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .cta {
       color: #FFF6FB;
@@ -559,6 +576,21 @@
     :root:not([data-theme="light"]) .cta-label::before,
     :root:not([data-theme="light"]) .cta-label::after {
       display: none;
+    }
+    :root:not([data-theme="light"]) .cta-sub {
+      transition: box-shadow 160ms ease, border-color 160ms ease, text-shadow 160ms ease;
+    }
+    :root:not([data-theme="light"]) .cta-sub:hover,
+    :root:not([data-theme="light"]) .cta-sub:focus-visible {
+      border-color: rgba(94, 226, 255, 0.85);
+      text-shadow: 0 0 9px rgba(94, 226, 255, calc(0.95 * var(--glow-strength, 1)));
+      box-shadow:
+        0 0 calc(13px * var(--glow-strength, 1)) rgba(94, 226, 255, 0.55),
+        inset 0 0 11px rgba(94, 226, 255, 0.22);
+      text-decoration: underline;
+      text-decoration-color: rgba(94, 226, 255, 0.90);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
     }
   }
 
