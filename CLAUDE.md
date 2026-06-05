@@ -109,7 +109,7 @@ Direct tweaks (between drops) get the same care for design-system constraints â€
 Standing authorization to commit and push at reasonable points without asking each time. **Caveats:**
 
 - The Claude Code harness blocks direct pushes to `main`, and also blocks an agent from writing its own `.claude/settings.local.json` permissions. Two routes around it: (a) suggest Chris paste `! git push origin main` into his next prompt (the `!` prefix runs it as him), or (b) ask him to add the push permission to `.claude/settings.local.json` himself once. As of writing it's already there.
-- Commit coherent units, one logical change each. Use the trailer `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
+- Commit coherent units, one logical change each. Use the trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
 - Don't force-push, rewrite published history, or skip hooks. Each push to `main` redeploys Pages â€” usually a feature, sometimes a reason to wait.
 
 ### Verifying visual changes
