@@ -790,13 +790,46 @@ void main() {
         border: 1px solid #555; border-radius: 4px;
         max-width: 320px; max-height: 86vh; overflow: auto;
       `;
-      panel.innerHTML = `<div style="font-weight:700;margin-bottom:8px;">shadow-mask debug</div>`;
+      // Header row: title + collapse toggle. Everything below the header
+      // lives in `body` so collapsing shrinks the panel to a small chip.
+      // Collapsed state persists in sessionStorage — the panel is torn
+      // down and rebuilt on every renderer destroy/reconstruct (resize,
+      // renderer swap), and the collapse should survive that.
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;';
+      const titleEl = document.createElement('div');
+      titleEl.style.cssText = 'font-weight:700;';
+      titleEl.textContent = 'shadow-mask debug';
+      header.appendChild(titleEl);
+      const collapseBtn = document.createElement('button');
+      collapseBtn.style.cssText = 'background:#222;color:#5EE2FF;border:1px solid #555;font:11px/1 monospace;cursor:pointer;border-radius:2px;padding:2px 7px;';
+      header.appendChild(collapseBtn);
+      panel.appendChild(header);
+
+      const body = document.createElement('div');
+      body.style.marginTop = '8px';
+      panel.appendChild(body);
+
+      const COLLAPSE_KEY = 'crt-debug-panel-collapsed';
+      let collapsed = false;
+      try { collapsed = sessionStorage.getItem(COLLAPSE_KEY) === '1'; } catch (_) { /* sandboxed */ }
+      const applyCollapsed = () => {
+        body.style.display = collapsed ? 'none' : '';
+        collapseBtn.textContent = collapsed ? '+' : '−';
+        collapseBtn.title = collapsed ? 'expand' : 'collapse';
+      };
+      collapseBtn.addEventListener('click', () => {
+        collapsed = !collapsed;
+        try { sessionStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0'); } catch (_) { /* sandboxed */ }
+        applyCollapsed();
+      });
+      applyCollapsed();
 
       // FPS readout.
       const fpsEl = document.createElement('div');
       fpsEl.style.cssText = 'margin-bottom:10px;color:#5EE2FF;';
       fpsEl.textContent = 'fps: --';
-      panel.appendChild(fpsEl);
+      body.appendChild(fpsEl);
       this._debugFps = fpsEl;
       this._debugFpsLast = performance.now();
       this._debugFpsFrames = 0;
@@ -883,7 +916,7 @@ void main() {
         }
         setTimeout(restore, 1400);
       });
-      panel.appendChild(copyBtn);
+      body.appendChild(copyBtn);
 
       // Captioned effect groups with inline sliders for tunable scalars.
       // Order mirrors the GPU pass order (phosphor → composite → glass);
@@ -976,7 +1009,7 @@ void main() {
         const head = document.createElement('div');
         head.style.cssText = 'margin-top:10px;margin-bottom:4px;color:#A99CFF;font-weight:700;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;';
         head.textContent = group.title;
-        panel.appendChild(head);
+        body.appendChild(head);
 
         for (const item of group.items) {
           const block = document.createElement('div');
@@ -1045,7 +1078,7 @@ void main() {
             }
           }
 
-          panel.appendChild(block);
+          body.appendChild(block);
         }
       }
 
