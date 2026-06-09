@@ -107,8 +107,13 @@
   .screen-slot video.promoted { display: block; width: 100%; height: auto; }
 
   /* Bezel plate. The toggle lives here (bottom-left of the cabinet,
-     like a PVM input selector) — never under the fixed panel's corner. */
+     like a PVM input selector) — never under the fixed panel's corner.
+     width:0 + min-width:100% keeps the plate's content from propping
+     the cabinet open wider than the screen (portrait crops are
+     narrower than the toggle + label row); the plate wraps instead. */
   .plate {
+    width: 0;
+    min-width: 100%;
     margin-top: 14px;
     display: flex;
     align-items: center;
@@ -172,8 +177,10 @@
   </figure>
 
   <aside class="source">
-    <video id="source-video" src="mirabel.mov" muted loop autoplay playsinline preload="auto"></video>
-    <div class="label">Source &middot; mirabel.mov &middot; 1280&times;720 &middot; H.264</div>
+    <!-- mp4, not the original .mov: same H.264/AAC streams, remuxed —
+         Firefox refuses the QuickTime container outright. -->
+    <video id="source-video" src="mirabel.mp4" muted loop autoplay playsinline preload="auto"></video>
+    <div class="label">Source &middot; mirabel.mp4 &middot; 1280&times;720 &middot; H.264</div>
   </aside>
 
 </div>
@@ -205,6 +212,10 @@
 
   let crt  = null;
   let view = [0, 0];
+  // Content rect within the video frame, in video pixels — null until
+  // detectCrop() runs (or if it bails). mirabel.mov ships with its
+  // pillarbox bars baked into the encoded frames; this carves them off.
+  let cropRect = null;
 
   function currentKind() {
     try {
@@ -213,32 +224,108 @@
     } catch (_) { return 'trinitron'; }
   }
 
-  // Signal callback: black CRT face, then the current video frame
-  // contain-fit (letterboxed if the aspect ever disagrees with the
-  // screen). Everything CRT-ish happens downstream in the GPU passes.
+  // Scan the current video frame for the non-black content bounds.
+  // Samples every other pixel; a row/column counts as content when any
+  // sampled channel clears the threshold (encode-black bars sit well
+  // under it, real shadows well over). Returns null when there's
+  // nothing to crop — degenerate bounds (a black frame) or bars too
+  // thin to matter.
+  function detectCrop() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const probe = document.createElement('canvas');
+    probe.width = vw; probe.height = vh;
+    const pctx = probe.getContext('2d', { willReadFrequently: true });
+    pctx.drawImage(video, 0, 0);
+    let data;
+    try { data = pctx.getImageData(0, 0, vw, vh).data; } catch (_) { return null; }
+    const T = 24;
+    const colHas = new Uint8Array(vw), rowHas = new Uint8Array(vh);
+    for (let y = 0; y < vh; y += 2) {
+      const rowBase = y * vw * 4;
+      for (let x = 0; x < vw; x += 2) {
+        const i = rowBase + x * 4;
+        if (data[i] > T || data[i + 1] > T || data[i + 2] > T) {
+          colHas[x] = 1; rowHas[y] = 1;
+        }
+      }
+    }
+    let x0 = 0;      while (x0 < vw && !colHas[x0]) x0++;
+    let x1 = vw - 1; while (x1 > 0  && !colHas[x1]) x1--;
+    let y0 = 0;      while (y0 < vh && !rowHas[y0]) y0++;
+    let y1 = vh - 1; while (y1 > 0  && !rowHas[y1]) y1--;
+    if (x1 - x0 < vw * 0.15 || y1 - y0 < vh * 0.15) return null;
+    // Shave 2px of soft bar-edge fringe; skip the crop entirely if the
+    // bars are within 8px of the frame edge (nothing worth cropping).
+    x0 += 2; y0 += 2; x1 -= 2; y1 -= 2;
+    if (x0 <= 8 && y0 <= 8 && x1 >= vw - 9 && y1 >= vh - 9) return null;
+    return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
+
+  // Signal callback: black CRT face, then the cropped region of the
+  // current video frame, contain-fit (the screen is sized to the crop's
+  // aspect, so normally this fills edge to edge). Everything CRT-ish
+  // happens downstream in the GPU passes.
   function signal(ctx) {
     const w = view[0], h = view[1];
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, w, h);
     if (video.readyState < 2 || !video.videoWidth) return;
-    const va = video.videoWidth / video.videoHeight;
+    const c = cropRect || { x: 0, y: 0, w: video.videoWidth, h: video.videoHeight };
+    const va = c.w / c.h;
     let dw = w, dh = h;
     if (va > w / h) dh = w / va; else dw = h * va;
-    ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    ctx.drawImage(video, c.x, c.y, c.w, c.h, (w - dw) / 2, (h - dh) / 2, dw, dh);
   }
 
-  // Screen size: 16:9 (the video's aspect), 1 source px = 1 display px
-  // like the hero screen, capped so the renderer's fixed panel has
-  // somewhere to float on wide viewports.
+  // Screen size: the cropped content's aspect at 1 source px = 1 display
+  // px, fit inside a box capped by width (so the renderer's fixed panel
+  // has somewhere to float) and by height (portrait content would
+  // otherwise blow past the viewport).
   function measure() {
-    const w = Math.max(320, Math.min(960, Math.round(lab.clientWidth - 88)));
-    return [w, Math.round(w * 9 / 16)];
+    const c = cropRect;
+    const aspect = c ? c.w / c.h
+      : (video.videoWidth ? video.videoWidth / video.videoHeight : 16 / 9);
+    const maxW = Math.max(280, Math.min(960, Math.round(lab.clientWidth - 88)));
+    const maxH = Math.max(240, Math.round(window.innerHeight * 0.74));
+    let w = maxW, h = Math.round(w / aspect);
+    if (h > maxH) { h = maxH; w = Math.round(h * aspect); }
+    return [w, h];
+  }
+
+  // Drop the CRT and run the raw video in the screen slot instead.
+  // Reached when WebGL2 is missing, or when the canvas is origin-tainted
+  // (file:// pages: the video counts as cross-origin, so the per-frame
+  // texImage2D upload of the signal canvas would throw forever).
+  function fallbackToRawVideo(reason) {
+    document.documentElement.classList.add('crt-failed');
+    canvas.remove();
+    video.classList.add('promoted');
+    document.querySelector('.screen-slot').appendChild(video);
+    if (reason) console.warn('[mirabel] CRT disabled: ' + reason);
+  }
+
+  // True if a canvas that has the video drawn into it can still be read
+  // back — i.e. the renderer will be able to upload it to the GPU.
+  // Inconclusive (no frame yet) counts as usable.
+  function signalSourceUsable() {
+    if (video.readyState < 2 || !video.videoWidth) return true;
+    const probe = document.createElement('canvas');
+    probe.width = 2; probe.height = 2;
+    const pctx = probe.getContext('2d');
+    pctx.drawImage(video, 0, 0, 2, 2);
+    try { pctx.getImageData(0, 0, 1, 1); return true; } catch (_) { return false; }
   }
 
   function build(kind, size) {
+    if (document.documentElement.classList.contains('crt-failed')) return;
     if (crt) {
       try { crt.destroy(); } catch (_) { /* defensive */ }
       crt = null;
+    }
+    if (!signalSourceUsable()) {
+      fallbackToRawVideo('canvas is origin-tainted by the video — serve the page over http(s) (e.g. python3 -m http.server -d docs 8000) for the phosphor path.');
+      return;
     }
     view = size;
     const w = size[0], h = size[1];
@@ -288,12 +375,7 @@
       window.__trinitronLogo = (kind === 'trinitron') ? crt : undefined;
       crt.start();
     } catch (err) {
-      // WebGL2 (or a required float extension) unavailable: promote the
-      // source video into the screen slot and run it raw.
-      document.documentElement.classList.add('crt-failed');
-      canvas.remove();
-      video.classList.add('promoted');
-      document.querySelector('.screen-slot').appendChild(video);
+      fallbackToRawVideo('WebGL2 (or a required float extension) unavailable — ' + err.message);
     }
 
     for (const b of buttons) {
@@ -324,12 +406,42 @@
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       const size = measure();
-      if (crt && size[0] === view[0]) return;
+      if (crt && size[0] === view[0] && size[1] === view[1]) return;
       build(currentKind(), size);
     }, 200);
   });
 
-  build(currentKind(), measure());
+  // Startup: detect the crop before the first build so the screen is
+  // born at the content's aspect. Seek to a mid-clip frame first —
+  // frame zero of a fade-in is all black and would defeat detection —
+  // then rewind and play. Failsafes (timeout, video error) build at
+  // the uncropped default so the page never sits dead.
+  let built = false;
+  function buildOnce() {
+    if (built) return;
+    built = true;
+    build(currentKind(), measure());
+  }
+  const failsafe = setTimeout(buildOnce, 2500);
+  video.addEventListener('error', () => { clearTimeout(failsafe); buildOnce(); }, { once: true });
+
+  function sampleAndBuild() {
+    cropRect = detectCrop();
+    window.__cropRect = cropRect; // DevTools handle, same spirit as __crt
+    clearTimeout(failsafe);
+    try { video.currentTime = 0; } catch (_) { /* keep playing from here */ }
+    const p = video.play();
+    if (p && p.catch) p.catch(() => {});
+    buildOnce();
+  }
+  function seekThenSample() {
+    const t = Math.min(2, (video.duration || 0) / 2);
+    if (!t || video.currentTime > t) { sampleAndBuild(); return; }
+    video.addEventListener('seeked', sampleAndBuild, { once: true });
+    try { video.currentTime = t; } catch (_) { sampleAndBuild(); }
+  }
+  if (video.readyState >= 1) seekThenSample();
+  else video.addEventListener('loadedmetadata', seekThenSample, { once: true });
 })();
 </script>
 </body>
