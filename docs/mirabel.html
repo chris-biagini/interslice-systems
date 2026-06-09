@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIRABEL — CRT playback test · Interslice Systems</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* Service-bay page: pinned dark (data-theme="dark" on <html>) because
+     the phosphor renderers ARE the dark medium — there is no paper
+     version of this page. tokens.css supplies the navy/cream palette. */
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); }
+  *, *::before, *::after { box-sizing: border-box; }
+
+  .lab {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28px 24px 40px;
+    gap: 26px;
+  }
+
+  /* ===================== TOP BAR ===================== */
+  /* Left-clustered on purpose: the renderers' adjustment panel mounts
+     fixed in the top-right corner, so nothing interactive lives there. */
+  .bar {
+    width: 100%;
+    max-width: 1100px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+  .home {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    text-decoration: none;
+  }
+  .home:hover, .home:focus-visible { color: var(--ink-cyan); }
+  .bar h1 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: -0.02em;
+  }
+  .bar h1 .partno {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--fg-muted);
+    display: block;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+  }
+
+  /* ===================== RENDERER TOGGLE ===================== */
+  .toggle {
+    display: inline-flex;
+    border: 1px solid var(--navy-2);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .toggle button {
+    appearance: none;
+    border: 0;
+    margin: 0;
+    padding: 8px 14px;
+    background: var(--navy-1);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .toggle button + button { border-left: 1px solid var(--navy-2); }
+  .toggle button:hover { color: var(--fg); }
+  .toggle button[aria-pressed="true"] {
+    background: var(--navy-2);
+    color: var(--ink-cyan);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--ink-cyan) 60%, transparent);
+  }
+
+  /* ===================== THE SET ===================== */
+  .cabinet {
+    margin: 0;
+    background: var(--navy-1);
+    border: 1px solid var(--navy-2);
+    border-radius: 16px;
+    padding: 20px 20px 14px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  }
+  .screen-slot {
+    border-radius: 8px;
+    overflow: hidden;
+    background: #000;
+    line-height: 0; /* no inline-gap below the canvas */
+  }
+  canvas.crt-screen { display: block; }
+  .screen-slot video.promoted { display: block; width: 100%; height: auto; }
+
+  /* Bezel plate. The toggle lives here (bottom-left of the cabinet,
+     like a PVM input selector) — never under the fixed panel's corner. */
+  .plate {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+  }
+  .plate .mode { color: var(--ink-magenta); font-style: normal; }
+
+  /* ===================== SOURCE REFERENCE ===================== */
+  .source {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .source video {
+    display: block;
+    width: 224px;
+    border-radius: 4px;
+    border: 1px solid var(--navy-2);
+  }
+  .source .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+  }
+
+  /* WebGL2-unavailable fallback: the source video is promoted into the
+     screen slot by the script; hide the now-redundant reference block. */
+  html.crt-failed .source { display: none; }
+</style>
+</head>
+<body>
+<div class="lab">
+
+  <header class="bar">
+    <a class="home" href="./">&larr; interslice&middot;systems</a>
+    <h1><span class="partno">Interslice Systems &middot; Service Division</span>MIRABEL &mdash; Playback Test</h1>
+  </header>
+
+  <figure class="cabinet">
+    <div class="screen-slot">
+      <canvas class="crt-screen"></canvas>
+    </div>
+    <figcaption class="plate">
+      <div class="toggle" role="group" aria-label="CRT renderer">
+        <button type="button" data-renderer="trinitron" aria-pressed="true">Trinitron</button>
+        <button type="button" data-renderer="shadow-mask" aria-pressed="false">Shadow Mask</button>
+      </div>
+      <span>PVM-2738 &middot; composite in &middot; <em class="mode">service mode &mdash; adjustments at right</em></span>
+    </figcaption>
+  </figure>
+
+  <aside class="source">
+    <video id="source-video" src="mirabel.mov" muted loop autoplay playsinline preload="auto"></video>
+    <div class="label">Source &middot; mirabel.mov &middot; 1280&times;720 &middot; H.264</div>
+  </aside>
+
+</div>
+
+<script src="trinitron.js"></script>
+<script src="shadow-mask.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // The renderers build their own adjustment panel when the URL carries
+  // ?debug=1 (and debugOverlay:true). This page wants the panel always,
+  // so pin the param into the URL before any construction — the panel
+  // code stays where it lives, in the renderer files.
+  function patchUrl(mutate) {
+    try {
+      const u = new URL(window.location);
+      mutate(u.searchParams);
+      history.replaceState(null, '', u);
+    } catch (_) { /* file:// edge cases — page still works, panel may not */ }
+  }
+  patchUrl((p) => { if (p.get('debug') !== '1') p.set('debug', '1'); });
+
+  const video   = document.getElementById('source-video');
+  const canvas  = document.querySelector('canvas.crt-screen');
+  const lab     = document.querySelector('.lab');
+  const buttons = Array.from(document.querySelectorAll('.toggle button'));
+  if (!video || !canvas || !window.Trinitron || !window.ShadowMask) return;
+
+  let crt  = null;
+  let view = [0, 0];
+
+  function currentKind() {
+    try {
+      return new URL(window.location).searchParams.get('crt') === 'shadow-mask'
+        ? 'shadow-mask' : 'trinitron';
+    } catch (_) { return 'trinitron'; }
+  }
+
+  // Signal callback: black CRT face, then the current video frame
+  // contain-fit (letterboxed if the aspect ever disagrees with the
+  // screen). Everything CRT-ish happens downstream in the GPU passes.
+  function signal(ctx) {
+    const w = view[0], h = view[1];
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, w, h);
+    if (video.readyState < 2 || !video.videoWidth) return;
+    const va = video.videoWidth / video.videoHeight;
+    let dw = w, dh = h;
+    if (va > w / h) dh = w / va; else dw = h * va;
+    ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  }
+
+  // Screen size: 16:9 (the video's aspect), 1 source px = 1 display px
+  // like the hero screen, capped so the renderer's fixed panel has
+  // somewhere to float on wide viewports.
+  function measure() {
+    const w = Math.max(320, Math.min(960, Math.round(lab.clientWidth - 88)));
+    return [w, Math.round(w * 9 / 16)];
+  }
+
+  function build(kind, size) {
+    if (crt) {
+      try { crt.destroy(); } catch (_) { /* defensive */ }
+      crt = null;
+    }
+    view = size;
+    const w = size[0], h = size[1];
+    canvas.style.width  = w + 'px';
+    canvas.style.height = h + 'px';
+
+    // Hero-screen options, minus the logo-specific bits. Per-class
+    // values mirror createTrinitron() in index.html so the two pages
+    // stay one tuning pass apart, not two.
+    const common = {
+      signal,
+      viewSize:   [w, h],
+      canvasSize: [w * 2, h * 2],
+      stripeUpscale: 2,
+      opaqueBackground: true,
+      phosphorCoupling: 0.35,
+      persistence: 0.82,
+      convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+      rowShimmer: 0.02,
+      bloomStrength: 1.2,
+      debugOverlay: true,
+    };
+
+    try {
+      if (kind === 'shadow-mask') {
+        crt = new window.ShadowMask(canvas, Object.assign(common, {
+          cellSize: [3, 3],
+          beamSpreadPx: 1.5,
+          beamSpreadVerticalPx: 1.5,
+          bleedRadius: 24,
+          bloomThreshold: 0.3,
+          dotRadius: 0.7,
+        }));
+      } else {
+        crt = new window.Trinitron(canvas, Object.assign(common, {
+          cellSize: 3,
+          beamSpreadPx: 0.7,
+          beamSpreadVerticalPx: 1.4,
+          damperStrength: 0.90,
+          bleedRadius: 18,
+          gapMaskAlpha: 0.15,
+          gapMaskPeriod: 2,
+          effects: { gapMask: true },
+        }));
+      }
+      window.__crt = crt;
+      window.__trinitronLogo = (kind === 'trinitron') ? crt : undefined;
+      crt.start();
+    } catch (err) {
+      // WebGL2 (or a required float extension) unavailable: promote the
+      // source video into the screen slot and run it raw.
+      document.documentElement.classList.add('crt-failed');
+      canvas.remove();
+      video.classList.add('promoted');
+      document.querySelector('.screen-slot').appendChild(video);
+    }
+
+    for (const b of buttons) {
+      b.setAttribute('aria-pressed', String(b.dataset.renderer === kind));
+    }
+    // Muted autoplay is near-universally allowed, but if a policy blocked
+    // it, any toggle click retries from a user gesture.
+    const p = video.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  for (const b of buttons) {
+    b.addEventListener('click', () => {
+      const kind = b.dataset.renderer;
+      if (kind === currentKind() && crt) return;
+      patchUrl((params) => {
+        if (kind === 'shadow-mask') params.set('crt', 'shadow-mask');
+        else params.delete('crt');
+      });
+      build(kind, measure());
+    });
+  }
+
+  // Debounced rebuild on resize, same rhythm as the hero screen —
+  // recreating a renderer rebuilds the whole GL pipeline (~20 ms).
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const size = measure();
+      if (crt && size[0] === view[0]) return;
+      build(currentKind(), size);
+    }, 200);
+  });
+
+  build(currentKind(), measure());
+})();
+</script>
+</body>
+</html>
