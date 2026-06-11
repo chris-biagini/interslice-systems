@@ -118,7 +118,9 @@ meaning "nothing new was painted; skip this frame." Returning `undefined` or
 anything truthy means animated — so **existing callbacks get status-quo
 behavior with no changes** (the hero's rotating logo runs every frame, as
 now). When the callback returns `false`, the renderer skips the signal upload
-and the render, and (re)starts the settle countdown.
+(the GPU keeps sampling the previous signal texture) but still renders settle
+frames so persistence trails keep decaying, and (re)starts the settle
+countdown.
 
 **External pokes.** New public `requestRender()`: schedules a render (and a
 settle re-evaluation) from idle. `writeParam()` calls it internally; the
