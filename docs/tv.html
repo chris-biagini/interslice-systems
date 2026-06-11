@@ -225,7 +225,7 @@ svg.cab-wood {
     rgba(0, 0, 0, .5) 100%);
 }
 
-.badge {
+.grille .badge { /* scoped: the bench reuses .badge for its scope pills */
   position: absolute;
   left: 20px;
   top: 50%;
@@ -490,12 +490,138 @@ body[data-power="bypass"] .led {
   pointer-events: none;
 }
 
-/* ---- Bench (later task) ---------------------------------------- */
+/* ---- Bench ------------------------------------------------------ */
+/* Schema-driven parameter panel below the cabinet. Deliberately "lab
+   equipment" rather than 1970s — it's the service bench, not the set. */
 
 .bench {
-  width: 994px;
-  min-height: 0;
+  width: 960px;
+  padding: 0 0 48px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  align-items: start;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
+
+.bench-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: #565e6b;
+}
+
+.bench-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.bench-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: #b9c1cd;
+}
+.bench-fps {
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: #5ee2ff;
+}
+.bench-copy {
+  padding: 5px 12px 4px;
+  border: 1px solid #2a2e36;
+  border-radius: 5px;
+  background: #191c22;
+  color: #9aa1ad;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.bench-copy:hover { border-color: #3a4049; color: #c2c8d2; }
+
+.bench-group {
+  margin: 0;
+  min-width: 0;
+  padding: 10px 14px 14px;
+  border: 1px solid #2a2e36;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .015);
+}
+.bench-group legend {
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: #7d8694;
+}
+
+.bench-item + .bench-item { margin-top: 12px; }
+
+.bench-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #c2c8d2;
+  cursor: pointer;
+}
+.bench-toggle input {
+  margin: 0;
+  accent-color: #5ee2ff;
+}
+.bench-toggle .badge { margin-left: auto; }
+
+.bench-desc {
+  margin: 3px 0 5px 21px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #6a7280;
+}
+
+.bench-param {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0 3px 21px;
+  font-size: 10px;
+  color: #8d96a4;
+}
+.bench-param > span:first-child { min-width: 92px; }
+.bench-param input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #5ee2ff;
+}
+.bench-param output {
+  min-width: 38px;
+  text-align: right;
+  color: #c2c8d2;
+}
+
+/* scope pills */
+.bench .badge {
+  padding: 1px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge-universal   { color: #8d96a4; border-color: #3a4049; }
+.badge-trinitron   { color: #5ee2ff; border-color: rgba(94, 226, 255, .4); }
+.badge-shadow-mask { color: #ff5ec8; border-color: rgba(255, 94, 200, .4); }
 </style>
 </head>
 <body>
@@ -615,7 +741,7 @@ body[data-power="bypass"] .led {
       <span class="floor-shadow"  aria-hidden="true"></span>
     </div>
 
-    <section class="bench" id="bench"><!-- later task --></section>
+    <section class="bench" id="bench"><!-- populated by rebuildBench() --></section>
   </main>
 <script src="trinitron.js"></script>
 <script src="shadow-mask.js"></script>
@@ -780,7 +906,7 @@ body[data-power="bypass"] .led {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   // Boot presets — hero-derived + TV glass. Starting points; the bench
-  // (later task) exists to retune them.
+  // below exists to retune them.
   const TV_EFFECTS = { convergence: true, selectiveBloom: true, scanlines: true,
                        curvature: true, vignette: true, warmup: true };
   function makeRenderer(kind) {
@@ -859,7 +985,7 @@ body[data-power="bypass"] .led {
     byCanvas.hidden = !inBypass;
     if (inBypass) startBypass();
     document.body.dataset.power = inBypass ? 'bypass' : 'on';
-    rebuildBench();             // later task replaces
+    rebuildBench();
     updateReadout();
     // RENDERER: 3 positions over -60°..+60°
     knobRenderer.style.setProperty('--angle', (-60 + rendererIdx * 60) + 'deg');
@@ -878,13 +1004,105 @@ body[data-power="bypass"] .led {
     }
     updateReadout();
     // CHANNEL: dial paints positions 2–6 over -120°..+120°; point at the
-    // painted position for this channel's number (works while the stub
-    // has fewer entries than the dial has positions).
+    // painted position for this channel's number.
     knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 60) + 'deg');
     syncUrl();
   }
 
-  function rebuildBench() {}    // later task replaces
+  // --- Bench (schema-driven parameter panel) ---------------------------
+  let benchFpsEl = null;
+  function rebuildBench() {
+    const bench = document.getElementById('bench');
+    bench.textContent = '';
+    if (!renderer) {
+      const note = document.createElement('p');
+      note.className = 'bench-note';
+      note.textContent = 'BYPASS — raw signal, no renderer active.';
+      bench.appendChild(note);
+      return;
+    }
+    const head = document.createElement('div');
+    head.className = 'bench-head';
+    const title = document.createElement('h2');
+    title.textContent = `${RENDERERS[rendererIdx].replace('-', ' ')} parameters`;
+    head.appendChild(title);
+    const fps = document.createElement('span');
+    fps.className = 'bench-fps';
+    fps.textContent = 'fps: --';
+    head.appendChild(fps);
+    benchFpsEl = fps;
+    const copy = document.createElement('button');
+    copy.className = 'bench-copy';
+    copy.textContent = 'copy state diff';
+    copy.addEventListener('click', async () => {
+      const text = renderer.stateDiff();
+      try { await navigator.clipboard.writeText(text); copy.textContent = 'copied'; }
+      catch (_) { console.log('[tv]\n' + text); copy.textContent = 'see console'; }
+      setTimeout(() => { copy.textContent = 'copy state diff'; }, 1400);
+    });
+    head.appendChild(copy);
+    bench.appendChild(head);
+
+    for (const group of renderer.constructor.effectSchema) {
+      const fs = document.createElement('fieldset');
+      fs.className = 'bench-group';
+      const lg = document.createElement('legend');
+      lg.textContent = group.title;
+      fs.appendChild(lg);
+      for (const item of group.items) {
+        const block = document.createElement('div');
+        block.className = 'bench-item';
+        const row = document.createElement('label');
+        row.className = 'bench-toggle';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!renderer.effects[item.key];
+        cb.addEventListener('change', () => { renderer.effects[item.key] = cb.checked; });
+        row.appendChild(cb);
+        const name = document.createElement('span');
+        name.textContent = item.label;
+        row.appendChild(name);
+        row.appendChild(makeBadge(item.scope));
+        block.appendChild(row);
+        const desc = document.createElement('p');
+        desc.className = 'bench-desc';
+        desc.textContent = item.desc;
+        block.appendChild(desc);
+        for (const p of (item.params || [])) {
+          const prow = document.createElement('div');
+          prow.className = 'bench-param';
+          const sub = document.createElement('span');
+          sub.textContent = p.sub;
+          prow.appendChild(sub);
+          const slider = document.createElement('input');
+          slider.type = 'range';
+          slider.min = String(p.min); slider.max = String(p.max); slider.step = String(p.step);
+          const val = document.createElement('output');
+          const fmt = (v) => v.toFixed(Math.max(0, -Math.floor(Math.log10(p.step))));
+          const init = renderer.readParam(p.opt);
+          slider.value = String(init);
+          val.textContent = fmt(init);
+          slider.addEventListener('input', () => {
+            const v = parseFloat(slider.value);
+            val.textContent = fmt(v);
+            renderer.writeParam(p.opt, v);
+          });
+          prow.appendChild(slider);
+          prow.appendChild(val);
+          if (p.scope && p.scope !== item.scope) prow.appendChild(makeBadge(p.scope));
+          block.appendChild(prow);
+        }
+        fs.appendChild(block);
+      }
+      bench.appendChild(fs);
+    }
+  }
+  function makeBadge(scope) {
+    const b = document.createElement('span');
+    b.className = `badge badge-${scope}`;
+    b.textContent = scope;
+    return b;
+  }
 
   // --- Knob wiring -----------------------------------------------------
   const knobChannel  = document.getElementById('knob-channel');
@@ -926,6 +1144,22 @@ body[data-power="bypass"] .led {
     const ri = RENDERERS.indexOf(u.searchParams.get('renderer'));
     if (ri >= 0) rendererIdx = ri;
   }
+
+  // --- Bench fps meter --------------------------------------------------
+  // 500 ms window over the renderer's frame counter; reseeds on renderer
+  // swap so the first reading after a change isn't a cross-renderer delta.
+  let fpsLastRenderer = null, fpsLastFrames = 0;
+  setInterval(() => {
+    if (!renderer || !benchFpsEl) { fpsLastRenderer = null; return; }
+    if (fpsLastRenderer !== renderer) {
+      fpsLastRenderer = renderer;
+      fpsLastFrames = renderer._frameCount;
+      return;
+    }
+    const delta = renderer._frameCount - fpsLastFrames;
+    fpsLastFrames = renderer._frameCount;
+    benchFpsEl.textContent = `fps: ${Math.round(delta * 2)}`;
+  }, 500);
 
   // --- Boot -----------------------------------------------------------
   readUrl();
