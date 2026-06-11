@@ -120,8 +120,8 @@ void main() {
   // Store pre-stripe value so weights don't compound across frames.
   // Half-LSB fade bias: in 8-bit, prev*decay can round back to prev at
   // the bottom few grey levels and a trail would never reach zero.
-  // Subtracting 0.5/255 guarantees termination; cost to live signal is
-  // ≤0.2% brightness — invisible.
+  // Subtracting 0.5/255 guarantees termination; cost to the persisted
+  // tail is 0.2% per frame — invisible.
   oPersistenceNext = max(lerped - 0.5 / 255.0, vec4(0.0));
 
   vec2 px = vUv * uViewSize;
