@@ -487,8 +487,20 @@ void main() {
 
       this._initGpu();
 
+      // Scheduler state. _wasStartedByUser is user intent (start() sets,
+      // stop() clears); _mode is what the loop is doing right now:
+      //   'stopped' — halted (never started, stop()ed, offscreen, RM)
+      //   'running' — RAF loop live
+      //   'idle'    — parked: signal static + trails settled; zero work
+      //               until requestRender(), a visibility change, or
+      //               start() wakes it.
+      //               (tv.html's bench reads _mode to show "fps: idle".)
       this._wasStartedByUser = false;
+      this._mode = 'stopped';
+      this._visible = true;
+      this._idleAt = Infinity;
       this._setupReducedMotionListener();
+      this._setupVisibilityObserver();
       this._rafHandle = null;
       this._startTime = null;
       this._lastRenderT = null;
@@ -515,6 +527,7 @@ void main() {
         this.opts[opt] = v;
       }
       if (this._gl) this._uploadStaticUniforms();
+      this.requestRender();   // repaint even when parked on a static picture
     }
 
     _snapshotState() {
@@ -928,7 +941,7 @@ void main() {
           const cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.checked = !!this.effects[item.key];
-          cb.addEventListener('change', () => { this.effects[item.key] = cb.checked; });
+          cb.addEventListener('change', () => { this.effects[item.key] = cb.checked; this.requestRender(); });
           row.appendChild(cb);
           const lbl = document.createElement('span');
           lbl.textContent = item.label;
@@ -1149,12 +1162,17 @@ void main() {
 
     _renderGpu(timeMs) {
       const gl = this._gl;
-      if (!gl) return;  // raced with destroy()
+      if (!gl) return false;  // raced with destroy()
 
       // Paint signal first (caller's callback fills the 2D canvas).
+      // The callback may return false — "nothing new painted" — in
+      // which case the GPU keeps sampling the previous signal texture
+      // and this frame only advances persistence decay. undefined or
+      // truthy (every pre-contract callback) means animated.
       const [vw, vh] = this.opts.viewSize;
       this._signalCtx.clearRect(0, 0, vw, vh);
-      this.opts.signal(this._signalCtx, timeMs);
+      const painted = this.opts.signal(this._signalCtx, timeMs);
+      const dirty = painted !== false;
 
       // Warmup: one-shot brightness ramp, 0 → 1 over the first ~1.2 s
       // after start. The only time-driven modulator in the model.
@@ -1168,14 +1186,14 @@ void main() {
 
       this._brightness = warmupFactor;
 
-      // Upload the 2D canvas to the signal texture. FLIP_Y accounts for
-      // the difference between canvas's top-left origin and WebGL's
-      // bottom-left origin, so sampling uSignal at vUv = (x, y) returns
-      // the canvas pixel at (x, y) with origin top-left.
-      gl.bindTexture(gl.TEXTURE_2D, this._texSignal);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this._signalCanvas);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      if (dirty) {
+        // Upload the 2D canvas to the signal texture. FLIP_Y accounts
+        // for canvas's top-left vs WebGL's bottom-left origin.
+        gl.bindTexture(gl.TEXTURE_2D, this._texSignal);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this._signalCanvas);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      }
 
       // Bind the pre-configured FBO matching current ping-pong orientation.
       const fbo = this._pingPongFlip ? this._fboPhosphorWithA : this._fboPhosphorWithB;
@@ -1296,57 +1314,123 @@ void main() {
           this._debugFpsLast = now;
         }
       }
+
+      return dirty;
     }
 
     start() {
       this._wasStartedByUser = true;
       if (this._rafHandle != null) return;
       // Zero the persistence trail so a stop/restart (e.g. theme toggle)
-      // doesn't leave the last paused frame ghosted into the next session.
-      // Guarded on _gl because destroy() nulls it; start() after destroy
-      // is a no-op for the clear (and the tick below will early-out too).
+      // doesn't leave the last session's frame ghosted into this one.
+      // clearBufferfv is also correct for normalized RGBA8 attachments.
+      // Guarded on _gl because destroy() nulls it.
       if (this._gl) {
-        // Clear both persistence textures by binding each FBO and
-        // clearing all attachments. clearBufferfv is also correct for
-        // normalized RGBA8 attachments (values clamp to [0,1]).
         const gl = this._gl;
         const zeros = new Float32Array([0, 0, 0, 0]);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithA);
-        gl.clearBufferfv(gl.COLOR, 0, zeros);  // phosphor attachment
-        gl.clearBufferfv(gl.COLOR, 1, zeros);  // persistence A
+        gl.clearBufferfv(gl.COLOR, 0, zeros);
+        gl.clearBufferfv(gl.COLOR, 1, zeros);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithB);
-        gl.clearBufferfv(gl.COLOR, 0, zeros);  // phosphor attachment
-        gl.clearBufferfv(gl.COLOR, 1, zeros);  // persistence B
+        gl.clearBufferfv(gl.COLOR, 0, zeros);
+        gl.clearBufferfv(gl.COLOR, 1, zeros);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       }
       this._warmupStartMs = 0;  // warmup begins at timeMs = 0 since startTime
       this._startTime = performance.now();
       this._lastRenderT = null;
-      if (this._reducedMotionMq && this._reducedMotionMq.matches) {
-        // Single static frame — render it at t past the warmup ramp
-        // (1200 ms) so a warmup-enabled consumer shows the steady-state
-        // tube, not the warmupFactor=0 black of the t=0 frame.
-        this._renderGpu(1200);
-        return;
-      }
-      const tick = (now) => {
-        const t = now - this._startTime;
-        this._renderGpu(t);
-        // stop() may have nulled _rafHandle during the frame work
-        // (e.g. theme MutationObserver firing mid-tick). Don't re-queue
-        // in that case — otherwise the loop keeps running past stop().
-        if (this._rafHandle !== null) {
-          this._rafHandle = requestAnimationFrame(tick);
-        }
-      };
-      this._rafHandle = requestAnimationFrame(tick);
+      this._resumeLoop();
     }
 
     stop() {
+      this._wasStartedByUser = false;
+      this._mode = 'stopped';
       if (this._rafHandle != null) {
         cancelAnimationFrame(this._rafHandle);
         this._rafHandle = null;
       }
+    }
+
+    // Cancel the frame loop WITHOUT touching user intent — used by the
+    // visibility observer and reduced-motion handler, so a renderer
+    // hidden by scroll or RM resumes when conditions allow.
+    _haltLoop() {
+      if (this._rafHandle != null) {
+        cancelAnimationFrame(this._rafHandle);
+        this._rafHandle = null;
+      }
+      if (this._mode !== 'idle') this._mode = 'stopped';
+    }
+
+    // Settle tail: how long to keep rendering after the signal goes
+    // static so persistence trails decay below one 8-bit LSB.
+    // log2(255) ≈ 7.994 half-lives; zero when persistence is off.
+    _settleTailMs() {
+      if (!this.effects.persistence) return 0;
+      return (this.opts.persistenceHalfLifeMs || 0) * 7.994;
+    }
+
+    // (Re)enter the frame loop if user intent, visibility, GPU state,
+    // and reduced-motion all allow. Unlike start(), never clears the
+    // persistence trail or re-triggers warmup — this is "wake up",
+    // not "turn on".
+    _resumeLoop() {
+      if (this._rafHandle != null) return;
+      if (!this._gl || !this._wasStartedByUser || !this._visible) return;
+      if (this._reducedMotionMq && this._reducedMotionMq.matches) {
+        // Single static frame at t past the warmup ramp (1200 ms) so a
+        // warmup-enabled consumer shows the steady-state tube.
+        this._renderGpu(Math.max(1200, performance.now() - this._startTime));
+        return;
+      }
+      this._idleAt = performance.now() + this._settleTailMs();
+      const tick = (now) => {
+        const t = now - this._startTime;
+        const dirty = this._renderGpu(t);
+        // A fresh signal frame or an active warmup ramp resets the idle
+        // deadline; otherwise the deadline set by the last dirty frame
+        // stands, and the loop parks itself once trails have settled.
+        const warmingUp = this.effects.warmup && t < (this._warmupStartMs || 0) + 1200;
+        if (dirty || warmingUp) this._idleAt = now + this._settleTailMs();
+        if (warmingUp) {
+          // Never park mid-ramp: even with a zero settle tail
+          // (persistence off), hold the deadline past warmup's end so
+          // the brightness/color settle completes before parking.
+          const warmupEndsAt = this._startTime + (this._warmupStartMs || 0) + 1200;
+          this._idleAt = Math.max(this._idleAt, warmupEndsAt + this._settleTailMs());
+        }
+        // stop() may have nulled _rafHandle during the frame work
+        // (e.g. theme MutationObserver firing mid-tick). Don't re-queue.
+        if (this._rafHandle === null) return;
+        if (now >= this._idleAt) {
+          this._rafHandle = null;
+          this._mode = 'idle';   // parked: zero work until woken
+          if (this._debugFps) this._debugFps.textContent = 'fps: idle';
+          return;
+        }
+        this._rafHandle = requestAnimationFrame(tick);
+      };
+      this._mode = 'running';
+      this._rafHandle = requestAnimationFrame(tick);
+    }
+
+    // Public poke: wake a parked renderer for at least one frame —
+    // param changes on a static picture, channel switches, etc.
+    // No-op while the loop is already live (or stopped by the user).
+    requestRender() {
+      this._resumeLoop();
+    }
+
+    _setupVisibilityObserver() {
+      if (typeof IntersectionObserver === 'undefined') return;
+      // A decorative effect nobody can see should cost nothing: halt
+      // offscreen, resume on re-entry (idle/settle logic re-applies).
+      this._io = new IntersectionObserver((entries) => {
+        this._visible = entries[entries.length - 1].isIntersecting;
+        if (this._visible) this._resumeLoop();
+        else this._haltLoop();
+      });
+      this._io.observe(this.canvas);
     }
 
     destroy() {
@@ -1358,6 +1442,7 @@ void main() {
           this._reducedMotionMq.removeListener(this._reducedMotionHandler);
         }
       }
+      if (this._io) { this._io.disconnect(); this._io = null; }
       this._destroyGpu();
     }
 
@@ -1366,8 +1451,10 @@ void main() {
       const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
       this._reducedMotionMq = mq;
       this._reducedMotionHandler = () => {
-        if (mq.matches) this.stop();
-        else if (this._wasStartedByUser) this.start();
+        // Halt/resume without clearing user intent; _resumeLoop's RM
+        // branch renders the single static frame on re-entry.
+        if (mq.matches) this._haltLoop();
+        else this._resumeLoop();
       };
       if (mq.addEventListener) mq.addEventListener('change', this._reducedMotionHandler);
       else if (mq.addListener) mq.addListener(this._reducedMotionHandler);
