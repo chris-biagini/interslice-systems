@@ -172,6 +172,8 @@ uniform float uScanlineDepth;       // 0 = no scanlines, 1 = troughs hit zero
 uniform vec3 uGradeGains;           // white-point RGB gains (CPU-computed from temperature)
 uniform float uGradeSaturation;     // luma-preserving saturation
 uniform float uGradeEnabled;
+uniform float uCornerRadius;        // fraction of the canvas's short side
+uniform float uCornersEnabled;
 out vec4 oColor;
 
 vec2 curveUv(vec2 uv, float cAmt, float mode) {
@@ -259,6 +261,20 @@ void main() {
   // a CRT face filling its card). false → alpha follows the
   // silhouette+bloom mask (e.g., a logo on transparent page bg).
   float finalAlpha = mix(alpha, 1.0, uOpaqueBackground);
+
+  // Tube corners: rounded-rect mask on the glass UV, so the raster
+  // itself — and the bloom/gloss/vignette riding on it — has CRT
+  // corners. ~1-px smoothstep edge; outside fades to transparent like
+  // the curvature out-of-bounds region.
+  if (uCornersEnabled > 0.5 && uCornerRadius > 0.0) {
+    vec2 pPx = (sampleUv - 0.5) * uCanvasSize;
+    float r = uCornerRadius * min(uCanvasSize.x, uCanvasSize.y);
+    vec2 halfSize = 0.5 * uCanvasSize - vec2(r);
+    float d = length(max(abs(pPx) - halfSize, vec2(0.0))) - r;
+    float cornerMask = 1.0 - smoothstep(-1.0, 0.5, d);
+    color *= cornerMask;
+    finalAlpha *= cornerMask;
+  }
   oColor = vec4(color, finalAlpha);
 }`;
 
@@ -333,7 +349,7 @@ void main() {
     'phosphorCoupling', 'persistenceHalfLifeMs',
     'beamSpreadPx', 'beamSpreadVerticalPx',
     'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
-    'bleedRadius', 'gradeTemperature', 'gradeSaturation', 'damperStrength', 'scanlineDepth', 'scanlinePeriod',
+    'bleedRadius', 'gradeTemperature', 'gradeSaturation', 'cornerRadius', 'damperStrength', 'scanlineDepth', 'scanlinePeriod',
   ];
 
   class Trinitron {
@@ -456,6 +472,11 @@ void main() {
         // (e.g. presets.tv) opts in.
         gradeTemperature: 0.3,
         gradeSaturation: 1.08,
+        // Tube-corner radius as a fraction of the canvas's short side.
+        // Engine-owned raster silhouette — page CSS keeps shaping the
+        // bezel, but the picture's own corners live here so bloom/
+        // gloss/vignette respect the true tube shape.
+        cornerRadius: 0.06,
         signal: () => {},
         respectReducedMotion: true,
         // Whether the GPU path should create the ?debug=1 effect-
@@ -511,6 +532,8 @@ void main() {
         curvature: false,
         gloss: false,
         vignette: false,
+        // Tube corners — off by default; the TV preset opts in.
+        tubeCorners: false,
         // Slow modulator — off by default; warmup is a one-shot
         // brightness ramp that callers can re-enable if they want the
         // tube-warming-up moment.
@@ -825,6 +848,8 @@ void main() {
       this._uComposite.gradeGains       = gl.getUniformLocation(this._progComposite, 'uGradeGains');
       this._uComposite.gradeSaturation  = gl.getUniformLocation(this._progComposite, 'uGradeSaturation');
       this._uComposite.gradeEnabled     = gl.getUniformLocation(this._progComposite, 'uGradeEnabled');
+      this._uComposite.cornerRadius     = gl.getUniformLocation(this._progComposite, 'uCornerRadius');
+      this._uComposite.cornersEnabled   = gl.getUniformLocation(this._progComposite, 'uCornersEnabled');
 
       // Bloom programs.
       const bthVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
@@ -1237,6 +1262,7 @@ void main() {
       const gains = this._gradeGains(this.opts.gradeTemperature ?? 0);
       gl.uniform3f(this._uComposite.gradeGains, gains[0], gains[1], gains[2]);
       gl.uniform1f(this._uComposite.gradeSaturation, this.opts.gradeSaturation ?? 1);
+      gl.uniform1f(this._uComposite.cornerRadius, this.opts.cornerRadius ?? 0);
 
       // Bloom programs — sampler binding, threshold, and texSize all
       // static. Only invoked when effects.selectiveBloom is on, but
@@ -1423,6 +1449,7 @@ void main() {
       gl.uniform1f(this._uComposite.glossEnabled,     this.effects.gloss          ? 1 : 0);
       gl.uniform1f(this._uComposite.vignetteEnabled,  this.effects.vignette       ? 1 : 0);
       gl.uniform1f(this._uComposite.gapMaskEnabled,   this.effects.gapMask        ? 1 : 0);
+      gl.uniform1f(this._uComposite.cornersEnabled,   this.effects.tubeCorners    ? 1 : 0);
       gl.uniform1f(this._uComposite.bloomEnabled,     this.effects.selectiveBloom ? 1 : 0);
       gl.uniform1f(this._uComposite.scanlineEnabled,  this.effects.scanlines      ? 1 : 0);
       gl.uniform1f(this._uComposite.brightness,       this._brightness ?? 1.0);
@@ -1686,6 +1713,9 @@ void main() {
           desc: 'Upper-left elliptical highlight. Virtual light source. Texture-baked.' },
         { key: 'vignette',  label: 'vignette', scope: 'universal',
           desc: 'Darken corners. Bezel falloff. Texture-baked.' },
+        { key: 'tubeCorners', label: 'tube corners', scope: 'universal',
+          desc: 'Rounded-rect mask on the raster itself — the picture gets CRT corners; bloom and glass effects respect them.',
+          params: [{ opt: 'cornerRadius', min: 0, max: 0.2, step: 0.005, sub: 'radius (frac)' }] },
       ] },
     { title: 'modulation',
       items: [
