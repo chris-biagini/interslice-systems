@@ -169,6 +169,9 @@ uniform float uBloomEnabled;
 uniform float uScanlineEnabled;
 uniform float uScanlineCycles;      // number of bright/dim cycles across stripeUv.y = 1
 uniform float uScanlineDepth;       // 0 = no scanlines, 1 = troughs hit zero
+uniform vec3 uGradeGains;           // white-point RGB gains (CPU-computed from temperature)
+uniform float uGradeSaturation;     // luma-preserving saturation
+uniform float uGradeEnabled;
 out vec4 oColor;
 
 vec2 curveUv(vec2 uv, float cAmt, float mode) {
@@ -227,6 +230,19 @@ void main() {
       color *= 1.0 - uScanlineDepth * wave;
     }
   }
+
+  // Phosphor color grade — the tube's color character, applied to
+  // emitted light only. Gloss (a reflection on the glass in front of
+  // the phosphor) and vignette/gap-mask (glass/bezel) come after and
+  // are not tinted by it.
+  // NB: high saturation extrapolates components negative / above 1.
+  // That is safe ONLY because every later op (gloss add, vignette/
+  // gap/brightness multiplies) is channel-uniform, so out-of-range
+  // values clamp at output without hue shift. If a PER-CHANNEL op is
+  // ever inserted after this, add max(graded, 0.0).
+  float gradeLuma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  vec3 graded = mix(vec3(gradeLuma), color, uGradeSaturation) * uGradeGains;
+  color = mix(color, graded, uGradeEnabled);
 
   vec4 gloss = texture(uGloss, sampleUv);
   color += vec3(gloss.a) * uGlossEnabled;
@@ -317,7 +333,7 @@ void main() {
     'phosphorCoupling', 'persistenceHalfLifeMs',
     'beamSpreadPx', 'beamSpreadVerticalPx',
     'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
-    'bleedRadius', 'damperStrength', 'scanlineDepth', 'scanlinePeriod',
+    'bleedRadius', 'gradeTemperature', 'gradeSaturation', 'damperStrength', 'scanlineDepth', 'scanlinePeriod',
   ];
 
   class Trinitron {
@@ -432,6 +448,14 @@ void main() {
         scanlinePeriod: 2,
         bloomThreshold: 0.6,
         bloomStrength: 1.0,
+        // Phosphor color grade — the tube's color character. Temperature
+        // ∈ [-1, 1] maps to RGB white-point gains (positive = warm);
+        // saturation is a luma-preserving lift. Applied to emitted
+        // light only, before the glass gloss. Defaults tuned on the
+        // tv.html bench; the colorGrade effect is off unless a caller
+        // (e.g. presets.tv) opts in.
+        gradeTemperature: 0.3,
+        gradeSaturation: 1.08,
         signal: () => {},
         respectReducedMotion: true,
         // Whether the GPU path should create the ?debug=1 effect-
@@ -475,6 +499,8 @@ void main() {
         // stripe grid in the bleed margin. The hero opts in.
         selectiveBloom: false,
         gapMask: false,
+        // Color grade — off by default; the TV preset opts in.
+        colorGrade: false,
         // Horizontal scanlines — periodic dim/bright bands along Y in
         // the composite pass. Off by default since it adds a strong
         // visual layer that compounds with the vertical stripe pattern.
@@ -558,6 +584,13 @@ void main() {
       }
       if (this._gl) this._uploadStaticUniforms();
       this.requestRender();   // repaint even when parked on a static picture
+    }
+
+    // Temperature → RGB white-point gains. Positive warms (R up, B
+    // down); the 3%/5% asymmetry keeps perceived brightness roughly
+    // flat across the slider.
+    _gradeGains(t) {
+      return [1.0 + 0.03 * t, 1.0, 1.0 - 0.05 * t];
     }
 
     _snapshotState() {
@@ -789,6 +822,9 @@ void main() {
       this._uComposite.scanlineEnabled  = gl.getUniformLocation(this._progComposite, 'uScanlineEnabled');
       this._uComposite.scanlineCycles   = gl.getUniformLocation(this._progComposite, 'uScanlineCycles');
       this._uComposite.scanlineDepth    = gl.getUniformLocation(this._progComposite, 'uScanlineDepth');
+      this._uComposite.gradeGains       = gl.getUniformLocation(this._progComposite, 'uGradeGains');
+      this._uComposite.gradeSaturation  = gl.getUniformLocation(this._progComposite, 'uGradeSaturation');
+      this._uComposite.gradeEnabled     = gl.getUniformLocation(this._progComposite, 'uGradeEnabled');
 
       // Bloom programs.
       const bthVs = compileShader(gl, gl.VERTEX_SHADER, FULLSCREEN_VS);
@@ -1198,6 +1234,9 @@ void main() {
       // opts; scanlineEnabled is uploaded per-frame in _renderGpu.
       gl.uniform1f(this._uComposite.scanlineDepth,    this.opts.scanlineDepth);
       gl.uniform1f(this._uComposite.scanlineCycles,   vh / Math.max(0.5, this.opts.scanlinePeriod));
+      const gains = this._gradeGains(this.opts.gradeTemperature ?? 0);
+      gl.uniform3f(this._uComposite.gradeGains, gains[0], gains[1], gains[2]);
+      gl.uniform1f(this._uComposite.gradeSaturation, this.opts.gradeSaturation ?? 1);
 
       // Bloom programs — sampler binding, threshold, and texSize all
       // static. Only invoked when effects.selectiveBloom is on, but
@@ -1266,17 +1305,22 @@ void main() {
         }
       }
 
-      // Warmup: one-shot brightness ramp, 0 → 1 over the first ~1.2 s
-      // after start. The only time-driven modulator in the model.
+      // Warmup: brightness ramp + color settle over the first ~1.2 s
+      // after start — the tube starts dim, warm-shifted, and under-
+      // saturated, then settles into the tuned grade (or neutral when
+      // colorGrade is off). The only time-driven modulator in the model.
       const warmupDur = 1200; // ms
       const tWarm = timeMs - (this._warmupStartMs || 0);
       let warmupFactor = 1.0;
+      let warmupColorActive = false;
       if (this.effects.warmup && tWarm < warmupDur) {
+        warmupColorActive = true;
         const k = Math.max(0, Math.min(1, tWarm / warmupDur));
         warmupFactor = k * k * (3.0 - 2.0 * k); // smoothstep
       }
 
       this._brightness = warmupFactor;
+      this._warmupColorActive = warmupColorActive;
 
       if (dirty) {
         // Upload the 2D canvas to the signal texture. FLIP_Y accounts
@@ -1382,6 +1426,24 @@ void main() {
       gl.uniform1f(this._uComposite.bloomEnabled,     this.effects.selectiveBloom ? 1 : 0);
       gl.uniform1f(this._uComposite.scanlineEnabled,  this.effects.scanlines      ? 1 : 0);
       gl.uniform1f(this._uComposite.brightness,       this._brightness ?? 1.0);
+      gl.uniform1f(this._uComposite.gradeEnabled,
+        (this.effects.colorGrade || this._warmupColorActive) ? 1 : 0);
+      if (this._warmupColorActive) {
+        // Ramp-time grade modulation: extra warmth and undersaturation
+        // that decay to the tuned base as warmupFactor → 1. Uploaded
+        // only during the ramp, plus one restore frame at its end.
+        const baseT = this.effects.colorGrade ? (this.opts.gradeTemperature ?? 0) : 0;
+        const baseS = this.effects.colorGrade ? (this.opts.gradeSaturation ?? 1) : 1;
+        const g = this._gradeGains(baseT + 0.5 * (1 - this._brightness));
+        gl.uniform3f(this._uComposite.gradeGains, g[0], g[1], g[2]);
+        gl.uniform1f(this._uComposite.gradeSaturation, baseS * (0.85 + 0.15 * this._brightness));
+        this._gradeNeedsRestore = true;
+      } else if (this._gradeNeedsRestore) {
+        const g = this._gradeGains(this.opts.gradeTemperature ?? 0);
+        gl.uniform3f(this._uComposite.gradeGains, g[0], g[1], g[2]);
+        gl.uniform1f(this._uComposite.gradeSaturation, this.opts.gradeSaturation ?? 1);
+        this._gradeNeedsRestore = false;
+      }
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this._texPhosphor);
@@ -1607,6 +1669,12 @@ void main() {
           params: [
             { opt: 'scanlineDepth',  min: 0, max: 1,  step: 0.02, sub: 'depth' },
             { opt: 'scanlinePeriod', min: 1, max: 10, step: 0.5,  sub: 'period (px)' },
+          ] },
+        { key: 'colorGrade', label: 'color grade', scope: 'universal',
+          desc: 'The tube\'s color character — warm white point + saturation lift on emitted light. Warmup settles into it.',
+          params: [
+            { opt: 'gradeTemperature', min: -1, max: 1, step: 0.05, sub: 'temperature' },
+            { opt: 'gradeSaturation',  min: 0,  max: 2, step: 0.02, sub: 'saturation' },
           ] },
       ] },
     { title: 'glass',
