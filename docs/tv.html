@@ -1412,42 +1412,23 @@ body[data-power="bypass"] .led {
   let bypassRaf = null, bypassStart = 0;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-  // Boot presets — hero-derived + TV glass. Starting points; the bench
-  // below exists to retune them.
-  const TV_EFFECTS = { convergence: true, selectiveBloom: true, scanlines: true,
-                       curvature: true, vignette: true, warmup: true };
+  // Boot from the classes' own tuned `tv` presets — the bench exists to
+  // retune them, and "copy state diff" output gets transferred back
+  // into the preset objects in the renderer files. The frozen preset's
+  // convergence/effects are cloned so bench mutations never write into
+  // the shared template.
   function makeRenderer(kind) {
-    const common = {
+    const Cls = kind === 'trinitron' ? window.Trinitron : window.ShadowMask;
+    const P = Cls.presets.tv;
+    return new Cls(glCanvas, Object.assign({}, P, {
       signal: paintChannel,
       viewSize: [SIGNAL_W, SIGNAL_H],
       canvasSize: [SIGNAL_W * 2, SIGNAL_H * 2],
-      stripeUpscale: 2,
-      opaqueBackground: true,
-      phosphorCoupling: 0.35,
-      persistenceHalfLifeMs: 58,   // ≈ the old 0.82/frame at 60 Hz
-      bloomStrength: 1.2,
-      scanlineDepth: 0.18,
-      scanlinePeriod: 2,
-      curvature: 0.06,
       debugOverlay: false,
-    };
-    if (kind === 'trinitron') {
-      return new window.Trinitron(glCanvas, Object.assign(common, {
-        cellSize: 3,
-        convergence: { r: [-0.25, 0], g: [0, 0], b: [0.25, 0] },
-        beamSpreadPx: 0.7, beamSpreadVerticalPx: 1.4,
-        damperStrength: 0.90,
-        bleedRadius: 18,
-        gapMaskAlpha: 0.15, gapMaskPeriod: 2,
-        effects: Object.assign({ gapMask: true }, TV_EFFECTS),
-      }));
-    }
-    return new window.ShadowMask(glCanvas, Object.assign(common, {
-      cellSize: [3, 3], dotRadius: 0.7,
-      convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
-      beamSpreadPx: 1.5, beamSpreadVerticalPx: 1.5,
-      bleedRadius: 24, bloomThreshold: 0.3,
-      effects: Object.assign({}, TV_EFFECTS),
+      convergence: {
+        r: [...P.convergence.r], g: [...P.convergence.g], b: [...P.convergence.b],
+      },
+      effects: Object.assign({}, P.effects),
     }));
   }
 

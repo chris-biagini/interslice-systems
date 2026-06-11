@@ -1649,5 +1649,34 @@ void main() {
       ] },
   ];
 
+  // Named option presets — see Trinitron.presets for the convention.
+  ShadowMask.presets = {
+    tv: Object.freeze({
+      cellSize: [3, 3],
+      dotRadius: 0.7,
+      stripeUpscale: 2,
+      opaqueBackground: true,
+      phosphorCoupling: 0.35,
+      persistenceHalfLifeMs: 58,
+      convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+      beamSpreadPx: 1.5,
+      beamSpreadVerticalPx: 1.5,
+      bleedRadius: 24,
+      bloomStrength: 1.2,
+      bloomThreshold: 0.3,
+      scanlineDepth: 0.18,
+      scanlinePeriod: 2,
+      curvature: 0.06,
+      cornerRadius: 0.06,
+      gradeTemperature: 0.3,
+      gradeSaturation: 1.08,
+      effects: Object.freeze({
+        convergence: true, selectiveBloom: true, scanlines: true,
+        curvature: true, vignette: true, warmup: true,
+        colorGrade: true, tubeCorners: true,
+      }),
+    }),
+  };
+
   window.ShadowMask = ShadowMask;
 })();

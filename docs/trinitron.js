@@ -1724,5 +1724,40 @@ void main() {
       ] },
   ];
 
+  // Named option presets — the export surface for consumers beyond this
+  // repo. `tv` is the "endearing TV" look from the 2026-06-11 spec —
+  // bench-tuned values land here via "copy state diff"; tv.html boots
+  // from it. Frozen shallowly: clone `convergence` and `effects` before
+  // passing to the constructor if you intend to mutate them.
+  Trinitron.presets = {
+    tv: Object.freeze({
+      cellSize: 3,
+      stripeUpscale: 2,
+      opaqueBackground: true,
+      phosphorCoupling: 0.35,
+      persistenceHalfLifeMs: 58,
+      convergence: { r: [-0.25, 0], g: [0, 0], b: [0.25, 0] },
+      beamSpreadPx: 0.7,
+      beamSpreadVerticalPx: 1.4,
+      damperStrength: 0.90,
+      bleedRadius: 18,
+      bloomStrength: 1.2,
+      bloomThreshold: 0.6,
+      scanlineDepth: 0.18,
+      scanlinePeriod: 2,
+      curvature: 0.06,
+      cornerRadius: 0.06,
+      gradeTemperature: 0.3,
+      gradeSaturation: 1.08,
+      gapMaskAlpha: 0.15,
+      gapMaskPeriod: 2,
+      effects: Object.freeze({
+        convergence: true, selectiveBloom: true, scanlines: true,
+        curvature: true, vignette: true, warmup: true,
+        gapMask: true, colorGrade: true, tubeCorners: true,
+      }),
+    }),
+  };
+
   window.Trinitron = Trinitron;
 })();
