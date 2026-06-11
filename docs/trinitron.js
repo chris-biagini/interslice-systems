@@ -39,7 +39,7 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
-  // Phosphor fragment shader — row shimmer, beam spread.
+  // Phosphor fragment shader — beam spread, stripe profile.
   // Full phosphor pass.
   // MRT: slot 0 = phosphor output, slot 1 = persistence next-frame.
   const PHOSPHOR_FS = `#version 300 es
@@ -54,25 +54,16 @@ uniform float uPersistence;
 uniform vec2 uConvergenceR;
 uniform vec2 uConvergenceG;
 uniform vec2 uConvergenceB;
-uniform float uRowShimmerAmp;
-uniform uint uShimmerSeed;
 uniform float uBeamSpreadPx;
 uniform float uBeamSpreadVerticalPx;
 uniform float uStripeEnabled;
 uniform float uCouplingEnabled;
 uniform float uPersistenceEnabled;
 uniform float uConvergenceEnabled;
-uniform float uRowShimmerEnabled;
 uniform float uBeamSpreadEnabled;
 
 layout(location = 0) out vec4 oPhosphor;
 layout(location = 1) out vec4 oPersistenceNext;
-
-// Deterministic LCG hash → [0,1].
-float lcg(uint seed) {
-  uint x = 1664525u * seed + 1013904223u;
-  return float(x) * (1.0 / 4294967296.0);
-}
 
 // Beam spread: anisotropic 2D Gaussian via a 9-tap "plus" kernel
 // (5 taps along Y, 4 additional taps along X with the center shared).
@@ -146,19 +137,7 @@ void main() {
   // subX >= 3: stays at coupling (gap column for cs=4+)
   weights = mix(vec3(1.0), weights, uStripeEnabled);
 
-  // Per-row shimmer. Stable hash per source-pixel row (dividing the
-  // output Y by cellSize.y undoes the integer upscale, mapping output
-  // pixels back to source rows) — the only animated micro-texture in
-  // the phosphor model (uShimmerSeed is uploaded per-frame in
-  // _renderGpu, throttled to reseed at ~30 fps).
-  uint rowIdx = uint(floor(px.y / uCellSize.y));
-  // 4099u prime stride retained for hash stability — original rationale
-  // (decorrelating from per-cell shimmer) is moot now that cell shimmer
-  // is gone, but changing it would shift the visible shimmer pattern.
-  float rowShim = 1.0 + uRowShimmerAmp * (2.0 * lcg(rowIdx * 4099u + uShimmerSeed) - 1.0);
-  rowShim = mix(1.0, rowShim, uRowShimmerEnabled);
-
-  vec3 stripeOut = lerped.rgb * weights * rowShim;
+  vec3 stripeOut = lerped.rgb * weights;
   oPhosphor = vec4(stripeOut, lerped.a);
 }`;
 
@@ -332,7 +311,7 @@ void main() {
   // should still show up in the diff.
   const PANEL_OPT_KEYS = [
     'phosphorCoupling', 'persistence',
-    'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
+    'beamSpreadPx', 'beamSpreadVerticalPx',
     'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
     'bleedRadius', 'damperStrength', 'scanlineDepth', 'scanlinePeriod',
   ];
@@ -410,11 +389,6 @@ void main() {
         // other feature. Set to [] to disable.
         damperWires: [0.32, 0.68],
         damperStrength: 0.62,
-        // Optional per-row brightness noise. 0 = off. Cheap stand-in for
-        // the line-to-line beam-current fluctuation a real CRT exhibits;
-        // uniform along Y within each source row.
-        rowShimmer: 0.0,
-        shimmerSeed: 1983,
         // Electron-beam spread, applied as a Gaussian blur on the
         // convergence canvases before sampling. A real Trinitron beam
         // has a fuzzy spot that spreads each scan line into adjacent ones;
@@ -473,13 +447,11 @@ void main() {
       // from the content. Callers can pass any subset via
       // opts.effects to flip individual defaults.
       this.effects = Object.assign({
-        // Phosphor pass — four effects on, three off.
+        // Phosphor pass — four effects on, one off.
         stripeProfile: true,
         phosphorCoupling: true,
         convergence: false,
-        convergenceDrift: false,
         persistence: true,
-        perRowShimmer: false,
         beamSpread: true,
         // Damper wires — Trinitron's two horizontal stabilizer strands.
         // On by default for any Trinitron sim worth the name; the
@@ -504,11 +476,10 @@ void main() {
         curvature: false,
         gloss: false,
         vignette: false,
-        // Slow modulators — both off by default; warmup is a one-shot
+        // Slow modulator — off by default; warmup is a one-shot
         // brightness ramp that callers can re-enable if they want the
         // tube-warming-up moment.
         warmup: false,
-        breathing: false,
       }, opts.effects || {});
 
       // Baseline for stateDiff() — captured before any panel mutation.
@@ -754,11 +725,8 @@ void main() {
         couplingEnabled:      gl.getUniformLocation(this._progPhosphor, 'uCouplingEnabled'),
         persistenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uPersistenceEnabled'),
         convergenceEnabled:   gl.getUniformLocation(this._progPhosphor, 'uConvergenceEnabled'),
-        rowShimmerAmp:        gl.getUniformLocation(this._progPhosphor, 'uRowShimmerAmp'),
-        shimmerSeed:          gl.getUniformLocation(this._progPhosphor, 'uShimmerSeed'),
         beamSpreadPx:         gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadPx'),
         beamSpreadVerticalPx: gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadVerticalPx'),
-        rowShimmerEnabled:    gl.getUniformLocation(this._progPhosphor, 'uRowShimmerEnabled'),
         beamSpreadEnabled:    gl.getUniformLocation(this._progPhosphor, 'uBeamSpreadEnabled'),
       };
 
@@ -1153,18 +1121,14 @@ void main() {
 
     // Upload uniforms that don't change for the lifetime of this
     // renderer — sampler unit bindings, viewSize/cellSize, the
-    // base option values (phosphorCoupling, persistence,
-    // row-shimmer amp, beam spread, bloom threshold, composite
-    // geometry, opaque background flag), and the convergence base
-    // (R/B get overridden per-frame when effects.convergenceDrift
-    // is on; G never drifts). Called once at the end of _initGpu,
-    // saving ~30 CPU→GPU command-buffer writes per frame.
+    // base option values (phosphorCoupling, persistence, beam spread,
+    // bloom threshold, composite geometry, opaque background flag),
+    // and the convergence base offsets. Called once at the end of
+    // _initGpu, saving ~30 CPU→GPU command-buffer writes per frame.
     //
     // Uniforms still uploaded per frame in _renderGpu: the *Enabled
-    // toggles (?debug=1 panel mutates them at runtime), brightness
-    // (warmup/breathing modulate it), convergence R/B when drift
-    // is active, and shimmerSeed (frame-counter-derived, so the row
-    // shimmer pattern reseeds at ~30 fps instead of holding fixed).
+    // toggles (?debug=1 panel mutates them at runtime) and brightness
+    // (the warmup ramp modulates it).
     _uploadStaticUniforms() {
       const gl = this._gl;
       const [vw, vh] = this.opts.viewSize;
@@ -1177,15 +1141,10 @@ void main() {
       gl.uniform2f(this._uPhosphor.cellSize, this.opts.cellSize, this.opts.cellSize);
       gl.uniform1f(this._uPhosphor.phosphorCoupling, this.opts.phosphorCoupling ?? 0.35);
       gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
-      gl.uniform1f(this._uPhosphor.rowShimmerAmp,    this.opts.rowShimmer);
-      // shimmerSeed is uploaded per-frame in _renderGpu (derived from
-      // the frame counter so the row pattern reseeds at ~30 fps).
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
       gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
 
-      // Convergence base — R/B get overridden per-frame when drift is
-      // active. On the transition back to inactive, _renderGpu re-uploads
-      // the base values once to clear the drifted state.
+      // Convergence base offsets (static; per-channel UV shifts).
       const c = this.opts.convergence;
       gl.uniform2f(this._uPhosphor.convergenceR, c.r[0], c.r[1]);
       gl.uniform2f(this._uPhosphor.convergenceG, c.g[0], c.g[1]);
@@ -1264,12 +1223,8 @@ void main() {
         }
       }
 
-      // Slow modulators driven by time. All amplitudes are tiny so the
-      // effects coexist quietly with the content. Compound multiplicatively
-      // into the final brightness uniform; convergence drift modulates the
-      // per-channel UV offsets.
-
-      // 1. Warmup curve: 0 → 1 over the first ~1.2s after start.
+      // Warmup: one-shot brightness ramp, 0 → 1 over the first ~1.2 s
+      // after start. The only time-driven modulator in the model.
       const warmupDur = 1200; // ms
       const tWarm = timeMs - (this._warmupStartMs || 0);
       let warmupFactor = 1.0;
@@ -1278,21 +1233,7 @@ void main() {
         warmupFactor = k * k * (3.0 - 2.0 * k); // smoothstep
       }
 
-      // 2. Breathing: 0.3 Hz, ±2% brightness modulation.
-      let breathFactor = 1.0;
-      if (this.effects.breathing) {
-        breathFactor = 1.0 + 0.02 * Math.sin(timeMs * 0.0006 * Math.PI * 2.0);
-      }
-
-      this._brightness = warmupFactor * breathFactor;
-
-      // 3. Convergence drift: 0.1 Hz, ±0.05 px on top of base convergence.
-      //    R and B drift opposite; G stays stable (matches real CRT
-      //    behavior where the green gun is the reference).
-      this._convergenceDriftPx = 0.0;
-      if (this.effects.convergenceDrift) {
-        this._convergenceDriftPx = 0.05 * Math.sin(timeMs * 0.0002 * Math.PI * 2.0);
-      }
+      this._brightness = warmupFactor;
 
       // Upload the 2D canvas to the signal texture. FLIP_Y accounts for
       // the difference between canvas's top-left origin and WebGL's
@@ -1317,40 +1258,14 @@ void main() {
 
       // Per-frame *Enabled toggles. The ?debug=1 panel mutates
       // this.effects at runtime, so these must stay dynamic. Static
-      // option values (phosphorCoupling, persistence, row-shimmer
-      // amp, beam spread, viewSize/cellSize, sampler bindings, base
-      // convergence) are uploaded once in _uploadStaticUniforms.
+      // option values (phosphorCoupling, persistence, beam spread,
+      // viewSize/cellSize, sampler bindings, base convergence) are
+      // uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.couplingEnabled,    this.effects.phosphorCoupling ? 1 : 0);
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
-      gl.uniform1f(this._uPhosphor.rowShimmerEnabled,  this.effects.perRowShimmer    ? 1 : 0);
       gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread       ? 1 : 0);
-
-      // Per-row shimmer seed: throttle to ~30 fps by shifting the frame
-      // counter right by 1 (one new pattern every 2 render frames). The
-      // option value seeds the sequence; the frame counter advances it.
-      // `>>> 0` coerces to uint32 (matches the uniform1ui type and the
-      // shader's `uint uShimmerSeed`).
-      const animatedSeed = (this.opts.shimmerSeed + (this._frameCount >> 1)) >>> 0;
-      gl.uniform1ui(this._uPhosphor.shimmerSeed, animatedSeed);
-
-      // Convergence drift: override base R/B per-frame while active.
-      // G never drifts (it's the reference channel). On the transition
-      // from active→inactive, re-upload base R/B once so the GPU isn't
-      // left with the last drifted values.
-      const driftActive = this.effects.convergenceDrift;
-      if (driftActive) {
-        const c = this.opts.convergence;
-        const drift = this._convergenceDriftPx;
-        gl.uniform2f(this._uPhosphor.convergenceR, c.r[0] - drift, c.r[1]);
-        gl.uniform2f(this._uPhosphor.convergenceB, c.b[0] + drift, c.b[1]);
-      } else if (this._convergenceDriftWasActive) {
-        const c = this.opts.convergence;
-        gl.uniform2f(this._uPhosphor.convergenceR, c.r[0], c.r[1]);
-        gl.uniform2f(this._uPhosphor.convergenceB, c.b[0], c.b[1]);
-      }
-      this._convergenceDriftWasActive = driftActive;
 
       // Bind persistence-prev (the texture NOT in the currently-bound FBO).
       const persistPrev = this._pingPongFlip ? this._texPersistB : this._texPersistA;
@@ -1538,14 +1453,9 @@ void main() {
         { key: 'convergence',      label: 'convergence', scope: 'universal',
           desc: 'Horizontal R/B gun offset. Inline cathodes misconverge along X only — edges fringe left/right.',
           params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread (x px)' }] },
-        { key: 'convergenceDrift', label: 'convergence drift', scope: 'universal',
-          desc: 'Slow time-varying R/B shift on top of base. Mistuned-yoke wobble.' },
         { key: 'persistence',      label: 'persistence', scope: 'universal',
           desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
           params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
-        { key: 'perRowShimmer',    label: 'per-row shimmer', scope: 'universal',
-          desc: 'Per-scanline brightness noise. The only animated micro-texture in the model (reseeds at ~30 fps).',
-          params: [{ opt: 'rowShimmer', min: 0, max: 0.1, step: 0.005, sub: 'amount' }] },
         { key: 'beamSpread',       label: 'beam spread', scope: 'universal',
           desc: 'Gaussian PSF blur on signal. V > H is the Trinitron split: the grille quantizes X, the beam owns Y.',
           params: [
@@ -1588,8 +1498,6 @@ void main() {
       items: [
         { key: 'warmup',    label: 'warmup', scope: 'universal',
           desc: 'One-shot brightness ramp on start. CRT tube warming up.' },
-        { key: 'breathing', label: 'breathing', scope: 'universal',
-          desc: 'Slow brightness modulation. Power-supply ripple feel.' },
       ] },
   ];
 
