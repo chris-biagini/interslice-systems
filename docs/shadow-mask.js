@@ -348,6 +348,16 @@ void main() {
   oColor = sum;
 }`;
 
+  // Opts the panels snapshot for stateDiff(). curvatureMode and
+  // beamSpreadVerticalPx stay listed even though the menu no longer
+  // offers them — console-driven changes should still diff.
+  const PANEL_OPT_KEYS = [
+    'dotRadius', 'phosphorCoupling', 'persistence',
+    'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
+    'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
+    'bleedRadius', 'scanlineDepth', 'scanlinePeriod',
+  ];
+
   class ShadowMask {
     constructor(canvasEl, opts) {
       this.canvas = canvasEl;
@@ -420,10 +430,11 @@ void main() {
         // Barrel-distortion strength for the composite glass pass.
         // 0 = flat panel.
         curvature: 0,
-        // Curvature axis distribution. 'spherical' = generic CRT barrel
-        // (warp on both axes, by r²). 'cylindrical' = Trinitron face
-        // (warp X only, by x²) — verticals stay straight, horizontals
-        // curve.
+        // Curvature axis distribution — tube-determined, not a menu
+        // option. A delta-gun shadow-mask face is spherical (generic r²
+        // barrel, bowing on both axes). Callers can still override to
+        // 'cylindrical' (warp X only, the Trinitron geometry), but the
+        // ?debug=1 panel no longer offers the choice.
         curvatureMode: 'spherical',
         // Horizontal scanlines (GPU composite pass). scanlineDepth = 0
         // means flat brightness; 1 means troughs go to black.
@@ -485,12 +496,81 @@ void main() {
         breathing: false,
       }, opts.effects || {});
 
+      // Baseline for stateDiff() — captured before any panel mutation.
+      this._baseline = this._snapshotState();
+
       this._initGpu();
 
       this._wasStartedByUser = false;
       this._setupReducedMotionListener();
       this._rafHandle = null;
       this._startTime = null;
+    }
+
+    // --- Panel/bench param API ------------------------------------------
+    // Shared by the built-in ?debug=1 overlay and external benches
+    // (docs/tv.html). Synthetic params (double-underscore) translate
+    // UI-friendly scalars into structured opts:
+    //   __convergenceSpread → 2-D r/b offsets (delta guns sit in a
+    //                         triangle, so misconvergence fringes
+    //                         diagonally; see spec
+    //                         2026-06-10-crt-effect-axes-and-tv-page-design.md)
+    readParam(opt) {
+      if (opt === '__convergenceSpread') return Math.abs(this.opts.convergence?.r?.[0] ?? 0);
+      return this.opts[opt] ?? 0;
+    }
+
+    writeParam(opt, v) {
+      if (opt === '__convergenceSpread') {
+        // Delta guns sit in a triangle — misconvergence fringes in 2-D.
+        this.opts.convergence = { r: [-v, -v], g: [0, 0], b: [v, v] };
+      } else {
+        this.opts[opt] = v;
+      }
+      if (this._gl) this._uploadStaticUniforms();
+    }
+
+    _snapshotState() {
+      const snap = { effects: { ...this.effects }, opts: {} };
+      for (const k of PANEL_OPT_KEYS) {
+        if (k in this.opts) snap.opts[k] = this.opts[k];
+      }
+      const c = this.opts.convergence;
+      if (c) {
+        snap.opts.convergence = {
+          r: [c.r?.[0] ?? 0, c.r?.[1] ?? 0],
+          g: [c.g?.[0] ?? 0, c.g?.[1] ?? 0],
+          b: [c.b?.[0] ?? 0, c.b?.[1] ?? 0],
+        };
+      }
+      return snap;
+    }
+
+    // Human-readable diff of effects/opts vs. the constructor-time
+    // baseline — the "copy state" payload.
+    stateDiff() {
+      const fmtNum = (n) => Number.isInteger(n) ? String(n) : String(Math.round(n * 10000) / 10000);
+      const curr = this._snapshotState();
+      const base = this._baseline;
+      const lines = [];
+      for (const k of Object.keys(curr.effects)) {
+        if (curr.effects[k] !== base.effects[k]) lines.push(`  effects.${k} = ${curr.effects[k]}`);
+      }
+      for (const k of Object.keys(curr.opts)) {
+        const cv = curr.opts[k];
+        const bv = base.opts[k];
+        if (k === 'convergence') {
+          const eq = bv && cv && ['r', 'g', 'b'].every(
+            (ch) => cv[ch][0] === bv[ch][0] && cv[ch][1] === bv[ch][1]);
+          if (!eq) {
+            lines.push(`  opts.convergence = { r: [${cv.r.map(fmtNum).join(', ')}], g: [${cv.g.map(fmtNum).join(', ')}], b: [${cv.b.map(fmtNum).join(', ')}] }`);
+          }
+        } else if (cv !== bv) {
+          lines.push(typeof cv === 'string' ? `  opts.${k} = '${cv}'` : `  opts.${k} = ${fmtNum(cv)}`);
+        }
+      }
+      if (!lines.length) return 'shadow-mask state: (no changes from construction)';
+      return ['shadow-mask state diff (from construction):', ...lines].join('\n');
     }
 
     _initGpu() {
@@ -834,78 +914,15 @@ void main() {
       this._debugFpsLast = performance.now();
       this._debugFpsFrames = 0;
 
-      // Baseline snapshot: capture current effects + panel-mutable opts
-      // so the "copy state" button can emit a diff of "what did the user
-      // change since page load." Deep-copies convergence (object) so we
-      // don't alias.
-      const PANEL_OPT_KEYS = [
-        'dotRadius', 'phosphorCoupling', 'persistence',
-        'rowShimmer', 'beamSpreadPx', 'beamSpreadVerticalPx',
-        'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
-        'bleedRadius',
-        'scanlineDepth', 'scanlinePeriod',
-      ];
-      const snapshotOpts = () => {
-        const snap = {};
-        for (const k of PANEL_OPT_KEYS) {
-          if (k in this.opts) snap[k] = this.opts[k];
-        }
-        if (this.opts.convergence) {
-          const c = this.opts.convergence;
-          snap.convergence = {
-            r: [c.r?.[0] ?? 0, c.r?.[1] ?? 0],
-            g: [c.g?.[0] ?? 0, c.g?.[1] ?? 0],
-            b: [c.b?.[0] ?? 0, c.b?.[1] ?? 0],
-          };
-        }
-        return snap;
-      };
-      const baseline = {
-        effects: { ...this.effects },
-        opts: snapshotOpts(),
-      };
-      const convergenceEq = (a, b) => {
-        if (!a || !b) return a === b;
-        return a.r[0]===b.r[0] && a.r[1]===b.r[1] &&
-               a.g[0]===b.g[0] && a.g[1]===b.g[1] &&
-               a.b[0]===b.b[0] && a.b[1]===b.b[1];
-      };
-      const fmtNum = (n) => {
-        if (Number.isInteger(n)) return String(n);
-        return String(Math.round(n * 10000) / 10000); // strip float fuzz
-      };
-      const buildDiff = () => {
-        const lines = [];
-        for (const k of Object.keys(this.effects)) {
-          if (this.effects[k] !== baseline.effects[k]) {
-            lines.push(`  effects.${k} = ${this.effects[k]}`);
-          }
-        }
-        const currOpts = snapshotOpts();
-        for (const k of Object.keys(currOpts)) {
-          const cv = currOpts[k];
-          const bv = baseline.opts[k];
-          if (k === 'convergence') {
-            if (!convergenceEq(cv, bv)) {
-              lines.push(`  opts.convergence = { r: [${cv.r.map(fmtNum).join(', ')}], g: [${cv.g.map(fmtNum).join(', ')}], b: [${cv.b.map(fmtNum).join(', ')}] }`);
-            }
-          } else if (cv !== bv) {
-            if (typeof cv === 'string') lines.push(`  opts.${k} = '${cv}'`);
-            else                        lines.push(`  opts.${k} = ${fmtNum(cv)}`);
-          }
-        }
-        if (lines.length === 0) return 'shadow-mask state: (no changes from page load)';
-        return ['shadow-mask state diff (from page load):', ...lines].join('\n');
-      };
-
-      // "Copy state" button. Writes the diff to clipboard; falls back
-      // to console if clipboard is unavailable. Localhost is a secure
-      // context so clipboard works on the dev server.
+      // "Copy state" button. Writes stateDiff() — effects/opts vs. the
+      // constructor-time baseline — to clipboard; falls back to console
+      // if clipboard is unavailable. Localhost is a secure context so
+      // clipboard works on the dev server.
       const copyBtn = document.createElement('button');
       copyBtn.textContent = 'copy state diff';
       copyBtn.style.cssText = 'display:block;width:100%;padding:5px 6px;margin-bottom:10px;background:#222;color:#5EE2FF;border:1px solid #555;font:11px monospace;cursor:pointer;border-radius:2px;';
       copyBtn.addEventListener('click', async () => {
-        const text = buildDiff();
+        const text = this.stateDiff();
         const restore = () => { copyBtn.textContent = 'copy state diff'; };
         try {
           await navigator.clipboard.writeText(text);
@@ -918,94 +935,16 @@ void main() {
       });
       body.appendChild(copyBtn);
 
-      // Captioned effect groups with inline sliders for tunable scalars.
-      // Order mirrors the GPU pass order (phosphor → composite → glass);
-      // "modulation" holds the slow brightness modulators. Sliders mutate
-      // this.opts.<x> and re-run _uploadStaticUniforms so the change is
-      // visible on the next frame.
-      const GROUPS = [
-        { title: 'phosphor',
-          items: [
-            { key: 'stripeProfile',    label: 'phosphor mask',
-              desc: 'Triad-per-cell dot tiling. Off = raw signal, no mask.',
-              params: [{ opt: 'dotRadius', min: 0.2, max: 1.5, step: 0.05, sub: 'dot radius (src-px)' }] },
-            { key: 'phosphorCoupling', label: 'phosphor coupling',
-              desc: 'Each dot also emits other channels at this fraction. Cross-talk cheat that softens per-dot chromatic mismatch.',
-              params: [{ opt: 'phosphorCoupling', min: 0, max: 1, step: 0.05, sub: 'strength' }] },
-            { key: 'convergence',      label: 'convergence',
-              desc: 'Per-channel xy-offset. R and B sample from shifted positions — edges fringe.',
-              params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread' }] },
-            { key: 'convergenceDrift', label: 'convergence drift',
-              desc: 'Slow time-varying R/B shift on top of base. Mistuned-yoke wobble.' },
-            { key: 'persistence',      label: 'persistence',
-              desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
-              params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
-            { key: 'perRowShimmer',    label: 'per-row shimmer',
-              desc: 'Per-scanline brightness noise. The only animated micro-texture in the model (reseeds at ~30 fps).',
-              params: [{ opt: 'rowShimmer', min: 0, max: 0.1, step: 0.005, sub: 'amount' }] },
-            { key: 'beamSpread',       label: 'beam spread',
-              desc: 'Gaussian PSF blur on signal. Softens razor edges into glowing phosphor.',
-              params: [
-                { opt: 'beamSpreadPx',         min: 0, max: 3, step: 0.1, sub: 'h (px)' },
-                { opt: 'beamSpreadVerticalPx', min: 0, max: 3, step: 0.1, sub: 'v (px)' },
-              ] },
-          ] },
-        { title: 'composite',
-          items: [
-            { key: 'selectiveBloom', label: 'selective bloom',
-              desc: 'Bright-pixel halo. Threshold the phosphor, blur, add back as bloom.',
-              params: [
-                { opt: 'bloomThreshold', min: 0, max: 1,   step: 0.05, sub: 'threshold' },
-                { opt: 'bloomStrength',  min: 0, max: 3,   step: 0.1,  sub: 'strength' },
-                { opt: 'bleedRadius',    min: 0, max: 100, step: 1,    sub: 'radius (src px)' },
-              ] },
-            { key: 'scanlines',      label: 'horizontal scanlines',
-              desc: 'Periodic dim/bright bands along Y — the beam paints rows with gaps between.',
-              params: [
-                { opt: 'scanlineDepth',  min: 0, max: 1,  step: 0.02, sub: 'depth' },
-                { opt: 'scanlinePeriod', min: 1, max: 10, step: 0.5,  sub: 'period (px)' },
-              ] },
-          ] },
-        { title: 'glass',
-          items: [
-            { key: 'curvature', label: 'curvature',
-              desc: 'CRT face curvature. Spherical = generic barrel; cylindrical = Trinitron (verticals stay straight).',
-              params: [
-                { opt: 'curvature', min: 0, max: 0.3, step: 0.01, sub: 'amount' },
-                { opt: 'curvatureMode', kind: 'select', sub: 'mode',
-                  options: ['spherical', 'cylindrical'] },
-              ] },
-            { key: 'gloss',     label: 'gloss',
-              desc: 'Upper-left elliptical highlight. Virtual light source. Texture-baked.' },
-            { key: 'vignette',  label: 'vignette',
-              desc: 'Darken corners. Bezel falloff. Texture-baked.' },
-          ] },
-        { title: 'modulation',
-          items: [
-            { key: 'warmup',    label: 'warmup',
-              desc: 'One-shot brightness ramp on start. CRT tube warming up.' },
-            { key: 'breathing', label: 'breathing',
-              desc: 'Slow brightness modulation. Power-supply ripple feel.' },
-          ] },
-      ];
-
-      // Synthetic opts the panel exposes that don't map 1:1 to this.opts:
-      //  __convergenceSpread → distributes to r=[-s,-s], b=[s,s], g=[0,0]
-      const readVal = (opt) => {
-        if (opt === '__convergenceSpread') return Math.abs(this.opts.convergence?.r?.[0] ?? 0);
-        return this.opts[opt] ?? 0;
-      };
-      const writeVal = (opt, v) => {
-        if (opt === '__convergenceSpread') {
-          this.opts.convergence = { r: [-v, -v], g: [0, 0], b: [v, v] };
-        } else {
-          this.opts[opt] = v;
-        }
-        if (this._gl) this._uploadStaticUniforms();
-      };
+      // Captioned effect groups with inline sliders for tunable scalars,
+      // built from the class-level effectSchema (the single source of
+      // truth shared with external benches). Order mirrors the GPU pass
+      // order (phosphor → composite → glass); "modulation" holds the slow
+      // brightness modulators. Sliders go through readParam/writeParam so
+      // synthetic (double-underscore) params resolve to structured opts
+      // and _uploadStaticUniforms runs on every write.
       const fmt = (v, step) => v.toFixed(Math.max(0, -Math.floor(Math.log10(step))));
 
-      for (const group of GROUPS) {
+      for (const group of this.constructor.effectSchema) {
         const head = document.createElement('div');
         head.style.cssText = 'margin-top:10px;margin-bottom:4px;color:#A99CFF;font-weight:700;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;';
         head.textContent = group.title;
@@ -1050,8 +989,8 @@ void main() {
                   opt.textContent = optVal;
                   select.appendChild(opt);
                 }
-                select.value = String(this.opts[p.opt] ?? p.options[0]);
-                select.addEventListener('change', () => { writeVal(p.opt, select.value); });
+                select.value = String(this.readParam(p.opt) ?? p.options[0]);
+                select.addEventListener('change', () => { this.writeParam(p.opt, select.value); });
                 prow.appendChild(select);
               } else {
                 const slider = document.createElement('input');
@@ -1062,13 +1001,13 @@ void main() {
                 slider.style.cssText = 'flex:1;min-width:0;accent-color:#5EE2FF;';
                 const valEl = document.createElement('span');
                 valEl.style.cssText = 'color:#5EE2FF;min-width:38px;text-align:right;font-size:10px;';
-                const initV = readVal(p.opt);
+                const initV = this.readParam(p.opt);
                 slider.value = String(initV);
                 valEl.textContent = fmt(initV, p.step);
                 slider.addEventListener('input', () => {
                   const v = parseFloat(slider.value);
                   valEl.textContent = fmt(v, p.step);
-                  writeVal(p.opt, v);
+                  this.writeParam(p.opt, v);
                 });
                 prow.appendChild(slider);
                 prow.appendChild(valEl);
@@ -1505,6 +1444,70 @@ void main() {
     }
 
   }
+
+  // Effect schema — single source of truth for the built-in ?debug=1
+  // overlay AND external benches (docs/tv.html). Scope axes per the
+  // 2026-06-10 spec. Tube-determined options are pinned via defaults,
+  // not offered here (curvatureMode: spherical; beam spread isotropic —
+  // the dot lattice quantizes both axes, so no V slider).
+  ShadowMask.effectSchema = [
+    { title: 'phosphor',
+      items: [
+        { key: 'stripeProfile',    label: 'phosphor mask', scope: 'universal',
+          desc: 'Triad-per-cell dot tiling. Off = raw signal, no mask.',
+          params: [{ opt: 'dotRadius', min: 0.2, max: 1.5, step: 0.05, sub: 'dot radius (src-px)', scope: 'shadow-mask' }] },
+        { key: 'phosphorCoupling', label: 'phosphor coupling', scope: 'universal',
+          desc: 'Each dot also emits other channels at this fraction. Cross-talk cheat that softens per-dot chromatic mismatch.',
+          params: [{ opt: 'phosphorCoupling', min: 0, max: 1, step: 0.05, sub: 'strength' }] },
+        { key: 'convergence',      label: 'convergence', scope: 'universal',
+          desc: 'Per-channel xy-offset. Delta guns fringe in 2-D — R/B shift diagonally.',
+          params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread (px)' }] },
+        { key: 'convergenceDrift', label: 'convergence drift', scope: 'universal',
+          desc: 'Slow time-varying R/B shift on top of base. Mistuned-yoke wobble.' },
+        { key: 'persistence',      label: 'persistence', scope: 'universal',
+          desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
+          params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
+        { key: 'perRowShimmer',    label: 'per-row shimmer', scope: 'universal',
+          desc: 'Per-scanline brightness noise. The only animated micro-texture in the model (reseeds at ~30 fps).',
+          params: [{ opt: 'rowShimmer', min: 0, max: 0.1, step: 0.005, sub: 'amount' }] },
+        { key: 'beamSpread',       label: 'beam spread', scope: 'universal',
+          desc: 'Gaussian PSF blur on signal — isotropic; the dot lattice quantizes both axes the same way.',
+          params: [{ opt: 'beamSpreadPx', min: 0, max: 3, step: 0.1, sub: 'radius (px)' }] },
+      ] },
+    { title: 'composite',
+      items: [
+        { key: 'selectiveBloom', label: 'selective bloom', scope: 'universal',
+          desc: 'Bright-pixel halo. Threshold the phosphor, blur, add back as bloom.',
+          params: [
+            { opt: 'bloomThreshold', min: 0, max: 1,   step: 0.05, sub: 'threshold' },
+            { opt: 'bloomStrength',  min: 0, max: 3,   step: 0.1,  sub: 'strength' },
+            { opt: 'bleedRadius',    min: 0, max: 100, step: 1,    sub: 'radius (src px)' },
+          ] },
+        { key: 'scanlines',      label: 'horizontal scanlines', scope: 'universal',
+          desc: 'Periodic dim/bright bands along Y — the beam paints rows with gaps between.',
+          params: [
+            { opt: 'scanlineDepth',  min: 0, max: 1,  step: 0.02, sub: 'depth' },
+            { opt: 'scanlinePeriod', min: 1, max: 10, step: 0.5,  sub: 'period (px)' },
+          ] },
+      ] },
+    { title: 'glass',
+      items: [
+        { key: 'curvature', label: 'curvature', scope: 'universal',
+          desc: 'Spherical face curvature — the classic shadow-mask barrel dome, bowing on both axes.',
+          params: [{ opt: 'curvature', min: 0, max: 0.3, step: 0.01, sub: 'amount' }] },
+        { key: 'gloss',     label: 'gloss', scope: 'universal',
+          desc: 'Upper-left elliptical highlight. Virtual light source. Texture-baked.' },
+        { key: 'vignette',  label: 'vignette', scope: 'universal',
+          desc: 'Darken corners. Bezel falloff. Texture-baked.' },
+      ] },
+    { title: 'modulation',
+      items: [
+        { key: 'warmup',    label: 'warmup', scope: 'universal',
+          desc: 'One-shot brightness ramp on start. CRT tube warming up.' },
+        { key: 'breathing', label: 'breathing', scope: 'universal',
+          desc: 'Slow brightness modulation. Power-supply ripple feel.' },
+      ] },
+  ];
 
   window.ShadowMask = ShadowMask;
 })();
