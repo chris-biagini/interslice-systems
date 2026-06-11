@@ -337,7 +337,7 @@ void main() {
   // beamSpreadVerticalPx stay listed even though the menu no longer
   // offers them — console-driven changes should still diff.
   const PANEL_OPT_KEYS = [
-    'dotRadius', 'phosphorCoupling', 'persistence',
+    'dotRadius', 'phosphorCoupling', 'persistenceHalfLifeMs',
     'beamSpreadPx', 'beamSpreadVerticalPx',
     'curvature', 'curvatureMode', 'bloomThreshold', 'bloomStrength',
     'bleedRadius', 'scanlineDepth', 'scanlinePeriod',
@@ -389,7 +389,12 @@ void main() {
         // diffuse "halo through glass." Re-uploaded only via the debug
         // panel — there's no per-frame cost.
         bleedRadius: 30,
-        persistence: 0.85,
+        // Phosphor afterglow half-life in ms. Frame-rate independent:
+        // each rendered frame converts this to a per-frame decay via
+        // pow(0.5, dt / halfLife), so trails are the same length at
+        // 60 Hz, 120 Hz, or any video frame rate. 71 ms ≈ the old
+        // 0.85-per-frame decay at 60 Hz.
+        persistenceHalfLifeMs: 71,
         convergence: { r: [-0.5, -0.5], g: [0.0, 0.0], b: [0.5, 0.5] },
         // Electron-beam spread, applied as a Gaussian blur on the
         // convergence canvases before sampling. A real ShadowMask beam
@@ -482,6 +487,7 @@ void main() {
       this._setupReducedMotionListener();
       this._rafHandle = null;
       this._startTime = null;
+      this._lastRenderT = null;
     }
 
     // --- Panel/bench param API ------------------------------------------
@@ -1075,14 +1081,15 @@ void main() {
 
     // Upload uniforms that don't change for the lifetime of this
     // renderer — sampler unit bindings, viewSize/cellSize, the
-    // base option values (dotRadius, persistence, beam spread,
+    // base option values (dotRadius, beam spread,
     // bloom threshold, composite geometry, opaque background flag),
     // and the convergence base. Called once at the end of _initGpu,
     // saving ~30 CPU→GPU command-buffer writes per frame.
     //
     // Uniforms still uploaded per frame in _renderGpu: the *Enabled
-    // toggles (?debug=1 panel mutates them at runtime) and brightness
-    // (the warmup ramp modulates it).
+    // toggles (?debug=1 panel mutates them at runtime), the persistence
+    // decay (derived from the half-life and the inter-frame dt), and
+    // brightness (the warmup ramp modulates it).
     _uploadStaticUniforms() {
       const gl = this._gl;
       const [vw, vh] = this.opts.viewSize;
@@ -1095,7 +1102,6 @@ void main() {
       const csX = Array.isArray(this.opts.cellSize) ? this.opts.cellSize[0] : this.opts.cellSize;
       const csY = Array.isArray(this.opts.cellSize) ? this.opts.cellSize[1] : this.opts.cellSize;
       gl.uniform2f(this._uPhosphor.cellSize, csX, csY);
-      gl.uniform1f(this._uPhosphor.persistence,      this.opts.persistence);
       gl.uniform1f(this._uPhosphor.beamSpreadPx,         this.opts.beamSpreadPx);
       gl.uniform1f(this._uPhosphor.beamSpreadVerticalPx, this.opts.beamSpreadVerticalPx);
       gl.uniform1f(this._uPhosphor.dotRadius,            this.opts.dotRadius ?? 0.7);
@@ -1196,7 +1202,7 @@ void main() {
 
       // Per-frame *Enabled toggles. The ?debug=1 panel mutates
       // this.effects at runtime, so these must stay dynamic. Static
-      // option values (persistence, beam spread, dotRadius,
+      // option values (beam spread, dotRadius,
       // viewSize/cellSize, sampler bindings, base convergence) are
       // uploaded once in _uploadStaticUniforms.
       gl.uniform1f(this._uPhosphor.stripeEnabled,      this.effects.stripeProfile    ? 1 : 0);
@@ -1204,6 +1210,20 @@ void main() {
       gl.uniform1f(this._uPhosphor.persistenceEnabled, this.effects.persistence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.convergenceEnabled, this.effects.convergence      ? 1 : 0);
       gl.uniform1f(this._uPhosphor.beamSpreadEnabled,  this.effects.beamSpread       ? 1 : 0);
+
+      // Frame-rate-independent persistence: convert the half-life to a
+      // decay factor for the actual time since the last rendered frame.
+      // A long gap (idle wake, tab switch) drives decay toward 0 — the
+      // trail is honestly gone by the time we render again. The first
+      // frame of a run has no previous frame to retain (the persistence
+      // textures were just zeroed), so it shows the live signal at full
+      // strength: decay 0.
+      const hl = this.opts.persistenceHalfLifeMs;
+      const firstFrame = this._lastRenderT == null;
+      const dtMs = firstFrame ? 0 : Math.max(1, timeMs - this._lastRenderT);
+      this._lastRenderT = timeMs;
+      const decay = (firstFrame || hl <= 0) ? 0 : Math.pow(0.5, dtMs / hl);
+      gl.uniform1f(this._uPhosphor.persistence, decay);
 
       // Bind persistence-prev (the texture NOT in the currently-bound FBO).
       const persistPrev = this._pingPongFlip ? this._texPersistB : this._texPersistA;
@@ -1316,6 +1336,7 @@ void main() {
       }
       this._warmupStartMs = 0;  // warmup begins at timeMs = 0 since startTime
       this._startTime = performance.now();
+      this._lastRenderT = null;
       if (this._reducedMotionMq && this._reducedMotionMq.matches) {
         // Single static frame — render it at t past the warmup ramp
         // (1200 ms) so a warmup-enabled consumer shows the steady-state
@@ -1387,8 +1408,8 @@ void main() {
           desc: 'Per-channel xy-offset. Delta guns fringe in 2-D — R/B shift diagonally.',
           params: [{ opt: '__convergenceSpread', min: 0, max: 1, step: 0.05, sub: 'spread (px)' }] },
         { key: 'persistence',      label: 'persistence', scope: 'universal',
-          desc: 'Phosphor afterglow. Previous frame lerps with new at this decay.',
-          params: [{ opt: 'persistence', min: 0, max: 0.99, step: 0.01, sub: 'decay' }] },
+          desc: 'Phosphor afterglow. Half-life of the previous frame\'s contribution, in ms — frame-rate independent.',
+          params: [{ opt: 'persistenceHalfLifeMs', min: 0, max: 500, step: 5, sub: 'half-life (ms)' }] },
         { key: 'beamSpread',       label: 'beam spread', scope: 'universal',
           desc: 'Gaussian PSF blur on signal — isotropic; the dot lattice quantizes both axes the same way.',
           params: [{ opt: 'beamSpreadPx', min: 0, max: 3, step: 0.1, sub: 'radius (px)' }] },
