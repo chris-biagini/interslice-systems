@@ -1396,7 +1396,10 @@ void main() {
       this._warmupStartMs = 0;  // warmup begins at timeMs = 0 since startTime
       this._startTime = performance.now();
       if (this._reducedMotionMq && this._reducedMotionMq.matches) {
-        this._renderGpu(0);
+        // Single static frame — render it at t past the warmup ramp
+        // (1200 ms) so a warmup-enabled consumer shows the steady-state
+        // tube, not the warmupFactor=0 black of the t=0 frame.
+        this._renderGpu(1200);
         return;
       }
       const tick = (now) => {
