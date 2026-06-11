@@ -264,7 +264,11 @@ that grid as sharp square pixels: the beam spread does what real tubes did.
 
 - The drop-in viewer component, its API (`tuneTo(clip)`), and video-element
   signal sources (`requestVideoFrameCallback` is the anticipated frame
-  source; the §3 scheduler is shaped to accept it).
+  source; the §3 scheduler is shaped to accept it). Carried note for the
+  viewer round, from Task 11 review: the snow interstitial is wall-clock
+  gated (150 ms from the switch), so pathological main-thread jank can
+  shorten or swallow it; give the viewer's interstitial a minimum-frames
+  floor so a channel change always visibly flashes.
 - Chassis extraction / de-duplicating the peer files (Approach B — deferred
   to the viewer spec, when a real consumer shapes the seam).
 - Channel-change choreography beyond the existing 150 ms snow interstitial.
