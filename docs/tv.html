@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Interslice Systems — TV Service Bay</title>
+<style>
+/* ============================================================
+   TV Service Bay — late-70s woodgrain console television.
+   Dev/tuning page: fixed dark workshop backdrop, no tokens.css,
+   no theme participation. Exact pixels matter (640×480 screen);
+   the page scrolls rather than shrinks.
+   ============================================================ */
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  min-width: fit-content;
+  min-height: 100vh;
+  background:
+    radial-gradient(1400px 900px at 50% 14%, #1e2127 0%, #16181d 55%, #101217 100%)
+    #16181d;
+  color: #9aa1ad;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+.bay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: max-content;
+  margin: 0 auto;
+  padding: 44px 40px 80px;
+}
+
+.bay-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .34em;
+  text-transform: uppercase;
+  color: #565e6b;
+  margin: 0 0 36px;
+  user-select: none;
+}
+
+/* ---- Cabinet ------------------------------------------------ */
+
+.tv-cabinet {
+  position: relative;
+  width: max-content;
+  border-radius: 16px;
+  /* room for legs + floor shadow before the bench */
+  margin-bottom: 96px;
+  box-shadow:
+    0 30px 55px -16px rgba(0, 0, 0, .85),
+    0 10px 24px rgba(0, 0, 0, .4);
+}
+
+svg.cab-wood {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  display: block;
+}
+
+.cab-sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    linear-gradient(180deg,
+      rgba(255, 244, 220, .16) 0,
+      rgba(255, 244, 220, .04) 22px,
+      rgba(255, 255, 255, 0) 90px,
+      rgba(0, 0, 0, .10) 70%,
+      rgba(0, 0, 0, .30) 100%),
+    linear-gradient(90deg,
+      rgba(0, 0, 0, .28) 0,
+      rgba(0, 0, 0, 0) 26px,
+      rgba(0, 0, 0, 0) calc(100% - 26px),
+      rgba(0, 0, 0, .28) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 210, .30),
+    inset 0 -3px 6px rgba(0, 0, 0, .55),
+    inset 2px 0 3px rgba(255, 240, 210, .07),
+    inset -2px 0 4px rgba(0, 0, 0, .35);
+}
+
+/* routed groove around the face frame */
+.cab-groove {
+  position: absolute;
+  inset: 13px;
+  border-radius: 9px;
+  pointer-events: none;
+  z-index: 1;
+  border: 1px solid rgba(20, 10, 4, .55);
+  box-shadow:
+    0 1px 0 rgba(255, 230, 190, .12),
+    inset 0 1px 0 rgba(255, 230, 190, .10);
+}
+
+.cab-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  gap: 20px;
+  padding: 26px;
+}
+
+/* ---- Screen zone -------------------------------------------- */
+
+.screen-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.bezel {
+  position: relative;
+  padding: 26px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, #2a2724 0%, #161412 30%, #0e0d0b 75%, #090807 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, .12),
+    inset 0 -2px 6px rgba(0, 0, 0, .7),
+    0 0 0 1px rgba(8, 5, 3, .9),
+    0 0 0 3px rgba(60, 36, 18, .55),
+    0 3px 8px rgba(0, 0, 0, .55);
+}
+
+.bezel-text {
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  transform: translateX(-50%);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: .32em;
+  text-transform: uppercase;
+  color: #b3a98c;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, .8);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.screen-cutout {
+  position: relative;
+  width: 640px;
+  height: 480px;
+  border-radius: 28px;
+  overflow: hidden;
+  background: #050607;
+}
+
+#crt, #bypass {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 640px;   /* renderer manages backing-store size itself */
+  height: 480px;
+}
+#bypass { image-rendering: pixelated; } /* keep the nearest-neighbor look on HiDPI */
+#crt[hidden], #bypass[hidden] { display: none; }
+
+/* glass: inset shadow + faint diagonal glint, painted over the canvases */
+.screen-cutout::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(160deg,
+    rgba(255, 255, 255, .055) 0%,
+    rgba(255, 255, 255, .015) 18%,
+    rgba(255, 255, 255, 0) 34%);
+  box-shadow:
+    inset 0 0 46px 10px rgba(0, 0, 0, .60),
+    inset 0 0 6px 2px rgba(0, 0, 0, .75),
+    inset 0 2px 10px rgba(0, 0, 0, .45);
+}
+
+/* ---- Speaker grille ------------------------------------------ */
+
+.grille {
+  position: relative;
+  height: 86px;
+  border-radius: 10px;
+  /* walnut slats over dark cloth */
+  background:
+    repeating-linear-gradient(90deg,
+      #4c2f1a 0px,
+      #6a472a 3px,
+      #573620 6px,
+      #2e1b0e 8px,
+      rgba(0, 0, 0, 0) 8px,
+      rgba(0, 0, 0, 0) 16px),
+    repeating-linear-gradient(0deg,
+      rgba(0, 0, 0, .35) 0 1px,
+      rgba(255, 255, 255, .02) 1px 3px),
+    #15100b;
+  box-shadow:
+    inset 0 3px 8px rgba(0, 0, 0, .8),
+    inset 0 -2px 5px rgba(0, 0, 0, .6),
+    0 1px 0 rgba(255, 230, 190, .08);
+}
+
+.grille::after { /* top/bottom slat shading */
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(0, 0, 0, .45) 0%,
+    rgba(0, 0, 0, 0) 22%,
+    rgba(0, 0, 0, 0) 76%,
+    rgba(0, 0, 0, .5) 100%);
+}
+
+.badge {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  padding: 4px 12px 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .3em;
+  text-indent: .3em; /* balance letter-spacing */
+  color: #332b20;
+  background: linear-gradient(180deg, #ded9cd 0%, #b3aea0 48%, #cfcaba 52%, #9a9486 100%);
+  border-radius: 3px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, .8),
+    inset 0 1px 0 rgba(255, 255, 255, .7),
+    inset 0 -1px 1px rgba(0, 0, 0, .35);
+  user-select: none;
+}
+
+/* ---- Control plate ------------------------------------------- */
+
+.control-plate {
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 14px 18px;
+  border-radius: 12px;
+  /* brushed aluminum: vertical brush lines + vertical sheen */
+  background:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, .30) 0%,
+      rgba(255, 255, 255, .05) 9%,
+      rgba(255, 255, 255, 0) 30%,
+      rgba(0, 0, 0, .08) 80%,
+      rgba(0, 0, 0, .22) 100%),
+    repeating-linear-gradient(90deg,
+      #b7b3a9 0px, #aaa69c 1px, #b2aea4 2px, #aca89e 3px),
+    #aeaaa0;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .55),
+    inset 0 -2px 3px rgba(0, 0, 0, .35),
+    inset 1px 0 1px rgba(255, 255, 255, .25),
+    0 0 0 1px rgba(40, 24, 10, .55),
+    0 3px 7px rgba(0, 0, 0, .5);
+}
+
+.plate-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .26em;
+  text-indent: .26em;
+  text-transform: uppercase;
+  color: #3a332a;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .4);
+  user-select: none;
+}
+
+.plate-sub {
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: .3em;
+  text-indent: .3em;
+  text-transform: uppercase;
+  color: #6a6257;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
+  margin-top: 3px;
+  user-select: none;
+}
+
+.knob-station {
+  position: relative;
+  user-select: none;
+}
+.station-channel  { width: 202px; height: 188px; margin-top: 10px; }
+.station-renderer { width: 202px; height: 164px; margin-top: 2px; }
+
+.knob-station svg.dial {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.dial text {
+  fill: #332c23;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 700;
+}
+.dial line { stroke: #3a332a; stroke-width: 2; stroke-linecap: round; }
+.dial .dial-caption { letter-spacing: .24em; font-size: 10px; }
+
+/* ---- Knobs ---------------------------------------------------- */
+
+.knob {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  touch-action: manipulation;
+  /* skirt */
+  background: radial-gradient(circle at 50% 32%, #3c3830 0%, #1b1813 55%, #070605 100%);
+  box-shadow:
+    0 5px 10px rgba(0, 0, 0, .55),
+    0 2px 3px rgba(0, 0, 0, .5),
+    inset 0 1px 1px rgba(255, 255, 255, .22),
+    inset 0 -2px 3px rgba(0, 0, 0, .8);
+}
+#knob-channel  { width: 84px; height: 84px; left: 59px; top: 48px; }
+#knob-renderer { width: 68px; height: 68px; left: 67px; top: 58px; }
+
+.knob:focus-visible {
+  outline: 3px solid #ffc864;
+  outline-offset: 4px;
+}
+.knob:disabled {
+  cursor: not-allowed;
+  filter: grayscale(.5) brightness(.65);
+}
+.knob:not(:disabled):active .grip { filter: brightness(1.12); }
+
+.grip {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  display: block;
+  /* ribbed edge */
+  background:
+    radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 0 58%, rgba(0,0,0,.25) 75%),
+    repeating-conic-gradient(from 0deg,
+      #45403a 0deg 4deg,
+      #14110d 4deg 9deg);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, .14),
+    inset 0 -3px 5px rgba(0, 0, 0, .75);
+  transform: rotate(var(--angle, 0deg));
+  transition: transform 120ms cubic-bezier(.34, 1.45, .64, 1); /* detent snap */
+}
+.grip::before { /* center cap */
+  content: '';
+  position: absolute;
+  inset: 19%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 28%, #524a3f 0%, #262019 52%, #0d0b08 100%);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, .85),
+    inset 0 1px 1px rgba(255, 255, 255, .18);
+}
+.grip::after { /* pointer line */
+  content: '';
+  position: absolute;
+  left: calc(50% - 1.5px);
+  top: 8%;
+  width: 3px;
+  height: 30%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #f4ead2 0%, #cfc3a3 100%);
+  box-shadow: 0 0 2px rgba(0, 0, 0, .75);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grip { transition: none; }
+}
+
+/* ---- Readout + power ------------------------------------------ */
+
+.knob-readout {
+  margin-top: 14px;
+  min-width: 176px;
+  padding: 7px 10px 6px;
+  text-align: center;
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  color: #ffb957;
+  text-shadow: 0 0 7px rgba(255, 150, 40, .6);
+  background: linear-gradient(180deg, #0b0a08 0%, #181307 100%);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, .9),
+    inset 0 0 14px rgba(120, 70, 10, .25),
+    0 1px 0 rgba(255, 255, 255, .4);
+  user-select: none;
+}
+
+/* engraved ventilation grooves filling the lower plate */
+.plate-vents {
+  margin-top: auto;
+  width: 152px;
+  height: 52px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(180deg,
+    rgba(0, 0, 0, .26) 0 2px,
+    rgba(255, 255, 255, .25) 2px 3px,
+    rgba(0, 0, 0, 0) 3px 10px);
+}
+
+.power-row {
+  padding-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+.led {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #4a4a44, #22221e 70%);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, .8),
+    0 1px 0 rgba(255, 255, 255, .35);
+}
+body[data-power="on"] .led {
+  background: radial-gradient(circle at 35% 30%, #b6ffc8, #46e06b 45%, #14843a 100%);
+  box-shadow:
+    0 0 8px 2px rgba(70, 224, 107, .55),
+    inset 0 1px 1px rgba(255, 255, 255, .6);
+}
+body[data-power="bypass"] .led {
+  background: radial-gradient(circle at 35% 30%, #ffe9b0, #ffb02e 45%, #a35f06 100%);
+  box-shadow:
+    0 0 8px 2px rgba(255, 176, 46, .55),
+    inset 0 1px 1px rgba(255, 255, 255, .6);
+}
+
+.power-label {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .3em;
+  text-indent: .3em;
+  color: #3a332a;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .4);
+}
+
+/* ---- Legs + floor shadow -------------------------------------- */
+
+.leg {
+  position: absolute;
+  bottom: -58px;
+  width: 36px;
+  height: 66px;
+  z-index: 0;
+  background: linear-gradient(100deg, #5d3a1e 0%, #46280f 55%, #2a1606 100%);
+  clip-path: polygon(10% 0, 90% 0, 64% 100%, 42% 100%);
+  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, .5));
+}
+.leg-left  { left: 70px;  transform: rotate(-6deg); }
+.leg-right { right: 70px; transform: rotate(6deg); }
+
+.floor-shadow {
+  position: absolute;
+  left: 4%;
+  bottom: -78px;
+  width: 92%;
+  height: 30px;
+  z-index: -1;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0) 72%);
+  filter: blur(5px);
+  pointer-events: none;
+}
+
+/* ---- Bench (later task) ---------------------------------------- */
+
+.bench {
+  width: 994px;
+  min-height: 0;
+}
+</style>
+</head>
+<body>
+  <main class="bay">
+    <h1 class="bay-title">Interslice Systems · Television Service Bay</h1>
+
+    <div class="tv-cabinet">
+      <!-- woodgrain body -->
+      <svg class="cab-wood" aria-hidden="true">
+        <defs>
+          <linearGradient id="walnut" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0"   stop-color="#6e4527"/>
+            <stop offset=".45" stop-color="#5b371d"/>
+            <stop offset="1"   stop-color="#402312"/>
+          </linearGradient>
+          <!-- broad cathedral streaks: slow along X, fast along Y -> horizontal grain -->
+          <filter id="grain-broad" x="-2%" y="-2%" width="104%" height="104%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.012 0.12" numOctaves="4" seed="14"/>
+            <feColorMatrix type="matrix" values="
+              0   0   0  0  0.15
+              0   0   0  0  0.07
+              0   0   0  0  0.03
+              1.1 0.7 0  0 -0.50"/>
+          </filter>
+          <!-- fine pore grain -->
+          <filter id="grain-fine" x="-2%" y="-2%" width="104%" height="104%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.02 0.55" numOctaves="2" seed="5"/>
+            <feColorMatrix type="matrix" values="
+              0 0   0  0  0.10
+              0 0   0  0  0.05
+              0 0   0  0  0.02
+              0 1.4 0  0 -0.62"/>
+          </filter>
+          <!-- pale early-wood highlight bands -->
+          <filter id="grain-light" x="-2%" y="-2%" width="104%" height="104%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.010 0.09" numOctaves="3" seed="41"/>
+            <feColorMatrix type="matrix" values="
+              0   0 0  0  0.82
+              0   0 0  0  0.58
+              0   0 0  0  0.34
+              0 1.3 0  0 -0.72"/>
+          </filter>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#walnut)"/>
+        <rect width="100%" height="100%" filter="url(#grain-light)" opacity="0.42"/>
+        <rect width="100%" height="100%" filter="url(#grain-broad)" opacity="0.95"/>
+        <rect width="100%" height="100%" filter="url(#grain-fine)"  opacity="0.5"/>
+      </svg>
+      <div class="cab-sheen"  aria-hidden="true"></div>
+      <div class="cab-groove" aria-hidden="true"></div>
+
+      <div class="cab-inner">
+        <div class="screen-zone">
+          <div class="bezel">
+            <div class="screen-cutout">
+              <canvas id="crt"    width="1280" height="960"></canvas><!-- WebGL; renderer sets backing = canvasSize × DPR -->
+              <canvas id="bypass" width="640"  height="480" hidden></canvas>
+            </div>
+            <span class="bezel-text" aria-hidden="true">Solid State · CV-2001</span>
+          </div>
+          <div class="grille" aria-hidden="true">
+            <span class="badge">INTERSLICE</span>
+          </div>
+        </div>
+
+        <div class="control-plate">
+          <div class="plate-title">Service Tuner</div>
+          <div class="plate-sub">Solid State Chassis</div>
+
+          <div class="knob-station station-channel">
+            <svg class="dial" viewBox="0 0 202 188" width="202" height="188" aria-hidden="true">
+              <!-- ticks at -120,-60,0,60,120 deg (r 46->53 about 101,90) -->
+              <line x1="61.2"  y1="113"  x2="55.1"  y2="116.5"/>
+              <line x1="61.2"  y1="67"   x2="55.1"  y2="63.5"/>
+              <line x1="101"   y1="44"   x2="101"   y2="37"/>
+              <line x1="140.8" y1="67"   x2="146.9" y2="63.5"/>
+              <line x1="140.8" y1="113"  x2="146.9" y2="116.5"/>
+              <!-- VHF numbers, r=67 -->
+              <text x="43"  y="123.5" font-size="13" text-anchor="middle" dy=".35em">2</text>
+              <text x="43"  y="56.5"  font-size="13" text-anchor="middle" dy=".35em">3</text>
+              <text x="101" y="23"    font-size="13" text-anchor="middle" dy=".35em">4</text>
+              <text x="159" y="56.5"  font-size="13" text-anchor="middle" dy=".35em">5</text>
+              <text x="159" y="123.5" font-size="13" text-anchor="middle" dy=".35em">6</text>
+              <text class="dial-caption" x="101" y="180" text-anchor="middle">CHANNEL</text>
+            </svg>
+            <button class="knob" id="knob-channel" aria-label="Channel selector"><span class="grip" aria-hidden="true"></span></button>
+          </div>
+
+          <div class="knob-station station-renderer">
+            <svg class="dial" viewBox="0 0 202 164" width="202" height="164" aria-hidden="true">
+              <!-- ticks at -60,0,60 deg (r 38->45 about 101,92) -->
+              <line x1="68.1"  y1="73" x2="62.0"  y2="69.5"/>
+              <line x1="101"   y1="54" x2="101"   y2="47"/>
+              <line x1="133.9" y1="73" x2="140.0" y2="69.5"/>
+              <!-- position labels, r=58 -->
+              <text x="56.8"  y="63" font-size="8.5" letter-spacing="1" text-anchor="end">TRINITRON</text>
+              <text x="101"   y="30" font-size="8.5" letter-spacing="1" text-anchor="middle">SHADOW MASK</text>
+              <text x="145.2" y="63" font-size="8.5" letter-spacing="1" text-anchor="start">BYPASS</text>
+              <text class="dial-caption" x="101" y="156" text-anchor="middle">RENDERER</text>
+            </svg>
+            <button class="knob" id="knob-renderer" aria-label="Renderer selector"><span class="grip" aria-hidden="true"></span></button>
+          </div>
+
+          <div class="knob-readout" aria-live="polite" id="readout"></div>
+
+          <div class="plate-vents" aria-hidden="true"></div>
+
+          <div class="power-row">
+            <span class="led" aria-hidden="true"></span>
+            <span class="power-label">POWER</span>
+          </div>
+        </div>
+      </div>
+
+      <span class="leg leg-left"  aria-hidden="true"></span>
+      <span class="leg leg-right" aria-hidden="true"></span>
+      <span class="floor-shadow"  aria-hidden="true"></span>
+    </div>
+
+    <section class="bench" id="bench"><!-- later task --></section>
+  </main>
+<script src="trinitron.js"></script>
+<script src="shadow-mask.js"></script>
+<script>
+(function () {
+  'use strict';
+  const SIGNAL_W = 320, SIGNAL_H = 240;
+  const RENDERERS = ['trinitron', 'shadow-mask', 'bypass'];
+
+  // --- Channels (a later task replaces this stub with the real five) --
+  let snowImg = null;
+  function drawSnow(ctx, t, w, h) {
+    if (!snowImg) snowImg = ctx.createImageData(w, h);
+    const u32 = new Uint32Array(snowImg.data.buffer);
+    for (let i = 0; i < u32.length; i++) {
+      const v = (Math.random() * 256) | 0;
+      u32[i] = 0xff000000 | (v << 16) | (v << 8) | v;
+    }
+    ctx.putImageData(snowImg, 0, 0);
+  }
+  // Channel shape: { num: <dial number>, name: <string>, draw(ctx, t, w=320, h=240) } — draw must fill the whole frame.
+  let CHANNELS = [{ num: 2, name: 'SNOW', draw: drawSnow }];
+
+  let channelIdx = 0;
+  let channelSwitchWall = 0;                  // performance.now() of last switch
+  function paintChannel(ctx, t) {
+    if (performance.now() - channelSwitchWall < 150) drawSnow(ctx, t, SIGNAL_W, SIGNAL_H);
+    else CHANNELS[channelIdx].draw(ctx, t, SIGNAL_W, SIGNAL_H);
+  }
+
+  // --- Renderer lifecycle --------------------------------------------
+  const glCanvas = document.getElementById('crt');
+  const byCanvas = document.getElementById('bypass');
+  const bctx = byCanvas.getContext('2d');
+  const off = document.createElement('canvas');
+  off.width = SIGNAL_W; off.height = SIGNAL_H;
+  const octx = off.getContext('2d');
+
+  let renderer = null;          // live Trinitron|ShadowMask or null
+  let rendererIdx = 0;
+  let webglOk = true;
+  let bypassRaf = null, bypassStart = 0;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  // Boot presets — hero-derived + TV glass. Starting points; the bench
+  // (later task) exists to retune them.
+  const TV_EFFECTS = { convergence: true, selectiveBloom: true, scanlines: true,
+                       curvature: true, vignette: true, warmup: true };
+  function makeRenderer(kind) {
+    const common = {
+      signal: paintChannel,
+      viewSize: [SIGNAL_W, SIGNAL_H],
+      canvasSize: [SIGNAL_W * 2, SIGNAL_H * 2],
+      stripeUpscale: 2,
+      opaqueBackground: true,
+      phosphorCoupling: 0.35,
+      persistence: 0.82,
+      rowShimmer: 0.02,         // pre-seeded bench value — perRowShimmer effect is off by default, matching the hero
+      bloomStrength: 1.2,
+      scanlineDepth: 0.18,
+      scanlinePeriod: 2,
+      curvature: 0.06,
+      debugOverlay: false,
+    };
+    if (kind === 'trinitron') {
+      return new window.Trinitron(glCanvas, Object.assign(common, {
+        cellSize: 3,
+        convergence: { r: [-0.25, 0], g: [0, 0], b: [0.25, 0] },
+        beamSpreadPx: 0.7, beamSpreadVerticalPx: 1.4,
+        damperStrength: 0.90,
+        bleedRadius: 18,
+        gapMaskAlpha: 0.15, gapMaskPeriod: 2,
+        effects: Object.assign({ gapMask: true }, TV_EFFECTS),
+      }));
+    }
+    return new window.ShadowMask(glCanvas, Object.assign(common, {
+      cellSize: [3, 3], dotRadius: 0.7,
+      convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+      beamSpreadPx: 1.5, beamSpreadVerticalPx: 1.5,
+      bleedRadius: 24, bloomThreshold: 0.3,
+      effects: Object.assign({}, TV_EFFECTS),
+    }));
+  }
+
+  function stopBypass() {
+    if (bypassRaf != null) { cancelAnimationFrame(bypassRaf); bypassRaf = null; }
+  }
+  function bypassTick(now) {
+    paintChannel(octx, now - bypassStart);
+    bctx.imageSmoothingEnabled = false;
+    bctx.drawImage(off, 0, 0, byCanvas.width, byCanvas.height);
+    if (!reducedMotion.matches) bypassRaf = requestAnimationFrame(bypassTick);
+  }
+  function startBypass() {
+    bypassStart = performance.now();
+    bypassTick(bypassStart);    // reduced-motion → exactly one frame
+  }
+
+  function setRenderer(idx) {
+    rendererIdx = idx;
+    const kind = RENDERERS[idx];
+    if (renderer) { try { renderer.destroy(); } catch (_) {} renderer = null; window.__crt = null; }
+    stopBypass();
+    const useBypass = kind === 'bypass' || !webglOk;
+    if (!useBypass) {
+      try {
+        renderer = makeRenderer(kind);
+        window.__crt = renderer;
+        renderer.start();
+      } catch (err) {
+        console.warn('[tv] renderer init failed, bypass fallback:', err);
+        // reset any half-constructed renderer (e.g. start() threw mid-frame)
+        if (renderer) { try { renderer.destroy(); } catch (_) {} renderer = null; window.__crt = null; }
+        webglOk = false;        // permanent: disable knob, fall through
+        const knob = document.getElementById('knob-renderer');
+        knob.disabled = true;
+        knob.title = 'WebGL2 unavailable — bypass only';
+      }
+    }
+    const inBypass = !renderer;
+    glCanvas.hidden = inBypass;
+    byCanvas.hidden = !inBypass;
+    if (inBypass) startBypass();
+    document.body.dataset.power = inBypass ? 'bypass' : 'on';
+    rebuildBench();             // later task replaces
+    updateReadout();
+    // RENDERER: 3 positions over -60°..+60°
+    knobRenderer.style.setProperty('--angle', (-60 + rendererIdx * 60) + 'deg');
+    syncUrl();
+  }
+
+  function setChannel(idx) {
+    channelIdx = idx;
+    if (reducedMotion.matches) {
+      // no snow interstitial; repaint exactly one frame of the new channel
+      channelSwitchWall = 0;
+      if (renderer) renderer.start();
+      else startBypass();
+    } else {
+      channelSwitchWall = performance.now();
+    }
+    updateReadout();
+    // CHANNEL: dial paints positions 2–6 over -120°..+120°; point at the
+    // painted position for this channel's number (works while the stub
+    // has fewer entries than the dial has positions).
+    knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 60) + 'deg');
+    syncUrl();
+  }
+
+  function rebuildBench() {}    // later task replaces
+
+  // --- Knob wiring -----------------------------------------------------
+  const knobChannel  = document.getElementById('knob-channel');
+  const knobRenderer = document.getElementById('knob-renderer');
+
+  function wireKnob(btn, getCount, getIdx, setIdx) {
+    const step = (d) => {
+      const count = getCount();   // read at event time — channel list grows later
+      setIdx(((getIdx() + d) % count + count) % count);
+    };
+    btn.addEventListener('click', () => step(1));
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp')   { e.preventDefault(); step(1); }
+      if (e.key === 'ArrowLeft'  || e.key === 'ArrowDown') { e.preventDefault(); step(-1); }
+    });
+  }
+
+  function updateReadout() {
+    const mode = webglOk
+      ? RENDERERS[rendererIdx].replace('-', ' ').toUpperCase()
+      : 'BYPASS (NO WEBGL2)';
+    document.getElementById('readout').textContent =
+      `CH ${CHANNELS[channelIdx].num} · ${mode}`;
+  }
+
+  // --- URL state ------------------------------------------------------
+  function syncUrl() {
+    const u = new URL(window.location);
+    u.searchParams.set('ch', String(CHANNELS[channelIdx].num));
+    u.searchParams.set('renderer', RENDERERS[rendererIdx]);
+    try { history.replaceState(null, '', u); }
+    catch (_) { /* file:// or rate-limited — URL sync is best-effort */ }
+  }
+  function readUrl() {
+    const u = new URL(window.location);
+    const ch = parseInt(u.searchParams.get('ch'), 10);
+    const ci = CHANNELS.findIndex((c) => c.num === ch);
+    if (ci >= 0) channelIdx = ci;
+    const ri = RENDERERS.indexOf(u.searchParams.get('renderer'));
+    if (ri >= 0) rendererIdx = ri;
+  }
+
+  // --- Boot -----------------------------------------------------------
+  readUrl();
+  wireKnob(knobChannel,  () => CHANNELS.length,  () => channelIdx,  setChannel);
+  wireKnob(knobRenderer, () => RENDERERS.length, () => rendererIdx, setRenderer);
+  setRenderer(rendererIdx);
+  setChannel(channelIdx);
+})();
+</script>
+</body>
+</html>
