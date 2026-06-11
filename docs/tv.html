@@ -693,18 +693,20 @@ body[data-power="bypass"] .led {
 
           <div class="knob-station station-channel">
             <svg class="dial" viewBox="0 0 202 188" width="202" height="188" aria-hidden="true">
-              <!-- ticks at -120,-60,0,60,120 deg (r 46->53 about 101,90) -->
-              <line x1="61.2"  y1="113"  x2="55.1"  y2="116.5"/>
-              <line x1="61.2"  y1="67"   x2="55.1"  y2="63.5"/>
-              <line x1="101"   y1="44"   x2="101"   y2="37"/>
-              <line x1="140.8" y1="67"   x2="146.9" y2="63.5"/>
-              <line x1="140.8" y1="113"  x2="146.9" y2="116.5"/>
+              <!-- ticks at -120,-72,-24,24,72,120 deg (r 46->53 about 101,90) -->
+              <line x1="61.2"  y1="113"   x2="55.1"  y2="116.5"/>
+              <line x1="57.3"  y1="75.8"  x2="50.6"  y2="73.6"/>
+              <line x1="82.3"  y1="48"    x2="79.4"  y2="41.6"/>
+              <line x1="119.7" y1="48"    x2="122.6" y2="41.6"/>
+              <line x1="144.7" y1="75.8"  x2="151.4" y2="73.6"/>
+              <line x1="140.8" y1="113"   x2="146.9" y2="116.5"/>
               <!-- VHF numbers, r=67 -->
-              <text x="43"  y="123.5" font-size="13" text-anchor="middle" dy=".35em">2</text>
-              <text x="43"  y="56.5"  font-size="13" text-anchor="middle" dy=".35em">3</text>
-              <text x="101" y="23"    font-size="13" text-anchor="middle" dy=".35em">4</text>
-              <text x="159" y="56.5"  font-size="13" text-anchor="middle" dy=".35em">5</text>
-              <text x="159" y="123.5" font-size="13" text-anchor="middle" dy=".35em">6</text>
+              <text x="43"    y="123.5" font-size="13" text-anchor="middle" dy=".35em">2</text>
+              <text x="37.3"  y="69.3"  font-size="13" text-anchor="middle" dy=".35em">3</text>
+              <text x="73.8"  y="28.8"  font-size="13" text-anchor="middle" dy=".35em">4</text>
+              <text x="128.2" y="28.8"  font-size="13" text-anchor="middle" dy=".35em">5</text>
+              <text x="164.7" y="69.3"  font-size="13" text-anchor="middle" dy=".35em">6</text>
+              <text x="159"   y="123.5" font-size="13" text-anchor="middle" dy=".35em">7</text>
               <text class="dial-caption" x="101" y="180" text-anchor="middle">CHANNEL</text>
             </svg>
             <button class="knob" id="knob-channel" aria-label="Channel selector"><span class="grip" aria-hidden="true"></span></button>
@@ -1241,6 +1243,132 @@ body[data-power="bypass"] .led {
     ctx.putImageData(snowImg, 0, 0);
   }
 
+  // CH 7 — DITHER ("the Sonic waterfall test", spec §8). Transparency
+  // and gradients faked the way 16-bit hardware did: alternating 1-px
+  // vertical columns, checker dithers, stair-steps, single-pixel sprite
+  // detail. Pass criterion: hard stripes on bypass; translucent shimmer
+  // through either renderer. Static layers prerender once into function-
+  // static canvases — per-frame work is ~a dozen drawImages plus the
+  // foam checker.
+  function drawDither(ctx, t, w, h) {
+    let S = drawDither._S;
+    if (!S) {
+      S = drawDither._S = {};
+      const make = (mw, mh, paint) => {
+        const c = document.createElement('canvas');
+        c.width = mw; c.height = mh;
+        paint(c.getContext('2d'));
+        return c;
+      };
+      const horizon = Math.round(h * 0.42);
+      S.horizon = horizon;
+      // Hill tiles: one sine period wide, filled to the bottom, with a
+      // 4-px checker AA band along the crest (the Genesis edge-dither).
+      const hillTile = (col, amp, base, period) => make(period, h, (c) => {
+        c.fillStyle = col;
+        for (let x = 0; x < period; x++) {
+          const y = Math.round(base - amp * (0.6 + 0.4 * Math.sin(x * 2 * Math.PI / period)));
+          c.fillRect(x, y, 1, h - y);
+          for (let dy = -4; dy < 0; dy++) {
+            if (((x + dy) & 1) === 0) c.fillRect(x, y + dy, 1, 1);
+          }
+        }
+      });
+      S.hillFar  = hillTile('#1d5a34', 14, horizon + 8,  90);
+      S.hillNear = hillTile('#2e8048', 20, horizon + 26, 130);
+      // Waterfall tile: one 26-px scroll period. Even columns water,
+      // odd columns transparent — the scene shows through 50/50, the
+      // Mega Drive transparency trick this channel exists to test.
+      S.fallW = Math.round(w * 0.18);
+      S.fall = make(S.fallW, 26, (c) => {
+        for (let x = 0; x < S.fallW; x += 2) {
+          for (let y = 0; y < 26; y++) {
+            c.fillStyle = y < 7 ? '#bfe4ff' : y < 16 ? '#5aa0e8' : '#3a78cc';
+            c.fillRect(x, y, 1, 1);
+          }
+        }
+      });
+      // Static panel: checker dither ramps (25/50/75% mixes), a 2×2
+      // Bayer ordered-dither gradient bar, stair-step diagonals, label.
+      S.panel = make(w, h, (c) => {
+        const cA = '#e83048', cB = '#f8e858';
+        [[1, 4], [1, 2], [3, 4]].forEach(([n, d], i) => {
+          const y0 = 14 + i * 18;
+          c.fillStyle = cB; c.fillRect(w - 96, y0, 84, 14);
+          c.fillStyle = cA;
+          for (let y = 0; y < 14; y++)
+            for (let x = 0; x < 84; x++)
+              if (((x + y) % d) < n) c.fillRect(w - 96 + x, y0 + y, 1, 1);
+        });
+        const bayer = [0, 2, 3, 1];               // 2×2 ordered dither
+        for (let x = 0; x < 84; x++) {
+          for (let y = 0; y < 10; y++) {
+            const lvl = (x / 84) * 5 - 1;          // -1..4 across the bar
+            const th = bayer[(x & 1) + 2 * (y & 1)];
+            c.fillStyle = lvl > th ? '#35e0ff' : '#06101c';
+            c.fillRect(w - 96 + x, 72 + y, 1, 1);
+          }
+        }
+        c.fillStyle = '#ffffff';                   // stair-step diagonals
+        for (const [run, i] of [[1, 0], [2, 1], [3, 2]]) {
+          const x0 = w - 96, y0 = 102 + i * 18;
+          for (let k = 0; k < 84; k++) c.fillRect(x0 + k, y0 + 13 - (((k / run) | 0) % 14), 1, 1);
+        }
+        c.font = '8px monospace'; c.fillStyle = '#cfe0ff';
+        c.fillText('DITHER LAB // CH-7', 8, 10);
+      });
+      // 8×8 two-frame sprite with single-pixel eye detail. The leg rows
+      // are deliberately asymmetric so the frame-2 mirror reads as a
+      // real two-frame walk cycle.
+      const rows = [
+        '..3333..',
+        '.355553.',
+        '35777753',
+        '35717753',
+        '35777753',
+        '.355553.',
+        '.3...3..',
+        '3.....3.',
+      ];
+      const cols = { 1: '#0a0a14', 3: '#143c8c', 5: '#2e78dc', 7: '#8cc8ff' };
+      S.sprite = [0, 1].map((f) => make(8, 8, (c) => {
+        rows.forEach((row, y) => {
+          for (let x = 0; x < 8; x++) {
+            const ch = row[(f === 1 && y >= 6) ? 7 - x : x];   // frame 2 mirrors the legs
+            if (ch !== '.') { c.fillStyle = cols[ch]; c.fillRect(x, y, 1, 1); }
+          }
+        });
+      }));
+    }
+    const fract = x => x - Math.floor(x);
+    const horizon = S.horizon;
+    const g = ctx.createLinearGradient(0, 0, 0, horizon);          // sky
+    g.addColorStop(0, '#1c2c74'); g.addColorStop(1, '#3e68b8');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, horizon);
+    ctx.fillStyle = '#3e68b8'; ctx.fillRect(0, horizon, w, h - horizon);
+    for (const [tile, speed] of [[S.hillFar, 0.010], [S.hillNear, 0.022]]) {
+      const off = Math.round(t * speed) % tile.width;              // parallax hills
+      for (let x = -off; x < w; x += tile.width) ctx.drawImage(tile, x, 0);
+    }
+    ctx.fillStyle = '#7a5a30'; ctx.fillRect(0, h - 32, w, 32);     // ground
+    const wx = Math.round(w * 0.16), wy0 = horizon - 14, wy1 = h - 26;
+    const scroll = Math.round(t * 0.12) % 26;                      // the waterfall
+    ctx.save();
+    ctx.beginPath(); ctx.rect(wx, wy0, S.fallW, wy1 - wy0); ctx.clip();
+    for (let y = wy0 - 26 + scroll; y < wy1; y += 26) ctx.drawImage(S.fall, wx, y);
+    ctx.restore();
+    ctx.fillStyle = '#e8f4ff';                                     // animated foam checker
+    const ph = (t * 0.02) | 0;
+    for (let x = wx - 2; x < wx + S.fallW + 2; x++)
+      for (let y = wy1; y < wy1 + 5; y++)
+        if (((x + y + ph) & 1) === 0) ctx.fillRect(x, y, 1, 1);
+    ctx.drawImage(S.panel, 0, 0);                                  // static patterns
+    for (let i = 0; i < 3; i++) {                                  // marching sprites, 1:1 px
+      const sx = Math.round(fract(t * 0.00006 + i / 3) * (w + 16)) - 8;
+      ctx.drawImage(S.sprite[(((t / 240) | 0) + i) % 2], sx, h - 41);
+    }
+  }
+
   // Channel shape: { num: <dial number>, name: <string>, draw(ctx, t, w=320, h=240) } — draw must fill the whole frame.
   // static: true → one frame, then the wrapper reports "nothing new"
   // and the renderer's scheduler parks itself (fps: idle on the bench).
@@ -1250,6 +1378,7 @@ body[data-power="bypass"] .led {
     { num: 4, name: 'TEST CARD',  draw: drawTestCard,  static: true },
     { num: 5, name: 'MOTION',     draw: drawMotionReel, static: false },
     { num: 6, name: 'SNOW',       draw: drawSnow,       static: false },
+    { num: 7, name: 'DITHER',     draw: drawDither,     static: false },
   ];
 
   let channelIdx = 0;
@@ -1402,9 +1531,9 @@ body[data-power="bypass"] .led {
       else { stopBypass(); startBypass(); }
     }
     updateReadout();
-    // CHANNEL: dial paints positions 2–6 over -120°..+120°; point at the
-    // painted position for this channel's number.
-    knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 60) + 'deg');
+    // CHANNEL: dial paints positions 2–7 over -120°..+120° (48° steps);
+    // point at the painted position for this channel's number.
+    knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 48) + 'deg');
     syncUrl();
   }
 
