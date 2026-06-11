@@ -1242,19 +1242,30 @@ body[data-power="bypass"] .led {
   }
 
   // Channel shape: { num: <dial number>, name: <string>, draw(ctx, t, w=320, h=240) } — draw must fill the whole frame.
+  // static: true → one frame, then the wrapper reports "nothing new"
+  // and the renderer's scheduler parks itself (fps: idle on the bench).
   const CHANNELS = [
-    { num: 2, name: 'SMPTE BARS', draw: drawSmpteBars },
-    { num: 3, name: 'CROSSHATCH', draw: drawCrosshatch },
-    { num: 4, name: 'TEST CARD',  draw: drawTestCard },
-    { num: 5, name: 'MOTION',     draw: drawMotionReel },
-    { num: 6, name: 'SNOW',       draw: drawSnow },
+    { num: 2, name: 'SMPTE BARS', draw: drawSmpteBars, static: true },
+    { num: 3, name: 'CROSSHATCH', draw: drawCrosshatch, static: true },
+    { num: 4, name: 'TEST CARD',  draw: drawTestCard,  static: true },
+    { num: 5, name: 'MOTION',     draw: drawMotionReel, static: false },
+    { num: 6, name: 'SNOW',       draw: drawSnow,       static: false },
   ];
 
   let channelIdx = 0;
   let channelSwitchWall = -Infinity;          // performance.now() of last switch (-Infinity = no interstitial pending)
+  let staticPainted = false;                  // current static channel already delivered its one frame
   function paintChannel(ctx, t) {
-    if (performance.now() - channelSwitchWall < 150) drawSnow(ctx, t, SIGNAL_W, SIGNAL_H);
-    else CHANNELS[channelIdx].draw(ctx, t, SIGNAL_W, SIGNAL_H);
+    if (performance.now() - channelSwitchWall < 150) {
+      staticPainted = false;                  // snow ends with one fresh paint of the channel
+      drawSnow(ctx, t, SIGNAL_W, SIGNAL_H);
+      return true;
+    }
+    const ch = CHANNELS[channelIdx];
+    if (ch.static && staticPainted) return false;   // scheduler contract: nothing new
+    ch.draw(ctx, t, SIGNAL_W, SIGNAL_H);
+    staticPainted = !!ch.static;
+    return true;
   }
 
   // --- Renderer lifecycle --------------------------------------------
@@ -1314,10 +1325,16 @@ body[data-power="bypass"] .led {
     if (bypassRaf != null) { cancelAnimationFrame(bypassRaf); bypassRaf = null; }
   }
   function bypassTick(now) {
-    paintChannel(octx, now - bypassStart);
-    bctx.imageSmoothingEnabled = false;
-    bctx.drawImage(off, 0, 0, byCanvas.width, byCanvas.height);
-    if (!reducedMotion.matches) bypassRaf = requestAnimationFrame(bypassTick);
+    const dirty = paintChannel(octx, now - bypassStart);
+    if (dirty) {
+      bctx.imageSmoothingEnabled = false;
+      bctx.drawImage(off, 0, 0, byCanvas.width, byCanvas.height);
+    }
+    // Bypass has no persistence to settle: park as soon as the channel
+    // reports static (snow interstitials always report dirty; the wake
+    // path is setChannel/setRenderer restarting the loop).
+    if (!reducedMotion.matches && dirty) bypassRaf = requestAnimationFrame(bypassTick);
+    else bypassRaf = null;
   }
   function startBypass() {
     bypassStart = performance.now();
@@ -1331,6 +1348,7 @@ body[data-power="bypass"] .led {
 
   function setRenderer(idx) {
     rendererIdx = idx;
+    staticPainted = false;      // new output device needs a fresh paint
     const kind = RENDERERS[idx];
     if (renderer) { try { renderer.destroy(); } catch (_) {} renderer = null; window.__crt = null; }
     stopBypass();
@@ -1370,13 +1388,17 @@ body[data-power="bypass"] .led {
 
   function setChannel(idx) {
     channelIdx = idx;
+    staticPainted = false;
     if (reducedMotion.matches) {
       // no snow interstitial; repaint exactly one frame of the new channel
       channelSwitchWall = -Infinity;
       if (renderer) renderer.start();
-      else startBypass();
+      else { stopBypass(); startBypass(); }
     } else {
       channelSwitchWall = performance.now();
+      // wake a parked renderer (or bypass loop) for the interstitial
+      if (renderer) renderer.requestRender();
+      else { stopBypass(); startBypass(); }
     }
     updateReadout();
     // CHANNEL: dial paints positions 2–6 over -120°..+120°; point at the
@@ -1434,7 +1456,7 @@ body[data-power="bypass"] .led {
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.checked = !!renderer.effects[item.key];
-        cb.addEventListener('change', () => { renderer.effects[item.key] = cb.checked; });
+        cb.addEventListener('change', () => { renderer.effects[item.key] = cb.checked; renderer.requestRender(); });
         row.appendChild(cb);
         const name = document.createElement('span');
         name.textContent = item.label;
@@ -1544,7 +1566,12 @@ body[data-power="bypass"] .led {
     const dt = now - fpsLastTime;
     fpsLastFrames = renderer._frameCount;
     fpsLastTime = now;
-    if (dt > 0) benchFpsEl.textContent = `fps: ${Math.round(delta * 1000 / dt)}`;
+    if (dt > 0) {
+      // _mode is a deliberate cross-file private read, like _frameCount.
+      benchFpsEl.textContent = renderer._mode === 'idle'
+        ? 'fps: idle'
+        : `fps: ${Math.round(delta * 1000 / dt)}`;
+    }
   }, 500);
 
   // --- Boot -----------------------------------------------------------
