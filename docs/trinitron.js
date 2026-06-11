@@ -118,7 +118,11 @@ void main() {
   vec4 lerped = prev * dr + live * (1.0 - dr);
 
   // Store pre-stripe value so weights don't compound across frames.
-  oPersistenceNext = lerped;
+  // Half-LSB fade bias: in 8-bit, prev*decay can round back to prev at
+  // the bottom few grey levels and a trail would never reach zero.
+  // Subtracting 0.5/255 guarantees termination; cost to live signal is
+  // ≤0.2% brightness — invisible.
+  oPersistenceNext = max(lerped - 0.5 / 255.0, vec4(0.0));
 
   vec2 px = vUv * uViewSize;
   int subX = int(mod(px.x, uCellSize.x));
@@ -581,23 +585,6 @@ void main() {
       });
       if (!gl) throw new Error('WebGL2 unavailable');
 
-      // Float textures for persistence (no extension needed in WebGL2).
-      // EXT_color_buffer_float lets us render TO float — required because
-      // the phosphor/persistence attachments are RGBA32F. Check (and
-      // throw) BEFORE mutating this.* so the constructor leaves no
-      // half-initialized GPU state behind on failure.
-      const cbf = gl.getExtension('EXT_color_buffer_float');
-      if (!cbf) throw new Error('EXT_color_buffer_float unavailable');
-      // OES_texture_float_linear lets us sample RGBA32F textures with
-      // LINEAR filtering in a shader. Without it, `texture(uPhosphor, ...)`
-      // in the composite pass silently returns vec4(0) — no GL error,
-      // just a black phosphor read — because LINEAR on a float texture
-      // is "texture-incomplete" in WebGL2. The phosphor and persistence
-      // textures use LINEAR (Task 9 consistency fix), so this extension
-      // is load-bearing. Same throw-before-mutate discipline as above.
-      const tfl = gl.getExtension('OES_texture_float_linear');
-      if (!tfl) throw new Error('OES_texture_float_linear unavailable');
-
       this._gl = gl;
 
       const dpr = window.devicePixelRatio || 1;
@@ -650,26 +637,28 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-      // Persistence ping-pong textures (RGBA32F). Persistence textures
-      // are LINEAR so convergence-shifted reads in the phosphor pass
-      // produce chromatic-fringe blending consistent with the signal
-      // sample. The phosphor output texture is NEAREST so the composite
-      // pass's upscale (canvas backing ≫ viewSize) tiles each phosphor
-      // source pixel as a sharp block; LINEAR on this texture averaged
-      // adjacent stripes into mush.
-      const makeFloatTex = (w, h, filter) => {
+      // Persistence ping-pong + phosphor textures (RGBA8 — every stored
+      // value is bounded [0,1], so 8 bits suffice and no float-render
+      // extensions are needed; any WebGL2 context runs the full
+      // pipeline). Persistence textures are LINEAR so convergence-
+      // shifted reads blend consistently with the signal sample. The
+      // phosphor output texture is NEAREST so the composite upscale
+      // tiles each source pixel as a sharp block; LINEAR here averaged
+      // adjacent stripes into mush. The shader subtracts a half-LSB
+      // fade bias so 8-bit trails always reach zero.
+      const makeFrameTex = (w, h, filter) => {
         const t = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, t);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         return t;
       };
-      this._texPersistA = makeFloatTex(vw, vh, gl.LINEAR);
-      this._texPersistB = makeFloatTex(vw, vh, gl.LINEAR);
-      this._texPhosphor = makeFloatTex(vw, vh, gl.NEAREST);
+      this._texPersistA = makeFrameTex(vw, vh, gl.LINEAR);
+      this._texPersistB = makeFrameTex(vw, vh, gl.LINEAR);
+      this._texPhosphor = makeFrameTex(vw, vh, gl.NEAREST);
 
       // Two pre-configured FBOs for the phosphor pass. Both write the
       // phosphor output to _texPhosphor; they differ only in which
@@ -1383,12 +1372,8 @@ void main() {
       // is a no-op for the clear (and the tick below will early-out too).
       if (this._gl) {
         // Clear both persistence textures by binding each FBO and
-        // clearing all attachments. MUST use clearBufferfv for
-        // RGBA32F attachments — `gl.clear()` on float color buffers
-        // is undefined per the WebGL2 spec and produces NaN on some
-        // drivers, which then propagates forever through the
-        // persistence lerp (NaN * anything = NaN) and poisons every
-        // subsequent frame to black.
+        // clearing all attachments. clearBufferfv is also correct for
+        // normalized RGBA8 attachments (values clamp to [0,1]).
         const gl = this._gl;
         const zeros = new Float32Array([0, 0, 0, 0]);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this._fboPhosphorWithA);
