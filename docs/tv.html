@@ -1251,7 +1251,7 @@ body[data-power="bypass"] .led {
   ];
 
   let channelIdx = 0;
-  let channelSwitchWall = 0;                  // performance.now() of last switch
+  let channelSwitchWall = -Infinity;          // performance.now() of last switch (-Infinity = no interstitial pending)
   function paintChannel(ctx, t) {
     if (performance.now() - channelSwitchWall < 150) drawSnow(ctx, t, SIGNAL_W, SIGNAL_H);
     else CHANNELS[channelIdx].draw(ctx, t, SIGNAL_W, SIGNAL_H);
@@ -1324,6 +1324,11 @@ body[data-power="bypass"] .led {
     bypassStart = performance.now();
     bypassTick(bypassStart);    // reduced-motion → exactly one frame
   }
+  // The renderers re-handle reduced-motion changes themselves; mirror
+  // that for bypass (restart resumes the loop or renders one fresh frame).
+  const bypassMotionHandler = () => { if (!byCanvas.hidden) { stopBypass(); startBypass(); } };
+  if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', bypassMotionHandler);
+  else if (reducedMotion.addListener) reducedMotion.addListener(bypassMotionHandler);
 
   function setRenderer(idx) {
     rendererIdx = idx;
@@ -1340,10 +1345,16 @@ body[data-power="bypass"] .led {
         console.warn('[tv] renderer init failed, bypass fallback:', err);
         // reset any half-constructed renderer (e.g. start() threw mid-frame)
         if (renderer) { try { renderer.destroy(); } catch (_) {} renderer = null; window.__crt = null; }
-        webglOk = false;        // permanent: disable knob, fall through
-        const knob = document.getElementById('knob-renderer');
-        knob.disabled = true;
-        knob.title = 'WebGL2 unavailable — bypass only';
+        // Latch the permanent fallback only on genuine WebGL2/extension
+        // absence (the constructors' "… unavailable" throws). Any other
+        // throw — say, a shader edit mid-tuning — falls to bypass for
+        // this position but leaves the other knob positions retryable.
+        if (/unavailable/i.test((err && err.message) || '')) {
+          webglOk = false;
+          const knob = document.getElementById('knob-renderer');
+          knob.disabled = true;
+          knob.title = 'WebGL2 unavailable — bypass only';
+        }
       }
     }
     const inBypass = !renderer;
@@ -1362,7 +1373,7 @@ body[data-power="bypass"] .led {
     channelIdx = idx;
     if (reducedMotion.matches) {
       // no snow interstitial; repaint exactly one frame of the new channel
-      channelSwitchWall = 0;
+      channelSwitchWall = -Infinity;
       if (renderer) renderer.start();
       else startBypass();
     } else {
@@ -1381,6 +1392,7 @@ body[data-power="bypass"] .led {
     const bench = document.getElementById('bench');
     bench.textContent = '';
     if (!renderer) {
+      benchFpsEl = null;        // don't retain the previous bench's span
       const note = document.createElement('p');
       note.className = 'bench-note';
       note.textContent = 'BYPASS — raw signal, no renderer active.';
@@ -1496,6 +1508,8 @@ body[data-power="bypass"] .led {
 
   // --- URL state ------------------------------------------------------
   function syncUrl() {
+    // In failure-bypass the URL keeps the *requested* renderer rather
+    // than 'bypass' — intentional: reloading retries the request.
     const u = new URL(window.location);
     u.searchParams.set('ch', String(CHANNELS[channelIdx].num));
     u.searchParams.set('renderer', RENDERERS[rendererIdx]);
@@ -1512,19 +1526,26 @@ body[data-power="bypass"] .led {
   }
 
   // --- Bench fps meter --------------------------------------------------
-  // 500 ms window over the renderer's frame counter; reseeds on renderer
-  // swap so the first reading after a change isn't a cross-renderer delta.
-  let fpsLastRenderer = null, fpsLastFrames = 0;
+  // ~500 ms window over the renderer's frame counter (the renderers'
+  // private `_frameCount` — a deliberate cross-file read; the built-in
+  // ?debug=1 panels meter the same way). Time-based so timer jitter
+  // doesn't skew the reading; reseeds on renderer swap so the first
+  // reading after a change isn't a cross-renderer delta.
+  let fpsLastRenderer = null, fpsLastFrames = 0, fpsLastTime = 0;
   setInterval(() => {
     if (!renderer || !benchFpsEl) { fpsLastRenderer = null; return; }
+    const now = performance.now();
     if (fpsLastRenderer !== renderer) {
       fpsLastRenderer = renderer;
       fpsLastFrames = renderer._frameCount;
+      fpsLastTime = now;
       return;
     }
     const delta = renderer._frameCount - fpsLastFrames;
+    const dt = now - fpsLastTime;
     fpsLastFrames = renderer._frameCount;
-    benchFpsEl.textContent = `fps: ${Math.round(delta * 2)}`;
+    fpsLastTime = now;
+    if (dt > 0) benchFpsEl.textContent = `fps: ${Math.round(delta * 1000 / dt)}`;
   }, 500);
 
   // --- Boot -----------------------------------------------------------
