@@ -2044,7 +2044,9 @@
             opaqueBackground: true,
             phosphorCoupling: 0.35,
             persistence: 0.82,
-            convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
+            // X-only, matching the inline-cathode geometry. Latent —
+            // effects.convergence is off on the hero.
+            convergence: { r: [-0.25, 0], g: [0, 0], b: [0.25, 0] },
             beamSpreadPx: 0.7,
             beamSpreadVerticalPx: 1.4,
             rowShimmer: 0.02,
