@@ -64,7 +64,8 @@ renderers — entirely, not default-off:
 - **Options:** `rowShimmer`, `shimmerSeed`; `PANEL_OPT_KEYS` entries.
 - **Effects + schema:** the three keys and their schema items (debug overlay
   and bench rows disappear with them).
-- **tv.html:** the `rowShimmer: 0.02` pre-seed in the common options.
+- **Consumers:** the `rowShimmer: 0.02` pre-seeds in tv.html's common options
+  block and in both renderer branches of index.html's `createTrinitron`.
 
 The hero never enabled any of the three (all default-off), so it is visually
 unchanged. After the cut, the steady-state pipeline has **no** per-frame
@@ -84,8 +85,8 @@ Replace the per-frame decay lerp with a **half-life in milliseconds**.
   the existing `uPersistence` uniform; the shader is unchanged.
 - **Conversions** (decay-per-frame `d` at 60 Hz → half-life
   `= 16.67 × ln 0.5 / ln d`):
-  - TV preset `0.82` → **58 ms**
-  - Hero `0.85` → **71 ms**
+  - TV preset and hero both pass `0.82` → **58 ms**
+  - Class default `0.85` → **71 ms**
 - Bench/debug slider becomes `persistenceHalfLifeMs`, range 0–500 ms, step 5.
 - `stateDiff()`/`readParam`/`writeParam` track the new option name.
 
@@ -243,8 +244,8 @@ that grid as sharp square pixels: the beam spread does what real tubes did.
   options objects; callers clone via `Object.assign({}, presets.tv, …)`).
   tv.html's `makeRenderer` boots from them, so the tuned look lives in the
   renderer files and a future viewer imports the same object. Hero options
-  stay bespoke in `index.html` (only the persistence value converts: `0.85`
-  → `persistenceHalfLifeMs: 71`).
+  stay bespoke in `index.html` (only the persistence value converts: `0.82`
+  → `persistenceHalfLifeMs: 58`, plus the rowShimmer pre-seed removal).
 - **Tuning session:** on the bench, channel by channel (including CH 7's
   pass criterion), both renderers, ending with "copy state diff" →
   transferred into the presets.
