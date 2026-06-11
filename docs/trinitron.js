@@ -1239,10 +1239,14 @@ void main() {
       this._signalCtx.clearRect(0, 0, vw, vh);
       // Third argument: "needsRepaint" — true when the GPU-side signal
       // texture is blank (context restore) and a memoizing callback
-      // must repaint rather than report "nothing new".
+      // must repaint rather than report "nothing new". The restore
+      // frame also forces the upload below regardless of the callback's
+      // answer: a consumer that ignores the ask degrades to a defined
+      // black frame instead of leaving undefined GPU memory on screen.
       const painted = this.opts.signal(this._signalCtx, timeMs, this._signalStale);
+      const forcedUpload = this._signalStale;
       this._signalStale = false;
-      const dirty = painted !== false;
+      const dirty = painted !== false || forcedUpload;
 
       // Damper wires — stamp the configured horizontal rows onto the
       // signal canvas BEFORE upload, so the wires inherit convergence

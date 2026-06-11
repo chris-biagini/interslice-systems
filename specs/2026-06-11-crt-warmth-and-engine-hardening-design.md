@@ -120,7 +120,10 @@ behavior with no changes** (the hero's rotating logo runs every frame, as
 now). When the callback returns `false`, the renderer skips the signal upload
 (the GPU keeps sampling the previous signal texture) but still renders settle
 frames so persistence trails keep decaying, and (re)starts the settle
-countdown.
+countdown. The callback's full signature is `signal(ctx, t, needsRepaint)`:
+the renderer passes `needsRepaint: true` when its GPU-side signal texture is
+blank (the first frame after a context restore) — memoizing consumers must
+treat that as "repaint now," not "nothing new."
 
 **External pokes.** New public `requestRender()`: schedules a render (and a
 settle re-evaluation) from idle. `writeParam()` calls it internally; the
@@ -159,9 +162,11 @@ snow interstitial is active. The bench FPS meter learns a third reading:
   effect-dropping — the full pipeline is now cheap enough for the floor.
 - **Context-loss handling (new):** `webglcontextlost` → `preventDefault()`,
   stop the loop, mark GPU state dead; `webglcontextrestored` → re-run GPU
-  init (programs, textures, FBOs, static uniforms) and resume the prior
-  scheduler state. A mid-session GPU hiccup currently leaves a dead black
-  canvas; a good web citizen recovers.
+  init (programs, textures, FBOs, static uniforms), flag the signal texture
+  stale (the next frame invokes the callback with `needsRepaint: true` so
+  memoizing consumers repaint at the blank texture — see §3), and resume
+  the prior scheduler state. A mid-session GPU hiccup currently leaves a
+  dead black canvas; a good web citizen recovers.
 
 ## 5. Phosphor color grade (new effect: `colorGrade`)
 
