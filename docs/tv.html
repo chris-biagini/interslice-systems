@@ -1255,7 +1255,8 @@ body[data-power="bypass"] .led {
   let channelIdx = 0;
   let channelSwitchWall = -Infinity;          // performance.now() of last switch (-Infinity = no interstitial pending)
   let staticPainted = false;                  // current static channel already delivered its one frame
-  function paintChannel(ctx, t) {
+  function paintChannel(ctx, t, needsRepaint) {
+    if (needsRepaint) staticPainted = false;  // renderer lost our pixels (context restore)
     if (performance.now() - channelSwitchWall < 150) {
       staticPainted = false;                  // snow ends with one fresh paint of the channel
       drawSnow(ctx, t, SIGNAL_W, SIGNAL_H);

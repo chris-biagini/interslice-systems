@@ -508,8 +508,27 @@ void main() {
       this._mode = 'stopped';
       this._visible = true;
       this._idleAt = Infinity;
+      this._signalStale = false;   // set on context restore: ask the callback to repaint
       this._setupReducedMotionListener();
       this._setupVisibilityObserver();
+      // Context-loss recovery: a GPU reset/driver hiccup currently
+      // means a permanently dead canvas. Stop cleanly on loss, rebuild
+      // all GPU state and resume on restore. preventDefault() is
+      // required or the restored event never fires.
+      this._onContextLost = (e) => {
+        e.preventDefault();
+        this._haltLoop();
+        this._gl = null;
+      };
+      this._onContextRestored = () => {
+        this._initGpu();
+        // The rebuilt signal texture is blank; ask the callback to
+        // repaint even if it memoizes ("nothing new" returns).
+        this._signalStale = true;
+        this._resumeLoop();
+      };
+      this.canvas.addEventListener('webglcontextlost', this._onContextLost);
+      this.canvas.addEventListener('webglcontextrestored', this._onContextRestored);
       this._rafHandle = null;
       this._startTime = null;
       this._lastRenderT = null;
@@ -853,6 +872,7 @@ void main() {
       // Secondary instances on the same page should opt out so the
       // primary instance's panel isn't overlapped.
       if (!this.opts.debugOverlay) return;
+      if (this._debugPanel) return;   // context-restore re-runs _initGpu
       const params = new URLSearchParams(location.search);
       if (params.get('debug') !== '1') return;
 
@@ -1213,9 +1233,15 @@ void main() {
       // which case the GPU keeps sampling the previous signal texture
       // and this frame only advances persistence decay. undefined or
       // truthy (every pre-contract callback) means animated.
+      // The callback's third parameter asks for a forced repaint (see
+      // needsRepaint below).
       const [vw, vh] = this.opts.viewSize;
       this._signalCtx.clearRect(0, 0, vw, vh);
-      const painted = this.opts.signal(this._signalCtx, timeMs);
+      // Third argument: "needsRepaint" — true when the GPU-side signal
+      // texture is blank (context restore) and a memoizing callback
+      // must repaint rather than report "nothing new".
+      const painted = this.opts.signal(this._signalCtx, timeMs, this._signalStale);
+      this._signalStale = false;
       const dirty = painted !== false;
 
       // Damper wires — stamp the configured horizontal rows onto the
@@ -1508,6 +1534,8 @@ void main() {
         }
       }
       if (this._io) { this._io.disconnect(); this._io = null; }
+      this.canvas.removeEventListener('webglcontextlost', this._onContextLost);
+      this.canvas.removeEventListener('webglcontextrestored', this._onContextRestored);
       this._destroyGpu();
     }
 
