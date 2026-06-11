@@ -849,14 +849,380 @@ body[data-power="bypass"] .led {
     }
   }
 
-  // CH 5 — motion reel PLACEHOLDER. Keep deliberately trivial; a later
-  // pass replaces the body. Do not embellish beyond bug fixes.
+  // CH 5 — "INTERSLICE SYSTEMS" demo reel. 40 s loop, eight scenes with
+  // hard cuts (each opening on a 90 ms bloom flash), broadcast-ident style:
+  // CRT power-on + station ident → parallax starfield accelerating to warp →
+  // copper bars + sine scroller → vector tunnel → additive plasma weave with
+  // a CH·5 knockout → RGB-split wordmark bounce over a synth floor → moiré
+  // roses → sign-off + CRT collapse (which wraps cleanly into the power-on).
+  // Deterministic in t; lookup tables built once via function statics, no
+  // per-frame buffer allocations.
   function drawMotionReel(ctx, t, w, h) {
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
-    const bw = 40, bh = 24;
-    const bounce = (p, range) => { const m = p % (range * 2); return m < range ? m : range * 2 - m; };
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(bounce(t * 0.08, w - bw), bounce(t * 0.05, h - bh), bw, bh);
+    let S = drawMotionReel._S;
+    if (!S) {                              // one-time static tables
+      S = drawMotionReel._S = {};
+      let seed = 0x5EED5;                  // mulberry32 — deterministic layout
+      const rnd = () => {
+        seed = seed + 0x6D2B79F5 | 0;
+        let z = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z;
+        return ((z ^ z >>> 14) >>> 0) / 4294967296;
+      };
+      S.N = 150;
+      S.stars = new Float32Array(S.N * 3); // x, y in [-1,1]; z phase in [0,1)
+      S.starCol = new Uint8Array(S.N);
+      for (let i = 0; i < S.N; i++) {
+        S.stars[i * 3] = rnd() * 2 - 1;
+        S.stars[i * 3 + 1] = rnd() * 2 - 1;
+        S.stars[i * 3 + 2] = rnd();
+        S.starCol[i] = i % 7 === 0 ? 1 : i % 5 === 0 ? 2 : 0;
+      }
+      S.hues = [];
+      for (let i = 0; i < 60; i++) S.hues.push(`hsl(${i * 6},100%,62%)`);
+      const copper = (r, g, b) => [.16, .42, .78, 1, .78, .42, .16]
+        .map(k => `rgb(${r * k | 0},${g * k | 0},${b * k | 0})`);
+      S.bars = [copper(255, 40, 200), copper(40, 220, 255), copper(255, 230, 60),
+                copper(255, 40, 200), copper(40, 220, 255), copper(235, 240, 255)];
+      S.pm = []; S.pc = []; S.py = [];     // plasma ramps: magenta / cyan / amber
+      for (let i = 0; i < 48; i++) {
+        const k = i / 47;
+        S.pm.push(`rgba(${40 + 215 * k | 0},${k * k * 70 | 0},${120 + 135 * k | 0},0.5)`);
+        S.pc.push(`rgba(${k * k * 80 | 0},${60 + 190 * k | 0},${150 + 105 * k | 0},0.5)`);
+        S.py.push(`rgba(${60 + 195 * k | 0},${40 + 200 * k | 0},${k * k * 90 | 0},0.35)`);
+      }
+      S.msg = '*** INTERSLICE SYSTEMS ***  BUILDING THE FUTURE, TOMORROW!  ***' +
+              '  CH-5 PHOSPHOR DEMO REEL  ***  GREETZ TO ALL TRINITRON HEADS  ***';
+      S.glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 48);   // warp-core glow sprite
+      S.glow.addColorStop(0, 'rgba(225,240,255,0.9)');
+      S.glow.addColorStop(0.35, 'rgba(150,195,255,0.5)');
+      S.glow.addColorStop(1, 'rgba(120,180,255,0)');
+    }
+    const TAU = Math.PI * 2, PERIOD = 40000;
+    const tt = ((t % PERIOD) + PERIOD) % PERIOD;
+    const cx = w / 2, cy = h / 2;
+    const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+    const fract = x => x - Math.floor(x);
+    const BG = '#04060f';
+    const CUTS = [4000, 10000, 16000, 22000, 28000, 34000, 37400, 40000];
+    let sn = 0;
+    while (tt >= CUTS[sn]) sn++;
+    const ts = tt - (sn === 0 ? 0 : CUTS[sn - 1]);
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    if (sn === 0) {
+      // ---- scene 0: CRT power-on, then station ident ----
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+      if (ts < 560) {                      // dot → line → raster bloom-up
+        const p = ts / 560;
+        ctx.globalCompositeOperation = 'lighter';
+        if (p < 0.42) {
+          const q = p / 0.42, e = 1 - (1 - q) * (1 - q);
+          const lw = Math.max(3, e * w * 0.96);
+          ctx.fillStyle = 'rgba(140,180,255,0.35)'; ctx.fillRect(cx - lw / 2, cy - 4, lw, 8);
+          ctx.fillStyle = '#fff'; ctx.fillRect(cx - lw / 2, cy - 1, lw, 2);
+        } else {
+          const q = (p - 0.42) / 0.58, e = 1 - (1 - q) * (1 - q);
+          const vh = Math.max(2, e * h);
+          ctx.fillStyle = `rgba(150,185,255,${0.9 - 0.75 * e})`; ctx.fillRect(0, cy - vh / 2, w, vh);
+          ctx.fillStyle = `rgba(255,255,255,${1 - 0.8 * e})`; ctx.fillRect(0, cy - 1.5, w, 3);
+        }
+      } else {
+        const ti = ts - 560;
+        ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = 'rgba(160,200,255,0.05)';            // drifting scan band
+        ctx.fillRect(0, fract(ti * 0.00022) * (h + 60) - 30, w, 26);
+        const fadeIn = clamp(ti / 420, 0, 1);
+        ctx.globalAlpha = fadeIn * (0.92 + 0.08 * Math.sin(ti * 0.21));
+        ctx.font = 'bold 34px monospace';
+        const off = 2 + (ti < 700 ? (700 - ti) * 0.02 : 0);  // fringes converge on entry
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = 'rgba(255,40,210,0.9)'; ctx.fillText('INTERSLICE', cx - off, 88);
+        ctx.fillStyle = 'rgba(40,220,255,0.9)'; ctx.fillText('INTERSLICE', cx + off, 88);
+        ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.fillText('INTERSLICE', cx, 88);
+        ctx.globalCompositeOperation = 'source-over';
+        if (ti > 350) {
+          ctx.globalAlpha = clamp((ti - 350) / 350, 0, 1);
+          ctx.font = 'bold 15px monospace'; ctx.fillStyle = '#35e0ff';
+          ctx.fillText('S Y S T E M S', cx, 120);
+        }
+        ctx.globalAlpha = 1;
+        if (ti > 500) {                                       // yellow rule grows out
+          const rw = clamp((ti - 500) / 400, 0, 1) * 220;
+          ctx.fillStyle = '#ffe93c'; ctx.fillRect(cx - rw / 2, 134, rw, 2);
+        }
+        if (ti > 900) {                                       // tagline types on
+          const n = Math.min(30, (ti - 900) / 55 | 0);
+          const msg = 'BUILDING THE FUTURE, TOMORROW!'.slice(0, n);
+          ctx.font = '11px monospace'; ctx.fillStyle = '#ffe93c';
+          ctx.fillText(msg, cx, 160);
+          if (n < 30 || ((ti / 260) | 0) % 2 === 0) {
+            ctx.fillRect(cx + ctx.measureText(msg).width / 2 + 3, 155, 6, 10);
+          }
+        }
+        if (ti > 1500) {
+          ctx.globalAlpha = 0.8; ctx.font = '9px monospace'; ctx.fillStyle = '#7a86b8';
+          ctx.fillText('CH·5 · DEMO REEL · EST. 1986 · 60 FIELDS/SEC', cx, h - 18);
+          ctx.globalAlpha = 1;
+        }
+        const sp = (ti - 1100) / 900;                         // gloss sweep over the title
+        if (sp > 0 && sp < 1) {
+          ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.22;
+          ctx.fillStyle = '#fff';
+          ctx.save(); ctx.translate(-80 + sp * (w + 160), 0);
+          ctx.transform(1, 0, -0.35, 1, 0, 0); ctx.fillRect(0, 58, 26, 64); ctx.restore();
+          ctx.globalAlpha = 1;
+        }
+      }
+
+    } else if (sn === 1) {
+      // ---- scene 1: parallax starfield, accelerating into warp streaks ----
+      ctx.fillStyle = '#010208'; ctx.fillRect(0, 0, w, h);
+      const u = clamp((ts - 3300) / 2400, 0, 1);              // warp ramp
+      const shift = 0.00013 * ts + 1.5 * u * u;
+      const streak = 0.006 + u * 0.07;
+      ctx.globalCompositeOperation = 'lighter';                // core glow swells with speed
+      ctx.save(); ctx.translate(cx, cy);
+      const gs = (16 + u * 32) / 48;
+      ctx.scale(gs, gs); ctx.globalAlpha = 0.55 + u * 0.45;
+      ctx.fillStyle = S.glow; ctx.fillRect(-48, -48, 96, 96);
+      ctx.restore();
+      const cols = ['rgba(205,228,255,', 'rgba(255,90,230,', 'rgba(255,235,120,'];
+      for (let ci = 0; ci < 3; ci++) {
+        for (let near = 0; near < 2; near++) {                // depth-bucketed batching
+          ctx.beginPath();
+          for (let i = 0; i < S.N; i++) {
+            if (S.starCol[i] !== ci) continue;
+            const z = fract(S.stars[i * 3 + 2] - shift) * 0.96 + 0.04;
+            if (near ? z >= 0.45 : z < 0.45) continue;
+            const f1 = 0.22 / z, f2 = 0.22 / Math.min(1, z + streak);
+            const x1 = cx + S.stars[i * 3] * f1 * cx, y1 = cy + S.stars[i * 3 + 1] * f1 * cy;
+            if (x1 < -4 || x1 > w + 4 || y1 < -4 || y1 > h + 4) continue;
+            ctx.moveTo(cx + S.stars[i * 3] * f2 * cx, cy + S.stars[i * 3 + 1] * f2 * cy);
+            ctx.lineTo(x1, y1 + 0.01);
+          }
+          ctx.strokeStyle = cols[ci] + (near ? '1)' : '0.62)');
+          ctx.lineWidth = near ? 2.2 : 1.3;
+          ctx.stroke();
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.font = '9px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#5e6aa0';
+      ctx.fillText('VELOCITY TEST // SECTOR 7G', 8, h - 10);
+      ctx.textAlign = 'center';
+      if (u > 0 && u < 1 && ((ts / 120) | 0) % 2 === 0) {
+        ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#ffe93c';
+        ctx.fillText('— ENGAGE —', cx, h - 30);
+      }
+
+    } else if (sn === 2) {
+      // ---- scene 2: copper bars + rainbow sine scroller ----
+      ctx.fillStyle = '#03040c'; ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'lighter';
+      for (let b = 0; b < 6; b++) {
+        const yb = cy - 7 + Math.sin(ts * 0.0021 + b * 0.97) * h * 0.34
+                 + Math.sin(ts * 0.00063 + b * 2.1) * 16;
+        for (let r = 0; r < 7; r++) {
+          ctx.fillStyle = S.bars[b][r]; ctx.fillRect(0, yb + r * 2, w, 2);
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.font = 'bold 21px monospace';
+      if (!S.cw) S.cw = ctx.measureText('M').width;
+      const scroll = ts * 0.17;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,12,0.75)';
+      for (let i = 0; i < S.msg.length; i++) {
+        const x = w + i * S.cw - scroll;
+        if (x < -16) continue;
+        if (x > w + 16) break;
+        const y = cy + Math.sin(x * 0.035 + ts * 0.005) * 30;
+        ctx.strokeText(S.msg[i], x, y);                       // dark rim for legibility
+        ctx.fillStyle = S.hues[(i * 3 + (ts * 0.018 | 0)) % 60];
+        ctx.fillText(S.msg[i], x, y);
+      }
+
+    } else if (sn === 3) {
+      // ---- scene 3: twisting vector tunnel, Lissajous throat ----
+      ctx.fillStyle = '#02030a'; ctx.fillRect(0, 0, w, h);
+      const tx = cx + Math.sin(ts * 0.0011) * 44, ty = cy + Math.sin(ts * 0.0017 + 1.2) * 28;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineJoin = 'round';
+      for (let i = 0; i < 16; i++) {
+        const zf = fract(i / 16 + ts * 0.00021);
+        const rad = 4 + Math.pow(zf, 2.4) * 300;
+        const rot = ts * 0.00085 + zf * 2.4;                  // per-depth twist
+        ctx.strokeStyle = S.hues[(i * 7 + (ts * 0.02 | 0)) % 60];
+        ctx.globalAlpha = 0.22 + zf * 0.78;
+        ctx.lineWidth = 1 + zf * 2.2;
+        ctx.beginPath();
+        for (let v = 0; v <= 8; v++) {
+          const a = rot + v / 8 * TAU;
+          const px = tx + Math.cos(a) * rad, py = ty + Math.sin(a) * rad * 0.86;
+          v ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(120,200,255,0.25)';
+      ctx.beginPath(); ctx.arc(tx, ty, 7, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath(); ctx.arc(tx, ty, 2.2, 0, TAU); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.font = '9px monospace'; ctx.textAlign = 'right'; ctx.fillStyle = '#5e6aa0';
+      ctx.fillText('VECTOR TUNNEL // OCT-8', w - 8, h - 10);
+      ctx.textAlign = 'center';
+
+    } else if (sn === 4) {
+      // ---- scene 4: additive plasma weave (rows + cols + rotating diagonal),
+      // CH·5 punched out dark ----
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'lighter';
+      const T = ts * 0.001;
+      for (let y = 0; y < h; y += 2) {
+        const v = Math.sin(y * 0.046 + T * 1.9) + Math.sin(y * 0.012 - T * 1.2)
+                + Math.sin(y * 0.024 + Math.sin(T * 0.7) * 2);
+        ctx.fillStyle = S.pm[clamp((v + 3) / 6 * 47 | 0, 0, 47)];
+        ctx.fillRect(0, y, w, 2);
+      }
+      for (let x = 0; x < w; x += 2) {
+        const v = Math.sin(x * 0.041 - T * 1.6) + Math.sin(x * 0.011 + T * 1.05)
+                + Math.sin(x * 0.027 + Math.sin(T * 0.9 + 2) * 2);
+        ctx.fillStyle = S.pc[clamp((v + 3) / 6 * 47 | 0, 0, 47)];
+        ctx.fillRect(x, 0, 2, h);
+      }
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(0.6 + Math.sin(T * 0.5) * 0.5);
+      for (let d = -200; d < 200; d += 4) {
+        const v = Math.sin(d * 0.05 + T * 2.3) + Math.sin(d * 0.017 - T * 0.8);
+        ctx.fillStyle = S.py[clamp((v + 2) / 4 * 47 | 0, 0, 47)];
+        ctx.fillRect(-220, d, 440, 4);
+      }
+      ctx.restore();
+      ctx.font = 'bold 64px monospace';
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+      ctx.strokeText('CH·5', cx, cy + 2);                // bright rim…
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#02030a';
+      ctx.fillText('CH·5', cx, cy + 2);                  // …around a dark knockout
+
+    } else if (sn === 5) {
+      // ---- scene 5: RGB-split wordmark tumbling over a scrolling synth floor ----
+      ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
+      const hor = h * 0.62;
+      ctx.strokeStyle = 'rgba(40,220,255,0.34)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {                          // floor rushes toward viewer
+        const k = fract(i / 10 + ts * 0.00021), y = hor + (h - hor) * k * k;
+        ctx.moveTo(0, y); ctx.lineTo(w, y);
+      }
+      for (let i = -4; i <= 4; i++) {
+        ctx.moveTo(cx + i * 10, hor); ctx.lineTo(cx + i * 70, h + 8);
+      }
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(40,220,255,0.5)'; ctx.fillRect(0, hor, w, 1);
+      ctx.font = 'bold 32px monospace';
+      ctx.globalCompositeOperation = 'lighter';
+      const pose = tm => [cx + Math.sin(tm * 0.0016) * 38,
+                          h * 0.34 + Math.sin(tm * 0.0027 + 0.7) * 34,
+                          Math.sin(tm * 0.0012) * 0.42,
+                          1 + 0.22 * Math.sin(tm * 0.0021 + 1.1)];
+      for (let g = 4; g >= 1; g--) {                          // explicit ghost trail
+        const [gx, gy, gr, gs] = pose(ts - g * 55);
+        ctx.save(); ctx.translate(gx, gy); ctx.rotate(gr); ctx.scale(gs, gs);
+        ctx.globalAlpha = 0.17 - 0.03 * g;
+        ctx.fillStyle = g % 2 ? 'rgba(255,40,210,1)' : 'rgba(40,220,255,1)';
+        ctx.fillText('INTERSLICE', 0, 0);
+        ctx.restore();
+      }
+      const [px, py, pr, ps] = pose(ts);
+      ctx.save(); ctx.translate(px, py); ctx.rotate(pr); ctx.scale(ps, ps);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(255,40,210,0.9)'; ctx.fillText('INTERSLICE', -2.2, 0);
+      ctx.fillStyle = 'rgba(40,220,255,0.9)'; ctx.fillText('INTERSLICE', 2.2, 0);
+      ctx.fillStyle = '#fff'; ctx.fillText('INTERSLICE', 0, 0);
+      ctx.restore();
+      ctx.fillStyle = '#ffe93c';
+      for (let k = 0; k < 6; k++) {                           // orbiting sparks
+        const a = ts * 0.004 + k * TAU / 6;
+        ctx.fillRect(px + Math.cos(a) * 82 - 1, py + Math.sin(a) * 30 - Math.sin(a * 2) * 8 - 1, 2, 2);
+      }
+
+    } else if (sn === 6) {
+      // ---- scene 6: moiré roses — two drifting ring sets beat against
+      // each other and the aperture grille ----
+      ctx.fillStyle = '#020309'; ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'lighter';
+      const gap = 6.5 + Math.sin(ts * 0.0012) * 2.2;
+      const a = ts * 0.00085, ph = fract(ts * 0.0005) * gap;
+      const sets = [[cx + Math.cos(a) * 36, cy + Math.sin(a) * 24, 'rgba(40,220,255,0.9)'],
+                    [cx - Math.cos(a) * 36, cy - Math.sin(a) * 24, 'rgba(255,40,210,0.9)']];
+      ctx.lineWidth = 1.4;
+      for (const [ox, oy, col] of sets) {
+        ctx.strokeStyle = col;
+        ctx.beginPath();
+        for (let r = ph + 1; r < 290; r += gap) {
+          ctx.moveTo(ox + r, oy); ctx.arc(ox, oy, r, 0, TAU);
+        }
+        ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';             // breathing white radar rings
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = fract(i / 10 + ts * 0.00035) * 120 + 3;
+        ctx.moveTo(cx + r, cy); ctx.arc(cx, cy, r, 0, TAU);
+      }
+      ctx.stroke();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.font = '9px monospace'; ctx.textAlign = 'right'; ctx.fillStyle = '#5e6aa0';
+      ctx.fillText('GRILLE STRESS // MOIRE ROSE', w - 8, h - 10);
+      ctx.textAlign = 'center';
+
+    } else {
+      // ---- scene 7: sign-off card, then CRT collapse to a dot (loops
+      // straight into scene 0's power-on) ----
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+      if (ts < 1700) {
+        ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.font = 'bold 22px monospace';
+        ctx.fillStyle = 'rgba(255,40,210,0.85)'; ctx.fillText('INTERSLICE SYSTEMS', cx - 1.5, 96);
+        ctx.fillStyle = 'rgba(40,220,255,0.85)'; ctx.fillText('INTERSLICE SYSTEMS', cx + 1.5, 96);
+        ctx.fillStyle = '#fff'; ctx.fillText('INTERSLICE SYSTEMS', cx, 96);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.font = '11px monospace'; ctx.fillStyle = '#35e0ff';
+        ctx.fillText('TRANSMISSION COMPLETE', cx, 128);
+        ctx.font = '10px monospace'; ctx.fillStyle = '#ffe93c';
+        ctx.fillText('BUILDING THE FUTURE, TOMORROW!', cx, 150);
+        if (((ts / 300) | 0) % 2 === 0) { ctx.fillStyle = '#fff'; ctx.fillRect(cx - 3, 168, 6, 9); }
+      } else {
+        const pa = (ts - 1700) / 900;
+        ctx.globalCompositeOperation = 'lighter';
+        if (pa < 0.42) {                                      // raster squashes vertically
+          const q = pa / 0.42, e = q * q * (3 - 2 * q);
+          const vh = Math.max(2, (1 - e) * h * 0.92);
+          ctx.fillStyle = `rgba(150,190,255,${0.25 + 0.55 * e})`; ctx.fillRect(0, cy - vh / 2, w, vh);
+          ctx.fillStyle = `rgba(255,255,255,${0.35 + 0.65 * e})`; ctx.fillRect(0, cy - 1.5, w, 3);
+        } else if (pa < 0.78) {                               // line shrinks to a dot
+          const q = (pa - 0.42) / 0.36, lw = Math.max(4, (1 - q * q) * w);
+          ctx.fillStyle = 'rgba(160,200,255,0.5)'; ctx.fillRect(cx - lw / 2, cy - 3.5, lw, 7);
+          ctx.fillStyle = '#fff'; ctx.fillRect(cx - lw / 2, cy - 1.5, lw, 3);
+        } else {                                              // dot afterglow fades out
+          const al = 1 - (pa - 0.78) / 0.22;
+          ctx.fillStyle = `rgba(190,215,255,${al * 0.5})`;
+          ctx.beginPath(); ctx.arc(cx, cy, 5, 0, TAU); ctx.fill();
+          ctx.fillStyle = `rgba(255,255,255,${al})`;
+          ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, TAU); ctx.fill();
+        }
+      }
+    }
+
+    if (sn >= 1 && sn <= 6 && ts < 90) {                      // cut flash — feeds the bloom
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = `rgba(255,255,255,${0.8 * (1 - ts / 90)})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.restore();
   }
 
   // CH 6 — dead-channel snow (also used as the channel-switch interstitial)
