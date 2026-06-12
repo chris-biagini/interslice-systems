@@ -1431,7 +1431,7 @@ body[data-power="bypass"] .led {
       signal: paintChannel,
       viewSize: [SIGNAL_W, SIGNAL_H],
       canvasSize: [640, 480],                  // fixed display; backing maps 1:1 to physical px
-      stripeUpscale: 640 / SIGNAL_W,           // 2 at res 320 (preset), 1 at res 640
+      stripeUpscale: 640 / SIGNAL_W,           // 1 at the 640 default, 2 at ?res=320
       debugOverlay: false,
       convergence: {
         r: [...P.convergence.r], g: [...P.convergence.g], b: [...P.convergence.b],

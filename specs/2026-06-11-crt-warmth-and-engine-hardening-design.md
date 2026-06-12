@@ -39,11 +39,19 @@ copy-share convention (no chassis extraction this round — Approach A).
 - **Performance contract:** fully idle when the picture is static,
   content-rate when animated, stopped when invisible. A purely decorative
   effect must cost ~zero when it isn't visibly doing anything.
-- **Shape (this round):** 320×240 signal grid, 4:3, displayed card-in-page at
+- **Shape (this round):** 4:3 signal grid, displayed card-in-page at
   640×480. Resolution and display size stay configurable seams (they already
   are, via `viewSize`/`canvasSize`) for a future range of "render this little
   sprite in a CRT" up to "make the whole screen a CRT" — but no new scaling
   work (and no moiré mitigation for non-integer scales) happens now.
+  *Amended during the tuning session:* the grid started at 320×240 ("console
+  over RF", ~VHS resolving power); the session adopted **640×480** as the TV
+  boot grid — ~DVD/S-Video resolving power, and the `cellSize: 3` triad
+  pitch lands at ≈0.86 mm at the 9" card rendering, almost exactly a real
+  consumer Trinitron's grille. `?res=320` on tv.html keeps the old grid for
+  comparison. PVM-grade pitch (0.25–0.4 mm) is physically unreachable at
+  this display size (more triads than the host display has pixels) —
+  consumer-tube pitch is the natural ceiling, which suits the mission.
 - **Aspect handling** lives at the signal layer: the signal callback owns
   fitting content to the 4:3 grid. Future viewer default is letterbox, with
   caller's-choice crop. Nothing to build this round; tv.html channels draw
@@ -256,6 +264,12 @@ that grid as sharp square pixels: the beam spread does what real tubes did.
 - **Tuning session:** on the bench, channel by channel (including CH 7's
   pass criterion), both renderers, ending with "copy state diff" →
   transferred into the presets.
+  *Outcome (2026-06-11):* tuned at the 640×480 grid. Trinitron: coupling
+  0.55, bloom 1.1, **gap mask off** (at the fine triad pitch the stripe
+  profile alone reads as the grille) and **curvature off** (flat face);
+  ShadowMask: coupling 1.0, bloom 2.3, curvature off. The curvature and
+  gap-mask knob values stay parked in the presets for anyone re-enabling
+  them.
 - **Verification:** Playwright screenshots of both renderers × both pages
   (`tv.html` channels 2–7; hero `/` and `/?crt=shadow-mask`, light + dark);
   bench FPS meter showing `idle` on static channels and content-rate on
