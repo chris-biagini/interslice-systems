@@ -98,6 +98,8 @@ The GPU pipeline is a three-pass setup (signal upload → phosphor/persistence �
 
 One memory entry still applies as a "leave it alone, this is the look I want" — the gap-mask striations bleeding into the Trinitron halo. The older cell-grid memory was inverted by the vertical-resolution refactor and again scoped by the ShadowMask build: don't reintroduce the dot/cell pattern into `trinitron.js` (it stays continuous vertical stripes); the dot pattern lives in `shadow-mask.js` instead.
 
+**Next planned round (deferred 2026-06-12, not forgotten): the drop-in TV viewer.** The goal the 2026-06-11 hardening round was built toward: a reusable component that plays AI-generated video clips through the CRT and reframes clip-to-clip continuity breaks as channel changes (themes persist, visual style jumps — "you changed the channel"). Rough shape: a `tuneTo(clip)`-style API with `requestVideoFrameCallback` as the scheduler's frame source. The seams are already in place: `presets.tv` is the option payload a consumer imports, the scheduler renders at any frame source's rate, `signal(ctx, t, needsRepaint)` is the consumer contract, and content fitting (letterbox default, caller's-choice crop) lives at the signal layer. Carried requirements live in the 2026-06-11 spec's constraints + "Out of scope" sections — notably: the snow interstitial needs a minimum-frames floor before it ships against real content, the peer-file chassis extraction waits for the viewer as its third consumer, and non-integer display scaling (with its moiré problem) belongs to that round. Start it as a fresh brainstorm → spec; the 2026-06-11 spec is the parent document.
+
 ## Working conventions
 
 ### Design drops vs. direct tweaks
