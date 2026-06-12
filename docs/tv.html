@@ -750,12 +750,12 @@ body[data-power="bypass"] .led {
 <script>
 (function () {
   'use strict';
-  // Bench facility: ?res=640 doubles the signal grid — the "clean
-  // consumer signal on a nice tube" experiment (~DVD/S-Video resolving
-  // power; triad pitch ≈ a real Trinitron's at this display size).
-  // 320 (default) is the shipped preset look. The display size is
-  // fixed either way; only the grid feeding it changes.
-  const RES = new URLSearchParams(location.search).get('res') === '640' ? 640 : 320;
+  // Signal grid. 640×480 (default) is the tuned look — clean consumer
+  // signal on a nice tube, ~DVD/S-Video resolving power, triad pitch
+  // ≈ a real Trinitron's at this display size. ?res=320 keeps the old
+  // "console over RF" grid for comparison. The display size is fixed
+  // either way; only the grid feeding it changes.
+  const RES = new URLSearchParams(location.search).get('res') === '320' ? 320 : 640;
   const SIGNAL_W = RES, SIGNAL_H = RES * 3 / 4;
   const RENDERERS = ['trinitron', 'shadow-mask', 'bypass'];
 
@@ -1643,7 +1643,7 @@ body[data-power="bypass"] .led {
       ? RENDERERS[rendererIdx].replace('-', ' ').toUpperCase()
       : 'BYPASS (NO WEBGL2)';
     document.getElementById('readout').textContent =
-      `CH ${CHANNELS[channelIdx].num} · ${mode}${SIGNAL_W === 640 ? ' · 640' : ''}`;
+      `CH ${CHANNELS[channelIdx].num} · ${mode}${SIGNAL_W === 320 ? ' · 320' : ''}`;
   }
 
   // --- URL state ------------------------------------------------------

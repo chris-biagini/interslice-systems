@@ -1729,19 +1729,21 @@ void main() {
   // bench-tuned values land here via "copy state diff"; tv.html boots
   // from it. Frozen shallowly: clone `convergence` and `effects` before
   // passing to the constructor if you intend to mutate them.
+  // Tuned at a 640×480 signal grid — signal-px-denominated values
+  // (beamSpreadPx, convergence) assume it.
   Trinitron.presets = {
     tv: Object.freeze({
       cellSize: 3,
-      stripeUpscale: 2,
+      stripeUpscale: 1,
       opaqueBackground: true,
-      phosphorCoupling: 0.35,
+      phosphorCoupling: 0.55,
       persistenceHalfLifeMs: 58,
       convergence: { r: [-0.25, 0], g: [0, 0], b: [0.25, 0] },
       beamSpreadPx: 0.7,
       beamSpreadVerticalPx: 1.4,
       damperStrength: 0.90,
       bleedRadius: 18,
-      bloomStrength: 1.2,
+      bloomStrength: 1.1,
       bloomThreshold: 0.6,
       scanlineDepth: 0.18,
       scanlinePeriod: 2,
@@ -1751,10 +1753,14 @@ void main() {
       gradeSaturation: 1.08,
       gapMaskAlpha: 0.15,
       gapMaskPeriod: 2,
+      // Bench-tuned 2026-06-11 at the 640×480 grid: flat face
+      // (curvature off — the value below stays parked for anyone who
+      // re-enables it) and no gap mask (at the fine triad pitch the
+      // stripe profile alone reads as the grille).
       effects: Object.freeze({
         convergence: true, selectiveBloom: true, scanlines: true,
-        curvature: true, vignette: true, warmup: true,
-        gapMask: true, colorGrade: true, tubeCorners: true,
+        vignette: true, warmup: true,
+        colorGrade: true, tubeCorners: true,
       }),
     }),
   };

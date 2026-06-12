@@ -1650,19 +1650,21 @@ void main() {
   ];
 
   // Named option presets — see Trinitron.presets for the convention.
+  // Tuned at a 640×480 signal grid — signal-px-denominated values
+  // (beamSpreadPx, convergence) assume it.
   ShadowMask.presets = {
     tv: Object.freeze({
       cellSize: [3, 3],
       dotRadius: 0.7,
-      stripeUpscale: 2,
+      stripeUpscale: 1,
       opaqueBackground: true,
-      phosphorCoupling: 0.35,
+      phosphorCoupling: 1,
       persistenceHalfLifeMs: 58,
       convergence: { r: [-0.25, -0.25], g: [0, 0], b: [0.25, 0.25] },
       beamSpreadPx: 1.5,
       beamSpreadVerticalPx: 1.5,
       bleedRadius: 24,
-      bloomStrength: 1.2,
+      bloomStrength: 2.3,
       bloomThreshold: 0.3,
       scanlineDepth: 0.18,
       scanlinePeriod: 2,
@@ -1670,9 +1672,11 @@ void main() {
       cornerRadius: 0.06,
       gradeTemperature: 0.3,
       gradeSaturation: 1.08,
+      // Bench-tuned 2026-06-11 at the 640×480 grid: flat face
+      // (curvature off; the value below stays parked).
       effects: Object.freeze({
         convergence: true, selectiveBloom: true, scanlines: true,
-        curvature: true, vignette: true, warmup: true,
+        vignette: true, warmup: true,
         colorGrade: true, tubeCorners: true,
       }),
     }),
