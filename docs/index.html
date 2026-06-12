@@ -1445,7 +1445,7 @@
   // read maybe a third as bright as the page bg: the aperture-grille
   // stripe decomposition only lights cells at their primary channel
   // (with `phosphorCoupling: 0.35` letting others contribute at 35%),
-  // and `gapMaskAlpha: 0.3` darkens every other column by 30%, so the
+  // and `gapMaskAlpha: 0.15` darkens every other column by 15%, so the
   // perceived average is well below the source. To compensate, feed
   // the pipeline a source navy ~3× brighter on each channel — the
   // pipeline attenuates it back down to roughly --bg out the other

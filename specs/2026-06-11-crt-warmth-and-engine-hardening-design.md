@@ -154,7 +154,8 @@ snow interstitial is active. The bench FPS meter learns a third reading:
 - **RGBA32F → RGBA8** for the persistence ping-pong pair and the phosphor MRT
   target. Every stored value is bounded [0,1] (signal ≤ 1, lerp of bounded
   values, stripe weights ≤ 1), so nothing real is lost. Memory for the three
-  320×240 buffers drops 4× (~3.7 MB → ~0.9 MB).
+  320×240 buffers drops 4× (~3.7 MB → ~0.9 MB; figures are for the
+  design-time 320 grid — the 4× ratio holds at the shipped 640 grid too).
 - **8-bit fade-to-black bias:** in 8-bit, a decaying trail can stick when
   `prev × decay` rounds back to `prev` (the bottom few grey levels never
   reach zero). Fix in the phosphor shader's persistence write: subtract half
@@ -243,8 +244,9 @@ for "some low-res images look *better* on a CRT":
   re-spaced from 60° to 48° increments across the same −120°…+120° sweep,
   numbers 2–7. Knob angle math in `setChannel` updates to match.
 
-Related principle, recorded for (c): the 320×240 signal canvas is the *real
-pixel grid*. Whatever is drawn into it — including future high-res AI video,
+Related principle, recorded for (c): the signal canvas (320×240 at design
+time; 640×480 as shipped after the tuning session) is the *real pixel
+grid*. Whatever is drawn into it — including future high-res AI video,
 and including content with fake "AI pixelation" — is honestly resampled onto
 that grid before the phosphor sees it. The warmth comes from never presenting
 that grid as sharp square pixels: the beam spread does what real tubes did.
