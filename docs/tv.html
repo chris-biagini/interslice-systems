@@ -750,7 +750,13 @@ body[data-power="bypass"] .led {
 <script>
 (function () {
   'use strict';
-  const SIGNAL_W = 320, SIGNAL_H = 240;
+  // Bench facility: ?res=640 doubles the signal grid — the "clean
+  // consumer signal on a nice tube" experiment (~DVD/S-Video resolving
+  // power; triad pitch ≈ a real Trinitron's at this display size).
+  // 320 (default) is the shipped preset look. The display size is
+  // fixed either way; only the grid feeding it changes.
+  const RES = new URLSearchParams(location.search).get('res') === '640' ? 640 : 320;
+  const SIGNAL_W = RES, SIGNAL_H = RES * 3 / 4;
   const RENDERERS = ['trinitron', 'shadow-mask', 'bypass'];
 
   // --- Channels --------------------------------------------------------
@@ -834,14 +840,15 @@ body[data-power="bypass"] .led {
         ctx.fillRect(gx, gy, pitch, gh);
       }
     }
-    ctx.fillStyle = '#111';                // center text plate
-    ctx.fillRect(cx - 95, cy - 26, 190, 48);
+    const fs = w / 320;                    // resolution-proportional type — same physical
+    ctx.fillStyle = '#111';                // size through either grid, so the legibility
+    ctx.fillRect(cx - 95 * fs, cy - 26 * fs, 190 * fs, 48 * fs);   // A/B tests the tube, not the font
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '700 16px monospace';
-    ctx.fillText('INTERSLICE SYSTEMS', cx, cy - 9);
-    ctx.font = '400 11px monospace';
-    ctx.fillText('· PLEASE STAND BY ·', cx, cy + 11);
+    ctx.font = `700 ${Math.round(16 * fs)}px monospace`;
+    ctx.fillText('INTERSLICE SYSTEMS', cx, cy - 9 * fs);
+    ctx.font = `400 ${Math.round(11 * fs)}px monospace`;
+    ctx.fillText('· PLEASE STAND BY ·', cx, cy + 11 * fs);
     ctx.restore();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;   // circle outline
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
@@ -1423,7 +1430,8 @@ body[data-power="bypass"] .led {
     return new Cls(glCanvas, Object.assign({}, P, {
       signal: paintChannel,
       viewSize: [SIGNAL_W, SIGNAL_H],
-      canvasSize: [SIGNAL_W * 2, SIGNAL_H * 2],
+      canvasSize: [640, 480],                  // fixed display; backing maps 1:1 to physical px
+      stripeUpscale: 640 / SIGNAL_W,           // 2 at res 320 (preset), 1 at res 640
       debugOverlay: false,
       convergence: {
         r: [...P.convergence.r], g: [...P.convergence.g], b: [...P.convergence.b],
@@ -1635,7 +1643,7 @@ body[data-power="bypass"] .led {
       ? RENDERERS[rendererIdx].replace('-', ' ').toUpperCase()
       : 'BYPASS (NO WEBGL2)';
     document.getElementById('readout').textContent =
-      `CH ${CHANNELS[channelIdx].num} · ${mode}`;
+      `CH ${CHANNELS[channelIdx].num} · ${mode}${SIGNAL_W === 640 ? ' · 640' : ''}`;
   }
 
   // --- URL state ------------------------------------------------------
