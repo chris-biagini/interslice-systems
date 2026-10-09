@@ -693,20 +693,22 @@ body[data-power="bypass"] .led {
 
           <div class="knob-station station-channel">
             <svg class="dial" viewBox="0 0 202 188" width="202" height="188" aria-hidden="true">
-              <!-- ticks at -120,-72,-24,24,72,120 deg (r 46->53 about 101,90) -->
+              <!-- ticks at -120,-80,-40,0,40,80,120 deg (r 46->53 about 101,90) -->
               <line x1="61.2"  y1="113"   x2="55.1"  y2="116.5"/>
-              <line x1="57.3"  y1="75.8"  x2="50.6"  y2="73.6"/>
-              <line x1="82.3"  y1="48"    x2="79.4"  y2="41.6"/>
-              <line x1="119.7" y1="48"    x2="122.6" y2="41.6"/>
-              <line x1="144.7" y1="75.8"  x2="151.4" y2="73.6"/>
+              <line x1="55.7"  y1="82"    x2="48.8"  y2="80.8"/>
+              <line x1="71.4"  y1="54.8"  x2="66.9"  y2="49.4"/>
+              <line x1="101"   y1="44"    x2="101"   y2="37"/>
+              <line x1="130.6" y1="54.8"  x2="135.1" y2="49.4"/>
+              <line x1="146.3" y1="82"    x2="153.2" y2="80.8"/>
               <line x1="140.8" y1="113"   x2="146.9" y2="116.5"/>
               <!-- VHF numbers, r=67 -->
               <text x="43"    y="123.5" font-size="13" text-anchor="middle" dy=".35em">2</text>
-              <text x="37.3"  y="69.3"  font-size="13" text-anchor="middle" dy=".35em">3</text>
-              <text x="73.8"  y="28.8"  font-size="13" text-anchor="middle" dy=".35em">4</text>
-              <text x="128.2" y="28.8"  font-size="13" text-anchor="middle" dy=".35em">5</text>
-              <text x="164.7" y="69.3"  font-size="13" text-anchor="middle" dy=".35em">6</text>
-              <text x="159"   y="123.5" font-size="13" text-anchor="middle" dy=".35em">7</text>
+              <text x="35"    y="78.4"  font-size="13" text-anchor="middle" dy=".35em">3</text>
+              <text x="57.9"  y="38.7"  font-size="13" text-anchor="middle" dy=".35em">4</text>
+              <text x="101"   y="23"    font-size="13" text-anchor="middle" dy=".35em">5</text>
+              <text x="144.1" y="38.7"  font-size="13" text-anchor="middle" dy=".35em">6</text>
+              <text x="167"   y="78.4"  font-size="13" text-anchor="middle" dy=".35em">7</text>
+              <text x="159"   y="123.5" font-size="13" text-anchor="middle" dy=".35em">8</text>
               <text class="dial-caption" x="101" y="180" text-anchor="middle">CHANNEL</text>
             </svg>
             <button class="knob" id="knob-channel" aria-label="Channel selector"><span class="grip" aria-hidden="true"></span></button>
@@ -1376,16 +1378,35 @@ body[data-power="bypass"] .led {
     }
   }
 
+  // CH 2 — the Mirepoix spot ("Do We Have Cumin?", :30, 4:3, silent by
+  // design: this page has no audio path). A muted, looping <video> drawn
+  // into the signal each frame; it plays only while CH 2 is tuned
+  // (setChannel). Until the first frame decodes, the channel shows snow.
+  const spotVideo = document.createElement('video');
+  Object.assign(spotVideo, { src: 'media/do-we-have-cumin-4x3.mp4', muted: true, loop: true, playsInline: true, preload: 'auto' });
+  function drawSpot(ctx, t, w, h) {
+    if (spotVideo.readyState < 2) { drawSnow(ctx, t, w, h); return; }
+    ctx.drawImage(spotVideo, 0, 0, w, h);
+  }
+  // First decoded frame: repaint once, so a one-frame (reduced-motion)
+  // paint that caught the snow placeholder gets the picture.
+  spotVideo.addEventListener('loadeddata', () => {
+    staticPainted = false;
+    if (renderer) renderer.requestRender(); else if (bypassRaf === null) { stopBypass(); startBypass(); }
+  });
+
   // Channel shape: { num: <dial number>, name: <string>, draw(ctx, t, w=320, h=240) } — draw must fill the whole frame.
   // static: true → one frame, then the wrapper reports "nothing new"
   // and the renderer's scheduler parks itself (fps: idle on the bench).
+  // Ordered by dial number: the knob steps through this array in order.
   const CHANNELS = [
-    { num: 2, name: 'SMPTE BARS', draw: drawSmpteBars, static: true },
+    { num: 2, name: 'MIREPOIX',   draw: drawSpot,       static: false, video: spotVideo },
     { num: 3, name: 'CROSSHATCH', draw: drawCrosshatch, static: true },
     { num: 4, name: 'TEST CARD',  draw: drawTestCard,  static: true },
     { num: 5, name: 'MOTION',     draw: drawMotionReel, static: false },
     { num: 6, name: 'SNOW',       draw: drawSnow,       static: false },
     { num: 7, name: 'DITHER',     draw: drawDither,     static: false },
+    { num: 8, name: 'SMPTE BARS', draw: drawSmpteBars, static: true },
   ];
 
   let channelIdx = 0;
@@ -1519,10 +1540,14 @@ body[data-power="bypass"] .led {
       if (renderer) renderer.requestRender();
       else { stopBypass(); startBypass(); }
     }
+    // The spot plays only while tuned, and never under reduced motion
+    // (it then holds its first frame, like every other channel's one repaint).
+    if (CHANNELS[channelIdx].video && !reducedMotion.matches) spotVideo.play().catch(() => {});
+    else spotVideo.pause();
     updateReadout();
-    // CHANNEL: dial paints positions 2–7 over -120°..+120° (48° steps);
+    // CHANNEL: dial paints positions 2–8 over -120°..+120° (40° steps);
     // point at the painted position for this channel's number.
-    knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 48) + 'deg');
+    knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 40) + 'deg');
     syncUrl();
   }
 
