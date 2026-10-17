@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CRT peek</title>
+<!-- Dev page: one CRT on a fixed chart, for screenshots.
+     ?w=960&h=720 (device px)  &dpr=1 (CSS = device/dpr)  &fx=beam,grille (only these effects; default = all defaults)
+     &o=key:value,key:value (numeric opts)  &chart=card|ramp|text -->
+<style>
+  body { margin: 0; background: #000; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="peek"></canvas>
+<script src="../../docs/crt.js"></script>
+<script src="../../docs/crt-webgl2.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const w = +(q.get('w') || 960), h = +(q.get('h') || 720), dpr = +(q.get('dpr') || 1);
+  const c = document.getElementById('peek');
+  c.style.width = (w / dpr) + 'px'; c.style.height = (h / dpr) + 'px';
+  const opts = { pixelSize: [w, h] };
+  if (q.get('fx')) {
+    const on = new Set(q.get('fx').split(','));
+    opts.effects = {};
+    for (const k of Object.keys(CRT.DEFAULT_EFFECTS)) opts.effects[k] = on.has(k);
+  }
+  for (const kv of (q.get('o') || '').split(',').filter(Boolean)) { const [k, v] = kv.split(':'); opts[k] = +v; }
+  const charts = {
+    card(ctx) {
+      const g = ctx.createLinearGradient(0, 0, 640, 0); g.addColorStop(0, '#000'); g.addColorStop(1, '#fff');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 640, 120);
+      ['#ff0', '#0ff', '#0f0', '#f0f', '#f00', '#00f', '#fff'].forEach((col, i) => { ctx.fillStyle = col; ctx.fillRect(i * 640 / 7, 120, 640 / 7 + 1, 120); });
+      ctx.fillStyle = '#111'; ctx.fillRect(0, 240, 640, 240);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 28px sans-serif'; ctx.fillText("Mirepoix — Tonight's menu", 30, 290);
+      ctx.font = '13px sans-serif'; ctx.fillText('2 tbsp olive oil · 1 onion, diced · 3 cloves garlic · salt to taste', 30, 320);
+      ctx.font = '11px sans-serif'; ctx.fillText('Small text test: The quick brown fox jumps over the lazy dog 0123456789', 30, 345);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+      for (let x = 30; x < 610; x += 20) { ctx.beginPath(); ctx.moveTo(x + 0.5, 370); ctx.lineTo(x + 0.5, 460); ctx.stroke(); }
+      ctx.fillStyle = '#e84'; ctx.fillRect(520, 380, 90, 70);
+    },
+  };
+  window.crt = new CRT(c, Object.assign(opts, { signal: charts[q.get('chart') || 'card'] }));
+  crt.renderFrame(+(q.get('t') || 2000));
+  window.peekReady = true;
+</script>
+</body>
+</html>

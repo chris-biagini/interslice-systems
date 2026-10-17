@@ -147,7 +147,22 @@ uniform float uHalation;
 uniform vec2 uDamperY;          // fractions of height; < 0 = absent
 uniform float uDamperStrength;
 uniform float uDamperWidthPx;
+uniform vec3 uGradeGains;
+uniform float uGradeSaturation;
+uniform float uWarmup;
+uniform float uToneEnabled;
+uniform float uShoulderStart;
+uniform float uVignette;
+uniform float uCornerRadius;
+uniform float uCurvature;
+uniform float uGloss;
+uniform float uOutputP3;
 out vec4 oColor;
+// Linear sRGB → linear Display P3 (D65); GLSL columns.
+const mat3 SRGB_TO_P3 = mat3(
+  0.8224621, 0.0331941, 0.0170827,
+  0.1775380, 0.9668058, 0.0723974,
+  0.0000000, 0.0000000, 0.9105199);
 const float INV_SQRT_2PI = 0.3989422804;
 float enc1(float l) { float a = abs(l); return sign(l) * (a <= 0.0031308 ? 12.92 * a : 1.055 * pow(a, 1.0 / 2.4) - 0.055); }
 vec3 enc(vec3 c) { return vec3(enc1(c.r), enc1(c.g), enc1(c.b)); }
@@ -229,16 +244,57 @@ float damper(float yOut) {
   return shade;
 }
 
+// Cylindrical Trinitron face: horizontals bow, verticals stay straight.
+vec2 curve(vec2 p) {
+  if (uCurvature <= 0.0) return p;
+  float cx = p.x - 0.5;
+  return vec2(cx * (1.0 + uCurvature * cx * cx * 4.0) + 0.5, p.y);
+}
+
+// Soft shoulder on the brightest channel (hue-preserving): identity below
+// the knee, then a C1-continuous rational curve approaching the headroom.
+vec3 shoulder(vec3 c) {
+  float H = uHeadroom;
+  float k = uShoulderStart * H;
+  float m = max(c.r, max(c.g, c.b));
+  if (uToneEnabled < 0.5 || m <= k) return c;
+  float x = m - k;
+  return c * ((k + x / (1.0 + x / (H - k))) / m);
+}
+
 void main() {
   float yTop = uOutSize.y - gl_FragCoord.y;
-  vec2 p = vec2(gl_FragCoord.x, yTop) / uOutSize;   // top-first UV
+  vec2 p0 = vec2(gl_FragCoord.x, yTop) / uOutSize;   // top-first UV on the glass
+  vec2 p = curve(p0);                                 // where the raster lands
+  if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) { oColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
   vec3 c = beam(p * uSignalSize);
-  c = grille(c, gl_FragCoord.x);
-  c *= damper(yTop);
+  c = grille(c, p.x * uOutSize.x);
+  c *= damper(p.y * uOutSize.y);
   // Glow is light scattered in the glass: unmasked, added after the grille.
   if (uBloom > 0.0) c += texture(uBloomTex, p).rgb * uBloom;
   if (uHalation > 0.0) c += texture(uHalationTex, p).rgb * uHalation;
-  oColor = vec4(enc(clamp(c, 0.0, 1.0)), 1.0);
+
+  // The tube's color character, on emitted light only. Saturation past 1
+  // can leave sRGB; it stays signed until the P3 conversion below.
+  float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(luma), c, uGradeSaturation) * uGradeGains;
+  c *= uWarmup;
+
+  // Glass, in front of the phosphor.
+  vec2 q = (p0 - 0.5) * 2.0;
+  c *= 1.0 - uVignette * pow(clamp(length(q) * 0.7071, 0.0, 1.0), 3.0);
+  vec2 g = (p0 - vec2(0.3, 0.2)) / vec2(0.18, 0.12);
+  c += vec3(uGloss * exp(-0.5 * dot(g, g)));
+  if (uCornerRadius > 0.0) {
+    vec2 px = (p0 - 0.5) * uOutSize;
+    float r = uCornerRadius * min(uOutSize.x, uOutSize.y);
+    float d = length(max(abs(px) - (0.5 * uOutSize - vec2(r)), 0.0)) - r;
+    c *= 1.0 - smoothstep(-1.0, 0.5, d);
+  }
+
+  c = shoulder(c);
+  if (uOutputP3 > 0.5) c = SRGB_TO_P3 * c;
+  oColor = vec4(enc(clamp(c, 0.0, uHeadroom)), 1.0);
 }`;
 
   function compile(gl, type, src) {
@@ -310,6 +366,16 @@ void main() {
       try { gl.unpackColorSpace = opts.signalColorSpace === 'display-p3' ? 'display-p3' : 'srgb'; } catch (_) { /* unsupported value */ }
     }
 
+    // Wide-gamut output where the display has it: the drawing buffer is
+    // tagged Display P3 and the screen pass converts into it.
+    let outputColorSpace = 'srgb';
+    const wantP3 = opts.outputColorSpace === 'display-p3' ||
+      (opts.outputColorSpace === 'auto' && window.matchMedia && window.matchMedia('(color-gamut: p3)').matches);
+    if (wantP3 && 'drawingBufferColorSpace' in gl) {
+      try { gl.drawingBufferColorSpace = 'display-p3'; } catch (_) { /* unsupported */ }
+      if (gl.drawingBufferColorSpace === 'display-p3') outputColorSpace = 'display-p3';
+    }
+
     const progs = { persist: program(gl, PERSIST_FS), hbeam: program(gl, HBEAM_FS), down: program(gl, DOWN_FS), up: program(gl, UP_FS), screen: program(gl, SCREEN_FS) };
 
     const vao = gl.createVertexArray();
@@ -363,7 +429,7 @@ void main() {
     const backend = {
       kind: 'webgl2',
       hdr: false,
-      outputColorSpace: 'srgb',
+      outputColorSpace,
 
       resize(w, h) {
         canvas.width = w;
