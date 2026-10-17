@@ -6,8 +6,11 @@
 //               linear light, afterglow = max(live, prev × decay).
 //   2. hbeam    (signal res, RGBA16F): the beam's horizontal spread and
 //               per-channel convergence, along each scanline.
-//   3. screen   (output res, default framebuffer): the tube — vertical
-//               beam reconstruction, then the rest of the glass.
+//   3. glow     (1/2 … 1/16 signal res, RGBA16F): a dual-filter (Kawase)
+//               down/up chain over the H-beam light — bloom from the
+//               near levels, halation from the far ones.
+//   4. screen   (output res, default framebuffer): the tube — vertical
+//               beam reconstruction, grille, damper wires, glow, glass.
 // Uniform values come from the chassis (CRT#_uniforms) and are set by
 // name, so this file maps values to GPU slots and nothing else.
 (function () {
@@ -84,6 +87,44 @@ void main() {
   oColor = vec4(sum / max(wsum, vec3(1e-6)), 1.0);
 }`;
 
+  // Dual-filter (Kawase) blur: cheap, wide, and smooth. Offsets scale
+  // with a radius knob. Sources are linear light, so the glow adds up
+  // the way light does.
+  const DOWN_FS = COMMON + `
+uniform sampler2D uTex;
+uniform vec2 uTexel;            // 1 / source size
+uniform float uOffset;
+out vec4 oColor;
+void main() {
+  vec2 uv = gl_FragCoord.xy / vec2(textureSize(uTex, 0) / 2);
+  vec2 h = uTexel * uOffset;
+  vec3 c = texture(uTex, uv).rgb * 4.0;
+  c += texture(uTex, uv + vec2(-h.x, -h.y)).rgb;
+  c += texture(uTex, uv + vec2( h.x, -h.y)).rgb;
+  c += texture(uTex, uv + vec2(-h.x,  h.y)).rgb;
+  c += texture(uTex, uv + vec2( h.x,  h.y)).rgb;
+  oColor = vec4(c / 8.0, 1.0);
+}`;
+  const UP_FS = COMMON + `
+uniform sampler2D uTex;
+uniform vec2 uTexel;            // 1 / source size
+uniform vec2 uDstSize;
+uniform float uOffset;
+out vec4 oColor;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstSize;
+  vec2 h = uTexel * uOffset;
+  vec3 c = texture(uTex, uv + vec2(-2.0 * h.x, 0.0)).rgb;
+  c += texture(uTex, uv + vec2( 2.0 * h.x, 0.0)).rgb;
+  c += texture(uTex, uv + vec2(0.0, -2.0 * h.y)).rgb;
+  c += texture(uTex, uv + vec2(0.0,  2.0 * h.y)).rgb;
+  c += texture(uTex, uv + vec2(-h.x, -h.y)).rgb * 2.0;
+  c += texture(uTex, uv + vec2( h.x, -h.y)).rgb * 2.0;
+  c += texture(uTex, uv + vec2(-h.x,  h.y)).rgb * 2.0;
+  c += texture(uTex, uv + vec2( h.x,  h.y)).rgb * 2.0;
+  oColor = vec4(c / 12.0, 1.0);
+}`;
+
   // The tube, at output resolution.
   const SCREEN_FS = COMMON + `
 uniform sampler2D uHBeam;
@@ -99,6 +140,13 @@ uniform float uStripeFill;
 uniform float uMaskStrength;
 uniform float uMaskSoftness;
 uniform float uHeadroom;
+uniform sampler2D uBloomTex;
+uniform sampler2D uHalationTex;
+uniform float uBloom;
+uniform float uHalation;
+uniform vec2 uDamperY;          // fractions of height; < 0 = absent
+uniform float uDamperStrength;
+uniform float uDamperWidthPx;
 out vec4 oColor;
 const float INV_SQRT_2PI = 0.3989422804;
 float enc1(float l) { float a = abs(l); return sign(l) * (a <= 0.0031308 ? 12.92 * a : 1.055 * pow(a, 1.0 / 2.4) - 0.055); }
@@ -167,10 +215,29 @@ vec3 grille(vec3 L, float xOut) {
   return L * mix(vec3(1.0), P / duty, s);
 }
 
+// Damper wires: two thin horizontal shadows on the phosphor, anti-aliased
+// by the overlap of the wire with this pixel's row.
+float damper(float yOut) {
+  float shade = 1.0;
+  for (int i = 0; i < 2; i++) {
+    float f = uDamperY[i];
+    if (f < 0.0) continue;
+    float c = f * uOutSize.y, hw = 0.5 * uDamperWidthPx;
+    float cov = max(0.0, min(yOut + 0.5, c + hw) - max(yOut - 0.5, c - hw));
+    shade *= 1.0 - uDamperStrength * min(cov, 1.0);
+  }
+  return shade;
+}
+
 void main() {
-  vec2 p = vec2(gl_FragCoord.x, uOutSize.y - gl_FragCoord.y) / uOutSize;   // top-first UV
+  float yTop = uOutSize.y - gl_FragCoord.y;
+  vec2 p = vec2(gl_FragCoord.x, yTop) / uOutSize;   // top-first UV
   vec3 c = beam(p * uSignalSize);
   c = grille(c, gl_FragCoord.x);
+  c *= damper(yTop);
+  // Glow is light scattered in the glass: unmasked, added after the grille.
+  if (uBloom > 0.0) c += texture(uBloomTex, p).rgb * uBloom;
+  if (uHalation > 0.0) c += texture(uHalationTex, p).rgb * uHalation;
   oColor = vec4(enc(clamp(c, 0.0, 1.0)), 1.0);
 }`;
 
@@ -243,7 +310,7 @@ void main() {
       try { gl.unpackColorSpace = opts.signalColorSpace === 'display-p3' ? 'display-p3' : 'srgb'; } catch (_) { /* unsupported value */ }
     }
 
-    const progs = { persist: program(gl, PERSIST_FS), hbeam: program(gl, HBEAM_FS), screen: program(gl, SCREEN_FS) };
+    const progs = { persist: program(gl, PERSIST_FS), hbeam: program(gl, HBEAM_FS), down: program(gl, DOWN_FS), up: program(gl, UP_FS), screen: program(gl, SCREEN_FS) };
 
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
@@ -271,6 +338,7 @@ void main() {
       return { tex, fbo, w, h };
     };
     const freeTarget = (t) => { if (t) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo); } };
+    const freeGlow = () => { if (glow) { glow.d.forEach(freeTarget); ['bloom', 'halA', 'halB'].forEach((k) => freeTarget(glow[k])); } };
 
     const src = { tex: gl.createTexture(), w: 0, h: 0, mip: false };
     gl.bindTexture(gl.TEXTURE_2D, src.tex);
@@ -281,6 +349,7 @@ void main() {
     let signal = [1, 1];
     let persist = [null, null];
     let hbeam = null;
+    let glow = null;   // { d: [1/2, 1/4, 1/8, 1/16], bloom, halA (1/8), halB (1/4) }
     let flip = 0;
 
     const draw = (t, prog, w, h) => {
@@ -307,6 +376,9 @@ void main() {
         persist = [target(w, h), target(w, h)];
         freeTarget(hbeam);
         hbeam = target(w, h);
+        freeGlow();
+        const lv = (k) => target(Math.max(1, w >> k), Math.max(1, h >> k));
+        glow = { d: [lv(1), lv(2), lv(3), lv(4)], bloom: lv(1), halA: lv(3), halB: lv(2) };
         backend.clearPersistence();
       },
 
@@ -346,10 +418,47 @@ void main() {
         bindSampler(gl, H, 'uPersist', 0, next.tex);
         draw(hbeam, H, w, h);
 
+        // Glow chain. Quality 0: bloom at 1/2 res; 1: bloom at 1/4; 2: no
+        // halation levels at all (the chassis also zeroes its strength).
+        const needBloom = u.uBloom > 0, needHal = u.uHalation > 0;
+        let bloomTex = hbeam.tex, halTex = hbeam.tex;
+        if (needBloom || needHal) {
+          const D = progs.down, Up = progs.up;
+          const down = (srcT, dst, radius) => {
+            gl.useProgram(D.p);
+            setUniforms(gl, D, { uTexel: [1 / srcT.w, 1 / srcT.h], uOffset: radius });
+            bindSampler(gl, D, 'uTex', 0, srcT.tex);
+            draw(dst, D, dst.w, dst.h);
+          };
+          const up = (srcT, dst, radius) => {
+            gl.useProgram(Up.p);
+            setUniforms(gl, Up, { uTexel: [1 / srcT.w, 1 / srcT.h], uDstSize: [dst.w, dst.h], uOffset: radius });
+            bindSampler(gl, Up, 'uTex', 0, srcT.tex);
+            draw(dst, Up, dst.w, dst.h);
+          };
+          const q = frame.quality || 0;
+          const bR = u.uBloomRadius, hR = u.uHalationRadius;
+          down(hbeam, glow.d[0], bR);
+          down(glow.d[0], glow.d[1], bR);
+          if (needBloom) {
+            if (q >= 1) { bloomTex = glow.d[1].tex; }
+            else { up(glow.d[1], glow.bloom, bR); bloomTex = glow.bloom.tex; }
+          }
+          if (needHal && q < 2) {
+            down(glow.d[1], glow.d[2], hR);
+            down(glow.d[2], glow.d[3], hR);
+            up(glow.d[3], glow.halA, hR);
+            up(glow.halA, glow.halB, hR);
+            halTex = glow.halB.tex;
+          }
+        }
+
         const S = progs.screen;
         gl.useProgram(S.p);
         setUniforms(gl, S, u);
         bindSampler(gl, S, 'uHBeam', 0, hbeam.tex);
+        bindSampler(gl, S, 'uBloomTex', 1, bloomTex);
+        bindSampler(gl, S, 'uHalationTex', 2, halTex);
         draw(null, S, canvas.width, canvas.height);
       },
 
@@ -378,6 +487,7 @@ void main() {
         if (gl.isContextLost()) return;
         persist.forEach(freeTarget);
         freeTarget(hbeam);
+        freeGlow();
         gl.deleteTexture(src.tex);
         for (const k in progs) gl.deleteProgram(progs[k].p);
         gl.deleteBuffer(vbo);
