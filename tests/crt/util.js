@@ -65,3 +65,11 @@
     };
   };
 })();
+
+// Every effect off except afterglow: suites switch on exactly what they measure.
+window.BARE = Object.freeze({
+  persistence: true, beam: false, convergence: false, grille: false, damperWires: false,
+  bloom: false, halation: false, colorGrade: false, tone: false, vignette: false,
+  tubeCorners: false, curvature: false, gloss: false, warmup: false,
+});
+window.bare = (extra = {}) => Object.assign({}, window.BARE, extra);
