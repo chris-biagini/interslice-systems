@@ -450,7 +450,7 @@
       const tick = (now) => {
         const t = now - this._startTime;
         const dirty = this.renderFrame(t);
-        if (this._lastTick != null && dirty) this._noteFrameInterval(now - this._lastTick);
+        if (this._lastTick != null) this._noteFrameInterval(now - this._lastTick);
         this._lastTick = now;
         const warmingUp = this.effects.warmup && t < this._warmupStartMs + WARMUP_MS;
         if (dirty || warmingUp) this._idleAt = now + this._settleTailMs();
@@ -471,8 +471,27 @@
       this._rafHandle = requestAnimationFrame(tick);
     }
 
-    // Adaptive quality hook (Task 8 fills this in).
-    _noteFrameInterval(ms) { /* adaptive quality: see Task 8 */ }
+    // Adaptive quality. Learns the display's frame interval from the first
+    // 30 ticks (their minimum — hitches only lengthen intervals), then
+    // tracks an EMA. Sustained jank (EMA > 1.35× base for 45 ticks) steps
+    // the glow chain down a level; a long smooth stretch (600 ticks under
+    // 1.05×) steps back up. The beam and grille are never touched — they
+    // are the tube.
+    _noteFrameInterval(ms) {
+      if (!this.opts.adaptiveQuality) return;
+      const a = this._aq || (this._aq = { n: 0, base: Infinity, ema: 0, slow: 0, fast: 0 });
+      if (a.n < 30) { a.n++; a.base = Math.min(a.base, ms); a.ema = a.base; return; }
+      a.ema += 0.1 * (ms - a.ema);
+      if (a.ema > 1.35 * a.base) {
+        a.fast = 0;
+        if (++a.slow >= 45 && this._quality < 2) { this._quality++; a.slow = 0; a.ema = a.base; }
+      } else {
+        a.slow = 0;
+        if (a.ema < 1.05 * a.base) {
+          if (++a.fast >= 600 && this._quality > 0) { this._quality--; a.fast = 0; }
+        } else a.fast = 0;
+      }
+    }
 
     // Wake a parked renderer for at least one frame. No-op while the loop
     // is live or the user stopped it.

@@ -6,8 +6,9 @@
 //               linear light, afterglow = max(live, prev × decay).
 //   2. hbeam    (signal res, RGBA16F): the beam's horizontal spread and
 //               per-channel convergence, along each scanline.
+//      mask     (output width × 1): the grille's per-column profile.
 //   3. glow     (1/2 … 1/16 signal res, RGBA16F): a dual-filter (Kawase)
-//               down/up chain over the H-beam light — bloom from the
+//               down/up chain over the afterglow light — bloom from the
 //               near levels, halation from the far ones.
 //   4. screen   (output res, default framebuffer): the tube — vertical
 //               beam reconstruction, grille, damper wires, glow, glass.
@@ -59,32 +60,94 @@ void main() {
 
   // Horizontal beam: a per-channel Gaussian along the scanline. σ is the
   // focus cheat (sharper than physical, for legibility) floored at ~one
-  // triad so a 1-px feature always spans R, G and B stripes.
+  // triad so a 1-px feature always spans R, G and B stripes. Convergence
+  // shifts where each channel samples.
+  //
+  // It also precomputes the vertical beam for each scanline sample, since
+  // the beam's width depends only on that sample's brightness: A = L ×
+  // the unit-area Gaussian's peak, B = its −1/(2σ²). The screen pass then
+  // needs just A·exp(dy²·B) per scanline. σ² folds in the output pixel's
+  // footprint (box ⊗ Gaussian) plus a fade as scanlines approach the
+  // pixel Nyquist limit, so fine scanlines blend instead of beating.
   const HBEAM_FS = COMMON + `
 uniform sampler2D uPersist;
 uniform vec2 uSignalSize;
+uniform vec2 uOutSize;
 uniform float uFocusPx;
 uniform float uTriadFloorPx;
 uniform vec3 uConvergence;     // x offsets in signal px, per channel
-out vec4 oColor;
-float gauss(float d, float s) { return exp(-0.5 * d * d / (s * s)); }
+uniform float uBeamEnabled;
+uniform float uBeamMin;
+uniform float uBeamMax;
+uniform float uBeamShape;
+layout(location = 0) out vec4 oA;
+layout(location = 1) out vec4 oB;
+const float INV_SQRT_2PI = 0.3989422804;
 void main() {
   float sigma = max(max(uFocusPx, uTriadFloorPx), 0.05);
   int R = int(min(ceil(2.5 * sigma), 16.0));
   vec2 px = gl_FragCoord.xy;
+  float y = px.y / uSignalSize.y;
   vec3 sum = vec3(0.0);
-  vec3 wsum = vec3(0.0);
+  float wsum = 0.0;
   for (int k = -16; k <= 16; k++) {
     if (k < -R || k > R) continue;
     float fk = float(k);
-    vec3 w = vec3(gauss(fk + uConvergence.r, sigma), gauss(fk + uConvergence.g, sigma), gauss(fk + uConvergence.b, sigma));
-    float y = px.y / uSignalSize.y;
-    sum.r += w.r * texture(uPersist, vec2((px.x + fk + uConvergence.r) / uSignalSize.x, y)).r;
-    sum.g += w.g * texture(uPersist, vec2((px.x + fk + uConvergence.g) / uSignalSize.x, y)).g;
-    sum.b += w.b * texture(uPersist, vec2((px.x + fk + uConvergence.b) / uSignalSize.x, y)).b;
+    float w = exp(-0.5 * fk * fk / (sigma * sigma));
+    sum.r += w * texture(uPersist, vec2((px.x + fk + uConvergence.r) / uSignalSize.x, y)).r;
+    sum.g += w * texture(uPersist, vec2((px.x + fk + uConvergence.g) / uSignalSize.x, y)).g;
+    sum.b += w * texture(uPersist, vec2((px.x + fk + uConvergence.b) / uSignalSize.x, y)).b;
     wsum += w;
   }
-  oColor = vec4(sum / max(wsum, vec3(1e-6)), 1.0);
+  vec3 L = max(sum / wsum, 0.0);
+  if (uBeamEnabled < 0.5) { oA = vec4(L, 1.0); oB = vec4(0.0); return; }
+  float lines = uSignalSize.y / uOutSize.y;      // scanlines per output pixel
+  float extra = lines * lines / 12.0 + 0.1 * smoothstep(0.3, 0.6, lines);
+  vec3 sig = mix(vec3(uBeamMin), vec3(uBeamMax), pow(L, vec3(uBeamShape)));
+  vec3 s2 = sig * sig + extra;
+  oA = vec4(L * inversesqrt(s2) * INV_SQRT_2PI, 1.0);
+  oB = vec4(-0.5 / s2, 1.0);
+}`;
+
+  // The grille depends only on x, so it's computed once per frame into a
+  // one-pixel-tall row (outW × 1) and fetched by the screen pass.
+  //
+  // Continuous R/G/B stripes, period one triad, each lit for stripeFill
+  // of its third. Each pixel takes the stripe's exact average under a
+  // pixel filter — a 1-px box blended with a 1-px-radius tent
+  // (maskSoftness). Both filters tile perfectly (their shifted copies sum
+  // to 1), so the grille conserves energy at any pitch and fractional
+  // pitches can't beat into moiré. The averages come from closed-form
+  // integrals of the periodic box, range-reduced to stay float-exact.
+  // Output is the profile normalized to unit average (P / duty).
+  const MASK_FS = COMMON + `
+uniform vec2 uOutSize;
+uniform float uTriadsAcross;
+uniform float uStripeFill;
+uniform float uMaskSoftness;
+out vec4 oColor;
+float boxI(float u, float d) { float n = floor(u); return n * d + min(u - n, d); }
+float boxI2(float u, float d) {
+  float n = floor(u), r = u - n;
+  float part = r < d ? 0.5 * r * r : d * r - 0.5 * d * d;
+  return 0.5 * d * n * (n - 1.0) + n * (d - 0.5 * d * d) + n * d * r + part;
+}
+float stripe(float t, float phase, float d, float px) {
+  float u = fract(t - phase) + 2.0;           // reduce; keeps u ± px ≥ 0
+  float box = (boxI(u + 0.5 * px, d) - boxI(u - 0.5 * px, d)) / px;
+  float tent = (boxI2(u + px, d) - 2.0 * boxI2(u, d) + boxI2(u - px, d)) / (px * px);
+  return mix(box, tent, uMaskSoftness);
+}
+void main() {
+  float triadPx = uOutSize.x / uTriadsAcross;
+  float t = gl_FragCoord.x / triadPx;
+  float px = min(1.0 / triadPx, 1.0);
+  float duty = uStripeFill / 3.0;
+  float off = (1.0 - uStripeFill) / 6.0;
+  vec3 P = vec3(stripe(t, off, duty, px),
+                stripe(t, 1.0 / 3.0 + off, duty, px),
+                stripe(t, 2.0 / 3.0 + off, duty, px));
+  oColor = vec4(P / duty, 1.0);
 }`;
 
   // Dual-filter (Kawase) blur: cheap, wide, and smooth. Offsets scale
@@ -127,7 +190,9 @@ void main() {
 
   // The tube, at output resolution.
   const SCREEN_FS = COMMON + `
-uniform sampler2D uHBeam;
+uniform sampler2D uHBeamA;
+uniform sampler2D uHBeamB;
+uniform sampler2D uMask;
 uniform vec2 uSignalSize;
 uniform vec2 uOutSize;
 uniform float uBeamEnabled;
@@ -138,7 +203,6 @@ uniform float uGrilleEnabled;
 uniform float uTriadsAcross;
 uniform float uStripeFill;
 uniform float uMaskStrength;
-uniform float uMaskSoftness;
 uniform float uHeadroom;
 uniform sampler2D uBloomTex;
 uniform sampler2D uHalationTex;
@@ -163,71 +227,37 @@ const mat3 SRGB_TO_P3 = mat3(
   0.8224621, 0.0331941, 0.0170827,
   0.1775380, 0.9668058, 0.0723974,
   0.0000000, 0.0000000, 0.9105199);
-const float INV_SQRT_2PI = 0.3989422804;
 float enc1(float l) { float a = abs(l); return sign(l) * (a <= 0.0031308 ? 12.92 * a : 1.055 * pow(a, 1.0 / 2.4) - 0.055); }
 vec3 enc(vec3 c) { return vec3(enc1(c.r), enc1(c.g), enc1(c.b)); }
 
 // Vertical beam reconstruction. Each scanline j contributes its light
-// under a Gaussian whose width grows with that line's brightness, per
-// channel — bright lines swell, dark lines thin. Each Gaussian is
-// normalized to unit area, so a flat field keeps its energy whatever the
-// beam width. sigE folds in the output pixel's own footprint (box ⊗
-// Gaussian), plus a fade term as scanlines approach the pixel Nyquist
-// limit, so fine scanlines blend instead of beating.
+// under a unit-area Gaussian whose width grows with that line's
+// brightness, per channel (precomputed by the hbeam pass as A, B): bright
+// lines swell, dark lines thin, and a flat field keeps its energy.
 vec3 beam(vec2 sp) {                       // sp: signal-px coords, y top-first
-  if (uBeamEnabled < 0.5) return texture(uHBeam, sp / uSignalSize).rgb;
-  float w = uSignalSize.y / uOutSize.y;    // scanlines per output pixel
-  float extra = w * w / 12.0 + 0.1 * smoothstep(0.3, 0.6, w);
+  if (uBeamEnabled < 0.5) return texture(uHBeamA, sp / uSignalSize).rgb;
   int j0 = int(floor(sp.y - 0.5)) - 1;
   vec3 sum = vec3(0.0);
   for (int k = 0; k < 4; k++) {
     int j = j0 + k;
     if (j < 0 || j >= int(uSignalSize.y)) continue;
     float dy = sp.y - (float(j) + 0.5);
-    vec3 L = max(texture(uHBeam, vec2(sp.x / uSignalSize.x, (float(j) + 0.5) / uSignalSize.y)).rgb, 0.0);
-    vec3 sig = mix(vec3(uBeamMin), vec3(uBeamMax), pow(L, vec3(uBeamShape)));
-    vec3 s2 = sig * sig + extra;
-    sum += L * exp(-0.5 * dy * dy / s2) * inversesqrt(s2) * INV_SQRT_2PI;
+    vec2 uv = vec2(sp.x / uSignalSize.x, (float(j) + 0.5) / uSignalSize.y);
+    sum += texture(uHBeamA, uv).rgb * exp(dy * dy * texture(uHBeamB, uv).rgb);
   }
   return sum;
 }
 
-// The aperture grille: continuous R/G/B stripes, period one triad, each
-// lit for stripeFill of its third. Each pixel takes the stripe's exact
-// average under a pixel filter — a 1-px box blended with a 1-px-radius
-// tent (maskSoftness). Both filters tile perfectly (their shifted copies
-// sum to 1), so the grille conserves energy at any pitch and fractional
-// pitches can't beat into moiré. The averages come from closed-form
-// integrals of the periodic box, range-reduced to stay float-exact.
-//
-// The mask then mixes toward flat only as far as the headroom demands:
-// in SDR, bright light blooms across the stripes instead of clipping;
-// with HDR headroom the stripes stay dark. P/duty has unit average, so
-// the mix never changes a region's energy.
-float boxI(float u, float d) { float n = floor(u); return n * d + min(u - n, d); }
-float boxI2(float u, float d) {
-  float n = floor(u), r = u - n;
-  float part = r < d ? 0.5 * r * r : d * r - 0.5 * d * d;
-  return 0.5 * d * n * (n - 1.0) + n * (d - 0.5 * d * d) + n * d * r + part;
-}
-float stripe(float t, float phase, float d, float px) {
-  float u = fract(t - phase) + 2.0;           // reduce; keeps u ± px ≥ 0
-  float box = (boxI(u + 0.5 * px, d) - boxI(u - 0.5 * px, d)) / px;
-  float tent = (boxI2(u + px, d) - 2.0 * boxI2(u, d) + boxI2(u - px, d)) / (px * px);
-  return mix(box, tent, uMaskSoftness);
-}
+// The mask mixes toward flat only as far as the headroom demands: in SDR,
+// bright light blooms across the stripes instead of clipping; with HDR
+// headroom the stripes stay dark. The profile has unit average, so the
+// mix never changes a region's energy.
 vec3 grille(vec3 L, float xOut) {
   if (uGrilleEnabled < 0.5) return L;
-  float triadPx = uOutSize.x / uTriadsAcross;
-  float t = xOut / triadPx;
-  float px = min(1.0 / triadPx, 1.0);
+  vec3 Pn = texture(uMask, vec2(xOut / uOutSize.x, 0.5)).rgb;
   float duty = uStripeFill / 3.0;
-  float off = (1.0 - uStripeFill) / 6.0;
-  vec3 P = vec3(stripe(t, off, duty, px),
-                stripe(t, 1.0 / 3.0 + off, duty, px),
-                stripe(t, 2.0 / 3.0 + off, duty, px));
   vec3 s = clamp((uHeadroom / max(L, vec3(1e-4)) - 1.0) / (1.0 / duty - 1.0), 0.0, uMaskStrength);
-  return L * mix(vec3(1.0), P / duty, s);
+  return L * mix(vec3(1.0), Pn, s);
 }
 
 // Damper wires: two thin horizontal shadows on the phosphor, anti-aliased
@@ -376,7 +406,7 @@ void main() {
       if (gl.drawingBufferColorSpace === 'display-p3') outputColorSpace = 'display-p3';
     }
 
-    const progs = { persist: program(gl, PERSIST_FS), hbeam: program(gl, HBEAM_FS), down: program(gl, DOWN_FS), up: program(gl, UP_FS), screen: program(gl, SCREEN_FS) };
+    const progs = { persist: program(gl, PERSIST_FS), hbeam: program(gl, HBEAM_FS), mask: program(gl, MASK_FS), down: program(gl, DOWN_FS), up: program(gl, UP_FS), screen: program(gl, SCREEN_FS) };
 
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
@@ -403,7 +433,18 @@ void main() {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       return { tex, fbo, w, h };
     };
-    const freeTarget = (t) => { if (t) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo); } };
+    const target2 = (w, h) => {
+      const mk = () => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h); texParams(gl.LINEAR, false); return t; };
+      const tex = mk(), tex2 = mk();
+      const fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, tex2, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return { tex, tex2, fbo, w, h };
+    };
+    const freeTarget = (t) => { if (t) { gl.deleteTexture(t.tex); if (t.tex2) gl.deleteTexture(t.tex2); gl.deleteFramebuffer(t.fbo); } };
     const freeGlow = () => { if (glow) { glow.d.forEach(freeTarget); ['bloom', 'halA', 'halB'].forEach((k) => freeTarget(glow[k])); } };
 
     const src = { tex: gl.createTexture(), w: 0, h: 0, mip: false };
@@ -415,6 +456,7 @@ void main() {
     let signal = [1, 1];
     let persist = [null, null];
     let hbeam = null;
+    let maskRow = null;
     let glow = null;   // { d: [1/2, 1/4, 1/8, 1/16], bloom, halA (1/8), halB (1/4) }
     let flip = 0;
 
@@ -434,6 +476,8 @@ void main() {
       resize(w, h) {
         canvas.width = w;
         canvas.height = h;
+        freeTarget(maskRow);
+        maskRow = target(w, 1);
       },
 
       setSignalSize(w, h) {
@@ -441,7 +485,7 @@ void main() {
         persist.forEach(freeTarget);
         persist = [target(w, h), target(w, h)];
         freeTarget(hbeam);
-        hbeam = target(w, h);
+        hbeam = target2(w, h);
         freeGlow();
         const lv = (k) => target(Math.max(1, w >> k), Math.max(1, h >> k));
         glow = { d: [lv(1), lv(2), lv(3), lv(4)], bloom: lv(1), halA: lv(3), halB: lv(2) };
@@ -484,10 +528,17 @@ void main() {
         bindSampler(gl, H, 'uPersist', 0, next.tex);
         draw(hbeam, H, w, h);
 
+        if (u.uGrilleEnabled) {
+          const M = progs.mask;
+          gl.useProgram(M.p);
+          setUniforms(gl, M, u);
+          draw(maskRow, M, maskRow.w, 1);
+        }
+
         // Glow chain. Quality 0: bloom at 1/2 res; 1: bloom at 1/4; 2: no
         // halation levels at all (the chassis also zeroes its strength).
         const needBloom = u.uBloom > 0, needHal = u.uHalation > 0;
-        let bloomTex = hbeam.tex, halTex = hbeam.tex;
+        let bloomTex = next.tex, halTex = next.tex;
         if (needBloom || needHal) {
           const D = progs.down, Up = progs.up;
           const down = (srcT, dst, radius) => {
@@ -504,7 +555,7 @@ void main() {
           };
           const q = frame.quality || 0;
           const bR = u.uBloomRadius, hR = u.uHalationRadius;
-          down(hbeam, glow.d[0], bR);
+          down(next, glow.d[0], bR);
           down(glow.d[0], glow.d[1], bR);
           if (needBloom) {
             if (q >= 1) { bloomTex = glow.d[1].tex; }
@@ -522,9 +573,11 @@ void main() {
         const S = progs.screen;
         gl.useProgram(S.p);
         setUniforms(gl, S, u);
-        bindSampler(gl, S, 'uHBeam', 0, hbeam.tex);
-        bindSampler(gl, S, 'uBloomTex', 1, bloomTex);
-        bindSampler(gl, S, 'uHalationTex', 2, halTex);
+        bindSampler(gl, S, 'uHBeamA', 0, hbeam.tex);
+        bindSampler(gl, S, 'uHBeamB', 1, hbeam.tex2);
+        bindSampler(gl, S, 'uBloomTex', 2, bloomTex);
+        bindSampler(gl, S, 'uHalationTex', 3, halTex);
+        bindSampler(gl, S, 'uMask', 4, maskRow.tex);
         draw(null, S, canvas.width, canvas.height);
       },
 
@@ -553,6 +606,7 @@ void main() {
         if (gl.isContextLost()) return;
         persist.forEach(freeTarget);
         freeTarget(hbeam);
+        freeTarget(maskRow);
         freeGlow();
         gl.deleteTexture(src.tex);
         for (const k in progs) gl.deleteProgram(progs[k].p);

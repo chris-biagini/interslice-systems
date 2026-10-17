@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>CRT perf</title>
+<style>body{margin:0;background:#000}canvas{display:block}</style></head>
+<body>
+<canvas id="c"></canvas>
+<script src="../../docs/crt.js"></script>
+<script src="../../docs/crt-webgl2.js"></script>
+<script>
+// Real-GPU performance probe. Renders an always-animated chart with every
+// default effect at full quality (?w=&h= device px), warms up 2 s, then
+// measures 5 s of frames: per-frame cost = renderFrame + a 1-px readPixels
+// (which must wait for the GPU to finish the frame; gl.finish() does not
+// in Chrome's GPU-process model), plus RAF fps. Pass: p95 cost ≤ ?budget ms (default 12,
+// leaving headroom inside a 16.7 ms 60 Hz frame). Run via:
+//   CRT_GPU=1 CRT_TEST_PAGE='tests/crt/perf.html?w=2400&h=1800' python3 tests/crt/run.py
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const w = +(q.get('w') || 2400), h = +(q.get('h') || 1800), budget = +(q.get('budget') || 12);
+  const c = document.getElementById('c');
+  c.style.width = (w / devicePixelRatio) + 'px'; c.style.height = (h / devicePixelRatio) + 'px';
+  const effects = {};
+  for (const k of (q.get('off') || '').split(',').filter(Boolean)) effects[k] = false;
+  const crt = new CRT(c, { pixelSize: [w, h], adaptiveQuality: false, effects, signal(ctx, t) {
+    if (q.get('static') && t > 100) return false;
+    ctx.fillStyle = '#101418'; ctx.fillRect(0, 0, 640, 480);
+    for (let i = 0; i < 8; i++) { ctx.fillStyle = `hsl(${(i * 45 + t / 20) % 360} 80% 55%)`; ctx.fillRect((i * 80 + t / 10) % 720 - 80, 40, 60, 160); }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 26px sans-serif'; ctx.fillText('Mirepoix — Tonight', 40, 260);
+    ctx.font = '13px sans-serif';
+    for (let i = 0; i < 10; i++) ctx.fillText(`Ingredient line ${i} · 2 tbsp something · stir gently`, 40, 290 + ((i * 18 - t / 30) % 180 + 180) % 180);
+  } });
+  const gl = c.getContext('webgl2');
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  const costs = [];
+  const px1 = new Uint8Array(4);
+  let frames = 0, t0 = performance.now(), measureStart = 0;
+  await new Promise((done) => {
+    const tick = (now) => {
+      const a = performance.now();
+      crt.renderFrame(now - t0);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1);
+      const cost = performance.now() - a;
+      const el = now - t0;
+      if (el > 2000) { if (!measureStart) measureStart = now; costs.push(cost); frames++; }
+      if (el > 7000) return done();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  costs.sort((x, y) => x - y);
+  const pct = (p) => costs[Math.min(costs.length - 1, Math.floor(p * costs.length))];
+  const perf = { renderer, w, h, triads: crt._triads, fps: +(frames / ((performance.now() - measureStart) / 1000)).toFixed(1),
+    medianMs: +pct(0.5).toFixed(2), p95Ms: +pct(0.95).toFixed(2), budget };
+  const ok = perf.p95Ms <= budget && !/swiftshader/i.test(renderer);
+  await fetch('/__results', { method: 'POST', body: JSON.stringify({ done: true, passed: ok ? 1 : 0, failed: ok ? 0 : 1,
+    failures: ok ? [] : [{ name: 'perf', message: JSON.stringify(perf) }], perf }) });
+})();
+</script>
+</body>
+</html>

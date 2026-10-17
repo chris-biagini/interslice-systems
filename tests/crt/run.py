@@ -47,7 +47,8 @@ def main():
     q = {'report': '1'}
     if only:
         q['only'] = only
-    url = f'http://127.0.0.1:{srv.server_port}/{PAGE}?{urllib.parse.urlencode(q)}'
+    sep = '&' if '?' in PAGE else '?'
+    url = f'http://127.0.0.1:{srv.server_port}/{PAGE}{sep}{urllib.parse.urlencode(q)}'
 
     gpu = os.environ.get('CRT_GPU') == '1'
     flags = (['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=vulkan', '--enable-features=Vulkan']
@@ -72,6 +73,8 @@ def main():
     if not ok:
         print(f'NO RESULTS after {TIMEOUT_S:.0f}s ({url})')
         return 1
+    if 'perf' in results:
+        print('perf:', json.dumps(results['perf']))
     for f in results.get('failures', []):
         print(f"FAIL  {f['name']} — {f['message']}")
     for s in results.get('skips', []):
