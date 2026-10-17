@@ -4,7 +4,10 @@
 // orientation"; only the screen pass flips to the GL framebuffer):
 //   1. persist  (signal res, RGBA16F ping-pong): decode the source to
 //               linear light, afterglow = max(live, prev × decay).
-//   2. screen   (output res, default framebuffer): the tube.
+//   2. hbeam    (signal res, RGBA16F): the beam's horizontal spread and
+//               per-channel convergence, along each scanline.
+//   3. screen   (output res, default framebuffer): the tube — vertical
+//               beam reconstruction, then the rest of the glass.
 // Uniform values come from the chassis (CRT#_uniforms) and are set by
 // name, so this file maps values to GPU slots and nothing else.
 (function () {
@@ -51,15 +54,78 @@ void main() {
   oColor = vec4(max(live, prev * uDecay), 1.0);
 }`;
 
-  const SCREEN_FS = COMMON + `
+  // Horizontal beam: a per-channel Gaussian along the scanline. σ is the
+  // focus cheat (sharper than physical, for legibility) floored at ~one
+  // triad so a 1-px feature always spans R, G and B stripes.
+  const HBEAM_FS = COMMON + `
 uniform sampler2D uPersist;
-uniform vec2 uOutSize;
+uniform vec2 uSignalSize;
+uniform float uFocusPx;
+uniform float uTriadFloorPx;
+uniform vec3 uConvergence;     // x offsets in signal px, per channel
 out vec4 oColor;
+float gauss(float d, float s) { return exp(-0.5 * d * d / (s * s)); }
+void main() {
+  float sigma = max(max(uFocusPx, uTriadFloorPx), 0.05);
+  int R = int(min(ceil(2.5 * sigma), 16.0));
+  vec2 px = gl_FragCoord.xy;
+  vec3 sum = vec3(0.0);
+  vec3 wsum = vec3(0.0);
+  for (int k = -16; k <= 16; k++) {
+    if (k < -R || k > R) continue;
+    float fk = float(k);
+    vec3 w = vec3(gauss(fk + uConvergence.r, sigma), gauss(fk + uConvergence.g, sigma), gauss(fk + uConvergence.b, sigma));
+    float y = px.y / uSignalSize.y;
+    sum.r += w.r * texture(uPersist, vec2((px.x + fk + uConvergence.r) / uSignalSize.x, y)).r;
+    sum.g += w.g * texture(uPersist, vec2((px.x + fk + uConvergence.g) / uSignalSize.x, y)).g;
+    sum.b += w.b * texture(uPersist, vec2((px.x + fk + uConvergence.b) / uSignalSize.x, y)).b;
+    wsum += w;
+  }
+  oColor = vec4(sum / max(wsum, vec3(1e-6)), 1.0);
+}`;
+
+  // The tube, at output resolution.
+  const SCREEN_FS = COMMON + `
+uniform sampler2D uHBeam;
+uniform vec2 uSignalSize;
+uniform vec2 uOutSize;
+uniform float uBeamEnabled;
+uniform float uBeamMin;
+uniform float uBeamMax;
+uniform float uBeamShape;
+out vec4 oColor;
+const float INV_SQRT_2PI = 0.3989422804;
 float enc1(float l) { float a = abs(l); return sign(l) * (a <= 0.0031308 ? 12.92 * a : 1.055 * pow(a, 1.0 / 2.4) - 0.055); }
 vec3 enc(vec3 c) { return vec3(enc1(c.r), enc1(c.g), enc1(c.b)); }
+
+// Vertical beam reconstruction. Each scanline j contributes its light
+// under a Gaussian whose width grows with that line's brightness, per
+// channel — bright lines swell, dark lines thin. Each Gaussian is
+// normalized to unit area, so a flat field keeps its energy whatever the
+// beam width. sigE folds in the output pixel's own footprint (box ⊗
+// Gaussian), plus a fade term as scanlines approach the pixel Nyquist
+// limit, so fine scanlines blend instead of beating.
+vec3 beam(vec2 sp) {                       // sp: signal-px coords, y top-first
+  if (uBeamEnabled < 0.5) return texture(uHBeam, sp / uSignalSize).rgb;
+  float w = uSignalSize.y / uOutSize.y;    // scanlines per output pixel
+  float extra = w * w / 12.0 + 0.1 * smoothstep(0.3, 0.6, w);
+  int j0 = int(floor(sp.y - 0.5)) - 1;
+  vec3 sum = vec3(0.0);
+  for (int k = 0; k < 4; k++) {
+    int j = j0 + k;
+    if (j < 0 || j >= int(uSignalSize.y)) continue;
+    float dy = sp.y - (float(j) + 0.5);
+    vec3 L = max(texture(uHBeam, vec2(sp.x / uSignalSize.x, (float(j) + 0.5) / uSignalSize.y)).rgb, 0.0);
+    vec3 sig = mix(vec3(uBeamMin), vec3(uBeamMax), pow(L, vec3(uBeamShape)));
+    vec3 s2 = sig * sig + extra;
+    sum += L * exp(-0.5 * dy * dy / s2) * inversesqrt(s2) * INV_SQRT_2PI;
+  }
+  return sum;
+}
+
 void main() {
-  vec2 p = vec2(gl_FragCoord.x, uOutSize.y - gl_FragCoord.y) / uOutSize;
-  vec3 c = texture(uPersist, p).rgb;
+  vec2 p = vec2(gl_FragCoord.x, uOutSize.y - gl_FragCoord.y) / uOutSize;   // top-first UV
+  vec3 c = beam(p * uSignalSize);
   oColor = vec4(enc(clamp(c, 0.0, 1.0)), 1.0);
 }`;
 
@@ -132,7 +198,7 @@ void main() {
       try { gl.unpackColorSpace = opts.signalColorSpace === 'display-p3' ? 'display-p3' : 'srgb'; } catch (_) { /* unsupported value */ }
     }
 
-    const progs = { persist: program(gl, PERSIST_FS), screen: program(gl, SCREEN_FS) };
+    const progs = { persist: program(gl, PERSIST_FS), hbeam: program(gl, HBEAM_FS), screen: program(gl, SCREEN_FS) };
 
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
@@ -169,6 +235,7 @@ void main() {
     let fit = { scale: [1, 1], offset: [0, 0] };
     let signal = [1, 1];
     let persist = [null, null];
+    let hbeam = null;
     let flip = 0;
 
     const draw = (t, prog, w, h) => {
@@ -193,6 +260,8 @@ void main() {
         signal = [w, h];
         persist.forEach(freeTarget);
         persist = [target(w, h), target(w, h)];
+        freeTarget(hbeam);
+        hbeam = target(w, h);
         backend.clearPersistence();
       },
 
@@ -226,10 +295,16 @@ void main() {
         draw(next, P, w, h);
         flip = 1 - flip;
 
+        const H = progs.hbeam;
+        gl.useProgram(H.p);
+        setUniforms(gl, H, u);
+        bindSampler(gl, H, 'uPersist', 0, next.tex);
+        draw(hbeam, H, w, h);
+
         const S = progs.screen;
         gl.useProgram(S.p);
         setUniforms(gl, S, u);
-        bindSampler(gl, S, 'uPersist', 0, next.tex);
+        bindSampler(gl, S, 'uHBeam', 0, hbeam.tex);
         draw(null, S, canvas.width, canvas.height);
       },
 
@@ -257,6 +332,7 @@ void main() {
       destroy() {
         if (gl.isContextLost()) return;
         persist.forEach(freeTarget);
+        freeTarget(hbeam);
         gl.deleteTexture(src.tex);
         for (const k in progs) gl.deleteProgram(progs[k].p);
         gl.deleteBuffer(vbo);
