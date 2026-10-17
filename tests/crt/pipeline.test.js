@@ -32,3 +32,15 @@ test('pipeline: throws "unavailable" without float rendering', () => {
   try { makeCRT({ signal: flatSignal('#000') }); } catch (e) { err = e; } finally { proto.getExtension = orig; }
   assert(err && /unavailable/i.test(err.message), `error: ${err && err.message}`);
 });
+
+test('pipeline: stop/start never ghosts the previous picture', () => {
+  let white = true;
+  const crt = makeCRT({ effects: bare(), persistenceHalfLifeMs: 500, signal: (ctx) => flatSignal(white ? '#fff' : '#000')(ctx) });
+  for (let t = 0; t <= 64; t += 16) frameAt(crt, t);
+  crt.stop();
+  crt.start();
+  crt.stop();                 // keep the RAF loop out of the measurement
+  white = false;
+  const f = frameAt(crt, 16);
+  assert(f.meanLum(100, 100, 540, 380) < 0.01, `ghost ${f.meanLum(100, 100, 540, 380)}`);
+});

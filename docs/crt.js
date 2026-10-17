@@ -675,6 +675,19 @@
     tv: Object.freeze({
       effects: Object.freeze({ warmup: true }),
     }),
+    // The interslice.systems dark-mode hero: a logo + wordmark screen in a
+    // CSS bezel, not a TV picture. The bezel shapes it (no engine corners,
+    // vignette or gloss), the substrate keeps its exact page-matched blue
+    // (no grade), and the glow leans electric — dark mode is the neon
+    // arcade cabinet. Callers set signalSize to the layout and triadTarget
+    // to ~layout.width / 3 (a triad per 3 CSS px, as v1 drew it).
+    hero: Object.freeze({
+      bloomStrength: 0.3, bloomRadius: 1.0, halationStrength: 0.05,
+      damperStrength: 0.10,
+      effects: Object.freeze({
+        colorGrade: false, vignette: false, gloss: false, tubeCorners: false, warmup: false,
+      }),
+    }),
   };
 
   window.CRT = CRT;

@@ -1540,7 +1540,7 @@ body[data-power="bypass"] .led {
   off.width = SIGNAL_W; off.height = SIGNAL_H;
   const octx = off.getContext('2d');
 
-  let renderer = null;          // live Trinitron|ShadowMask or null
+  let renderer = null;          // live CRT or null (bypass)
   let rendererIdx = 0;
   let webglOk = true;
   let bypassRaf = null, bypassStart = 0;
