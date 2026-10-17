@@ -52,6 +52,16 @@
       const lim = (H / Math.max(L, 1e-4) - 1) / (1 / a - 1);
       return Math.max(0, Math.min(s, lim));
     },
+    // Backing-store size for a CSS box. The ResizeObserver device-pixel box
+    // gives exact pixel snapping, but is only trusted when it agrees with
+    // CSS × DPR (some emulated/zoomed environments report CSS px there).
+    devicePixelSize(cssW, cssH, dpr, dpBox) {
+      const w = Math.max(1, Math.round(cssW * dpr)), h = Math.max(1, Math.round(cssH * dpr));
+      if (dpBox && Math.abs(dpBox[0] - cssW * dpr) <= 1.5 && Math.abs(dpBox[1] - cssH * dpr) <= 1.5) {
+        return [Math.max(1, dpBox[0]), Math.max(1, dpBox[1])];
+      }
+      return [w, h];
+    },
     // Fit transforms map a source of srcW×srcH into the dstW×dstH signal.
     // Source UV = (signalUV − offset) / scale; outside [0,1] is black.
     fitContain(srcW, srcH, dstW, dstH) {
@@ -279,21 +289,30 @@
       this._ro = new ResizeObserver((entries) => {
         const e = entries[entries.length - 1];
         const dp = e.devicePixelContentBoxSize && e.devicePixelContentBoxSize[0];
-        this._measured = dp
-          ? [dp.inlineSize, dp.blockSize]
-          : [Math.round(e.contentRect.width * devicePixelRatio), Math.round(e.contentRect.height * devicePixelRatio)];
+        this._measured = math.devicePixelSize(e.contentRect.width, e.contentRect.height,
+          window.devicePixelRatio || 1, dp ? [dp.inlineSize, dp.blockSize] : null);
         this._applySize(false);
       });
       try { this._ro.observe(this.canvas, { box: 'device-pixel-content-box' }); }
       catch (_) { this._ro.observe(this.canvas); }
+      this._watchDpr();
+    }
+
+    // A DPR change (window moved to another monitor, zoom) doesn't always
+    // resize the CSS box, so watch the resolution media query directly.
+    _watchDpr() {
+      if (!window.matchMedia) return;
+      if (this._dprMq) this._dprMq.removeEventListener('change', this._onDpr);
+      this._dprMq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      this._onDpr = () => { this._measured = null; this._applySize(false); this._watchDpr(); };
+      if (this._dprMq.addEventListener) this._dprMq.addEventListener('change', this._onDpr);
     }
 
     _currentPixelSize() {
       if (this.opts.pixelSize) return this.opts.pixelSize.map((v) => Math.max(1, Math.round(v)));
       if (this._measured) return this._measured.map((v) => Math.max(1, v));
       const r = this.canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      return [Math.max(1, Math.round(r.width * dpr)), Math.max(1, Math.round(r.height * dpr))];
+      return math.devicePixelSize(r.width, r.height, window.devicePixelRatio || 1, null);
     }
 
     _applySize(force) {
@@ -525,6 +544,7 @@
       }
       if (this._io) { this._io.disconnect(); this._io = null; }
       if (this._ro) { this._ro.disconnect(); this._ro = null; }
+      if (this._dprMq && this._dprMq.removeEventListener) this._dprMq.removeEventListener('change', this._onDpr);
       if (this._source && this._source.detach) this._source.detach();
       this.canvas.removeEventListener('webglcontextlost', this._onContextLost);
       this.canvas.removeEventListener('webglcontextrestored', this._onContextRestored);
@@ -639,7 +659,14 @@
   // clearPersistence(), readPixels(), destroy(). create() throws an Error
   // matching /unavailable/i before mutating anything when it can't run.
   CRT.backends = {};
-  CRT.presets = {};
+  // Named looks. Frozen; the constructor clones what it needs, so pass a
+  // preset straight in: new CRT(canvas, Object.assign({}, CRT.presets.tv, {...})).
+  // Values are tuned on the tv.html bench ("copy state diff").
+  CRT.presets = {
+    tv: Object.freeze({
+      effects: Object.freeze({ warmup: true }),
+    }),
+  };
 
   window.CRT = CRT;
 })();

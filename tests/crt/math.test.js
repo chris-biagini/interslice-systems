@@ -61,3 +61,16 @@ test('math: fitCover crops 16:9 into 4:3', () => {
   assert(f.scale[1] === 1, `scale y ${f.scale[1]}`);
   assert(f.scale[0] > 1);
 });
+
+test('math: devicePixelSize scales CSS size by DPR', () => {
+  const s = M().devicePixelSize(640, 480, 2, null);
+  assert(s[0] === 1280 && s[1] === 960, `${s}`);
+});
+test('math: devicePixelSize trusts a consistent device-pixel box', () => {
+  const s = M().devicePixelSize(333.5, 250, 1.5, [501, 375]);
+  assert(s[0] === 501 && s[1] === 375, `${s}`);
+});
+test('math: devicePixelSize ignores a device-pixel box that disagrees with DPR', () => {
+  const s = M().devicePixelSize(640, 480, 2, [640, 480]);
+  assert(s[0] === 1280 && s[1] === 960, `${s}`);
+});

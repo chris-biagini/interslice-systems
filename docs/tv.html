@@ -153,8 +153,8 @@ svg.cab-wood {
 
 .screen-cutout {
   position: relative;
-  width: 640px;
-  height: 480px;
+  width: var(--screen-w, 640px);
+  height: calc(var(--screen-w, 640px) * 3 / 4);
   border-radius: 28px;
   overflow: hidden;
   background: #050607;
@@ -164,8 +164,8 @@ svg.cab-wood {
   position: absolute;
   left: 0;
   top: 0;
-  width: 640px;   /* renderer manages backing-store size itself */
-  height: 480px;
+  width: 100%;    /* the engine fits its backing store to the device-pixel box */
+  height: 100%;
 }
 #bypass { image-rendering: pixelated; } /* keep the nearest-neighbor look on HiDPI */
 #crt[hidden], #bypass[hidden] { display: none; }
@@ -547,6 +547,22 @@ body[data-power="bypass"] .led {
   cursor: pointer;
 }
 .bench-copy:hover { border-color: #3a4049; color: #c2c8d2; }
+.bench-size {
+  margin-left: 12px;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #9aa1ad;
+}
+.bench-size select {
+  margin-left: 4px;
+  padding: 3px 6px;
+  border: 1px solid #2a2e36;
+  border-radius: 5px;
+  background: #191c22;
+  color: #c2c8d2;
+  font: inherit;
+}
 
 .bench-group {
   margin: 0;
@@ -677,7 +693,7 @@ body[data-power="bypass"] .led {
         <div class="screen-zone">
           <div class="bezel">
             <div class="screen-cutout">
-              <canvas id="crt"    width="1280" height="960"></canvas><!-- WebGL; renderer sets backing = canvasSize × DPR -->
+              <canvas id="crt"></canvas><!-- WebGL; the engine sizes its backing store to the device-pixel box -->
               <canvas id="bypass" width="640"  height="480" hidden></canvas>
             </div>
             <span class="bezel-text" aria-hidden="true">Solid State · CV-2001</span>
@@ -693,20 +709,25 @@ body[data-power="bypass"] .led {
 
           <div class="knob-station station-channel">
             <svg class="dial" viewBox="0 0 202 188" width="202" height="188" aria-hidden="true">
-              <!-- ticks at -120,-72,-24,24,72,120 deg (r 46->53 about 101,90) -->
-              <line x1="61.2"  y1="113"   x2="55.1"  y2="116.5"/>
-              <line x1="57.3"  y1="75.8"  x2="50.6"  y2="73.6"/>
-              <line x1="82.3"  y1="48"    x2="79.4"  y2="41.6"/>
-              <line x1="119.7" y1="48"    x2="122.6" y2="41.6"/>
-              <line x1="144.7" y1="75.8"  x2="151.4" y2="73.6"/>
-              <line x1="140.8" y1="113"   x2="146.9" y2="116.5"/>
-              <!-- VHF numbers, r=67 -->
-              <text x="43"    y="123.5" font-size="13" text-anchor="middle" dy=".35em">2</text>
-              <text x="37.3"  y="69.3"  font-size="13" text-anchor="middle" dy=".35em">3</text>
-              <text x="73.8"  y="28.8"  font-size="13" text-anchor="middle" dy=".35em">4</text>
-              <text x="128.2" y="28.8"  font-size="13" text-anchor="middle" dy=".35em">5</text>
-              <text x="164.7" y="69.3"  font-size="13" text-anchor="middle" dy=".35em">6</text>
-              <text x="159"   y="123.5" font-size="13" text-anchor="middle" dy=".35em">7</text>
+              <!-- ticks at -120..+120 deg in 30-deg steps (r 46->53 about 101,90); numbers r=67 -->
+              <line x1="61.2" y1="113.0" x2="55.1" y2="116.5"/>
+              <line x1="55.0" y1="90.0" x2="48.0" y2="90.0"/>
+              <line x1="61.2" y1="67.0" x2="55.1" y2="63.5"/>
+              <line x1="78.0" y1="50.2" x2="74.5" y2="44.1"/>
+              <line x1="101.0" y1="44.0" x2="101.0" y2="37.0"/>
+              <line x1="124.0" y1="50.2" x2="127.5" y2="44.1"/>
+              <line x1="140.8" y1="67.0" x2="146.9" y2="63.5"/>
+              <line x1="147.0" y1="90.0" x2="154.0" y2="90.0"/>
+              <line x1="140.8" y1="113.0" x2="146.9" y2="116.5"/>
+              <text x="43.0" y="123.5" font-size="13" text-anchor="middle" dy=".35em">2</text>
+              <text x="34.0" y="90.0" font-size="13" text-anchor="middle" dy=".35em">3</text>
+              <text x="43.0" y="56.5" font-size="13" text-anchor="middle" dy=".35em">4</text>
+              <text x="67.5" y="32.0" font-size="13" text-anchor="middle" dy=".35em">5</text>
+              <text x="101.0" y="23.0" font-size="13" text-anchor="middle" dy=".35em">6</text>
+              <text x="134.5" y="32.0" font-size="13" text-anchor="middle" dy=".35em">7</text>
+              <text x="159.0" y="56.5" font-size="13" text-anchor="middle" dy=".35em">8</text>
+              <text x="168.0" y="90.0" font-size="13" text-anchor="middle" dy=".35em">9</text>
+              <text x="159.0" y="123.5" font-size="12" text-anchor="middle" dy=".35em">10</text>
               <text class="dial-caption" x="101" y="180" text-anchor="middle">CHANNEL</text>
             </svg>
             <button class="knob" id="knob-channel" aria-label="Channel selector"><span class="grip" aria-hidden="true"></span></button>
@@ -714,13 +735,11 @@ body[data-power="bypass"] .led {
 
           <div class="knob-station station-renderer">
             <svg class="dial" viewBox="0 0 202 164" width="202" height="164" aria-hidden="true">
-              <!-- ticks at -60,0,60 deg (r 38->45 about 101,92) -->
+              <!-- ticks at -60,+60 deg (r 38->45 about 101,92) -->
               <line x1="68.1"  y1="73" x2="62.0"  y2="69.5"/>
-              <line x1="101"   y1="54" x2="101"   y2="47"/>
               <line x1="133.9" y1="73" x2="140.0" y2="69.5"/>
               <!-- position labels, r=58 -->
-              <text x="56.8"  y="63" font-size="8.5" letter-spacing="1" text-anchor="end">TRINITRON</text>
-              <text x="101"   y="30" font-size="8.5" letter-spacing="1" text-anchor="middle">SHADOW MASK</text>
+              <text x="56.8"  y="63" font-size="8.5" letter-spacing="1" text-anchor="end">CRT</text>
               <text x="145.2" y="63" font-size="8.5" letter-spacing="1" text-anchor="start">BYPASS</text>
               <text class="dial-caption" x="101" y="156" text-anchor="middle">RENDERER</text>
             </svg>
@@ -745,8 +764,8 @@ body[data-power="bypass"] .led {
 
     <section class="bench" id="bench"><!-- populated by rebuildBench() --></section>
   </main>
-<script src="trinitron.js"></script>
-<script src="shadow-mask.js"></script>
+<script src="crt.js"></script>
+<script src="crt-webgl2.js"></script>
 <script>
 (function () {
   'use strict';
@@ -757,7 +776,8 @@ body[data-power="bypass"] .led {
   // either way; only the grid feeding it changes.
   const RES = new URLSearchParams(location.search).get('res') === '320' ? 320 : 640;
   const SIGNAL_W = RES, SIGNAL_H = RES * 3 / 4;
-  const RENDERERS = ['trinitron', 'shadow-mask', 'bypass'];
+  const RENDERERS = ['crt', 'bypass'];
+  const SIZES = [320, 480, 640, 960, 1280];      // screen CSS width options (bench header)
 
   // --- Channels --------------------------------------------------------
 
@@ -1376,6 +1396,110 @@ body[data-power="bypass"] .led {
     }
   }
 
+  // CH 8 — LINES (static): the acceptance chart for the v2 tube. Left:
+  // 1-px white verticals at every sub-triad phase (each must read white,
+  // never a single colored stripe) over a 1-px grid. Right: eight gray
+  // bands, linear 0.05 → 1.0 — the scanlines visibly fatten from the dim
+  // bands to the bright ones (the beam swell).
+  function drawLines(ctx, t, w, h) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+    const k = w / 640;
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < 40; i++) ctx.fillRect(Math.round(24 * k) + i * 7, Math.round(24 * k), 1, Math.round(h * 0.42));
+    for (let x = Math.round(24 * k); x <= Math.round(300 * k); x += Math.round(16 * k)) ctx.fillRect(x, Math.round(h * 0.52), 1, Math.round(h * 0.44));
+    for (let y = Math.round(h * 0.52); y <= Math.round(h * 0.96); y += Math.round(16 * k)) ctx.fillRect(Math.round(24 * k), y, Math.round(276 * k) + 1, 1);
+    const x0 = Math.round(330 * k), bw = w - x0 - Math.round(24 * k);
+    const bh = (h - 48 * k) / 8;
+    for (let i = 0; i < 8; i++) {
+      const lin = 0.05 + (0.95 * i) / 7;
+      const e = Math.round(255 * (lin <= 0.0031308 ? 12.92 * lin : 1.055 * Math.pow(lin, 1 / 2.4) - 0.055));
+      ctx.fillStyle = `rgb(${e},${e},${e})`;
+      ctx.fillRect(x0, Math.round(24 * k + i * bh), bw, Math.round(bh - 4 * k));
+    }
+  }
+
+  // CH 9 — MOCK APP (animated, gentle): Mirepoix-flavored UI painted at
+  // the signal grid — the legibility stand-in for the demo animation.
+  // A recipe card with a slowly scrolling ingredient list and a checkbox
+  // ticking every 2 s, plus a "tonight" column of colored tiles.
+  const MOCK_INGREDIENTS = [
+    '3 leeks, halved lengthwise', '2 tbsp butter', '1 cup stock', '4 sprigs thyme',
+    '1 lemon, zested', 'Flaky salt', 'Black pepper', '2 tbsp crème fraîche',
+    '¼ cup breadcrumbs', '1 clove garlic, grated', 'Chives, snipped', 'Olive oil',
+  ];
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function drawMockApp(ctx, t, w, h) {
+    const k = w / 640;
+    const px = (n) => Math.round(n * k);
+    ctx.fillStyle = '#1b1712'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#2a221b'; ctx.fillRect(0, 0, w, px(48));
+    ctx.fillStyle = '#f3e9d2'; ctx.font = `700 ${px(22)}px system-ui, sans-serif`; ctx.textBaseline = 'middle';
+    ctx.fillText('mirepoix', px(24), px(25));
+    ['#c8553d', '#e8a33d', '#8aa37b'].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(w - px(30 + i * 26), px(25), px(8), 0, Math.PI * 2); ctx.fill(); });
+
+    // recipe card
+    const cx = px(28), cy = px(68), cw = px(372), ch = h - px(92);
+    ctx.fillStyle = '#f3e9d2'; roundRect(ctx, cx, cy, cw, ch, px(14)); ctx.fill();
+    ctx.fillStyle = '#2b1d14'; ctx.textBaseline = 'alphabetic';
+    ctx.font = `700 ${px(24)}px system-ui, sans-serif`; ctx.fillText('Braised Leeks', cx + px(20), cy + px(40));
+    ctx.fillStyle = '#6b5444'; ctx.font = `${px(13)}px system-ui, sans-serif`;
+    ctx.fillText('with brown butter & thyme · 35 min · serves 4', cx + px(20), cy + px(62));
+    ctx.fillStyle = '#c8553d'; ctx.fillRect(cx + px(20), cy + px(76), cw - px(40), Math.max(1, px(2)));
+
+    const listTop = cy + px(90), listH = ch - px(106), rowH = px(26);
+    const ticked = Math.floor(t / 2000) % (MOCK_INGREDIENTS.length + 1);
+    const scroll = (t / 90) % (MOCK_INGREDIENTS.length * rowH);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(cx + px(10), listTop, cw - px(20), listH); ctx.clip();
+    ctx.font = `${px(13)}px system-ui, sans-serif`;
+    for (let rep = 0; rep < 2; rep++) {
+      MOCK_INGREDIENTS.forEach((name, i) => {
+        const y = listTop + (rep * MOCK_INGREDIENTS.length + i) * rowH - scroll;
+        if (y < listTop - rowH || y > listTop + listH) return;
+        ctx.strokeStyle = '#6b5444'; ctx.lineWidth = Math.max(1, px(1.5));
+        ctx.strokeRect(cx + px(22), y + px(6), px(14), px(14));
+        if (i < ticked) {
+          ctx.fillStyle = '#8aa37b'; ctx.fillRect(cx + px(24), y + px(8), px(10), px(10));
+        }
+        ctx.fillStyle = i < ticked ? '#9b8a7a' : '#2b1d14';
+        ctx.fillText(name, cx + px(46), y + px(18));
+      });
+    }
+    ctx.restore();
+
+    // tonight column
+    const tx = px(424);
+    ctx.fillStyle = '#e8a33d'; ctx.font = `700 ${px(12)}px system-ui, sans-serif`;
+    ctx.fillText('TONIGHT', tx, px(84));
+    [['#c8553d', 'Braised leeks'], ['#e8a33d', 'Saffron rice'], ['#8aa37b', 'Herb salad']].forEach(([c, label], i) => {
+      const y = px(100 + i * 112);
+      ctx.fillStyle = c; roundRect(ctx, tx, y, px(184), px(80), px(10)); ctx.fill();
+      ctx.fillStyle = '#1b1712'; ctx.font = `600 ${px(14)}px system-ui, sans-serif`;
+      ctx.fillText(label, tx + px(14), y + px(48));
+    });
+  }
+
+  // CH 10 — VIDEO: a self-generated sample clip through the CRT's direct
+  // video path (CRT.VideoSource — no 2-D canvas hop). Bypass letterboxes
+  // the clip into the signal canvas instead.
+  const sampleVideo = document.createElement('video');
+  sampleVideo.muted = true; sampleVideo.loop = true; sampleVideo.playsInline = true;
+  sampleVideo.preload = 'auto';
+  sampleVideo.src = 'media/tv-sample.mp4';
+  function drawVideoBypass(ctx, t, w, h) {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+    const v = sampleVideo;
+    if (v.readyState < 2 || !v.videoWidth) return;
+    const s = Math.min(w / v.videoWidth, h / v.videoHeight);
+    const dw = v.videoWidth * s, dh = v.videoHeight * s;
+    ctx.drawImage(v, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  }
+
   // Channel shape: { num: <dial number>, name: <string>, draw(ctx, t, w=320, h=240) } — draw must fill the whole frame.
   // static: true → one frame, then the wrapper reports "nothing new"
   // and the renderer's scheduler parks itself (fps: idle on the bench).
@@ -1386,6 +1510,9 @@ body[data-power="bypass"] .led {
     { num: 5, name: 'MOTION',     draw: drawMotionReel, static: false },
     { num: 6, name: 'SNOW',       draw: drawSnow,       static: false },
     { num: 7, name: 'DITHER',     draw: drawDither,     static: false },
+    { num: 8, name: 'LINES',      draw: drawLines,      static: true },
+    { num: 9, name: 'MOCK APP',   draw: drawMockApp,    static: false },
+    { num: 10, name: 'VIDEO',     draw: drawVideoBypass, static: false, video: true },
   ];
 
   let channelIdx = 0;
@@ -1419,27 +1546,20 @@ body[data-power="bypass"] .led {
   let bypassRaf = null, bypassStart = 0;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-  // Boot from the classes' own tuned `tv` presets — the bench exists to
-  // retune them, and "copy state diff" output gets transferred back
-  // into the preset objects in the renderer files. The frozen preset's
-  // convergence/effects are cloned so bench mutations never write into
-  // the shared template.
-  function makeRenderer(kind) {
-    const Cls = kind === 'trinitron' ? window.Trinitron : window.ShadowMask;
-    const P = Cls.presets.tv;
-    return new Cls(glCanvas, Object.assign({}, P, {
-      signal: paintChannel,
-      viewSize: [SIGNAL_W, SIGNAL_H],
-      canvasSize: [640, 480],                  // fixed display; backing maps 1:1 to physical px
-      stripeUpscale: 640 / SIGNAL_W,           // 1 at the 640 default, 2 at ?res=320
-      debugOverlay: false,
-      convergence: {
-        r: [...P.convergence.r], g: [...P.convergence.g], b: [...P.convergence.b],
-      },
-      effects: Object.assign({}, P.effects),
-    }));
+  // Boot from the engine's tuned `tv` preset — the bench exists to retune
+  // it, and "copy state diff" output gets transferred back into
+  // CRT.presets.tv. The video channel feeds the engine directly
+  // (CRT.VideoSource); every other channel paints through paintChannel.
+  // `warm` replays the power-on warmup (renderer knob, boot), not on the
+  // rebuild a video-channel switch needs.
+  function makeRenderer(kind, warm) {
+    const P = CRT.presets.tv;
+    const ch = CHANNELS[channelIdx];
+    return new CRT(glCanvas, Object.assign({}, P, {
+      signalSize: [SIGNAL_W, SIGNAL_H],
+      effects: Object.assign({}, P.effects, warm ? {} : { warmup: false }),
+    }, ch.video ? { source: new CRT.VideoSource(sampleVideo) } : { signal: paintChannel }));
   }
-
   function stopBypass() {
     if (bypassRaf != null) { cancelAnimationFrame(bypassRaf); bypassRaf = null; }
   }
@@ -1465,7 +1585,7 @@ body[data-power="bypass"] .led {
   if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', bypassMotionHandler);
   else if (reducedMotion.addListener) reducedMotion.addListener(bypassMotionHandler);
 
-  function setRenderer(idx) {
+  function setRenderer(idx, warm = true) {
     rendererIdx = idx;
     staticPainted = false;      // new output device needs a fresh paint
     const kind = RENDERERS[idx];
@@ -1474,7 +1594,7 @@ body[data-power="bypass"] .led {
     const useBypass = kind === 'bypass' || !webglOk;
     if (!useBypass) {
       try {
-        renderer = makeRenderer(kind);
+        renderer = makeRenderer(kind, warm);
         window.__crt = renderer;
         renderer.start();
       } catch (err) {
@@ -1500,13 +1620,19 @@ body[data-power="bypass"] .led {
     document.body.dataset.power = inBypass ? 'bypass' : 'on';
     rebuildBench();
     updateReadout();
-    // RENDERER: 3 positions over -60°..+60°
-    knobRenderer.style.setProperty('--angle', (-60 + rendererIdx * 60) + 'deg');
+    // RENDERER: positions spread over -60°..+60°
+    knobRenderer.style.setProperty('--angle', (-60 + rendererIdx * 120 / (RENDERERS.length - 1)) + 'deg');
     syncUrl();
   }
 
   function setChannel(idx) {
+    const wasVideo = !!CHANNELS[channelIdx].video;
     channelIdx = idx;
+    const isVideo = !!CHANNELS[idx].video;
+    if (isVideo) sampleVideo.play().catch(() => { /* autoplay refused: stays on its first frame */ });
+    else sampleVideo.pause();
+    // signal ↔ direct-video is a construction choice: rebuild, no warmup
+    if (wasVideo !== isVideo && renderer) setRenderer(rendererIdx, false);
     staticPainted = false;
     if (reducedMotion.matches) {
       // no snow interstitial; repaint exactly one frame of the new channel
@@ -1520,10 +1646,33 @@ body[data-power="bypass"] .led {
       else { stopBypass(); startBypass(); }
     }
     updateReadout();
-    // CHANNEL: dial paints positions 2–7 over -120°..+120° (48° steps);
+    // CHANNEL: dial paints positions 2–10 over -120°..+120° (30° steps);
     // point at the painted position for this channel's number.
-    knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 48) + 'deg');
+    knobChannel.style.setProperty('--angle', (-120 + (CHANNELS[channelIdx].num - 2) * 30) + 'deg');
     syncUrl();
+  }
+
+  // --- Screen size ------------------------------------------------------
+  // The cabinet scales with --screen-w; the engine re-fits its backing
+  // store to the canvas's device-pixel box on its own (ResizeObserver).
+  let screenW = 640;
+  function applyScreenSize() {
+    document.documentElement.style.setProperty('--screen-w', screenW + 'px');
+  }
+  function makeSizeControl() {
+    const label = document.createElement('label');
+    label.className = 'bench-size';
+    label.textContent = 'screen ';
+    const sel = document.createElement('select');
+    for (const w of SIZES) {
+      const o = document.createElement('option');
+      o.value = String(w); o.textContent = `${w}×${w * 3 / 4}`;
+      if (w === screenW) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => { screenW = +sel.value; applyScreenSize(); syncUrl(); });
+    label.appendChild(sel);
+    return label;
   }
 
   // --- Bench (schema-driven parameter panel) ---------------------------
@@ -1536,6 +1685,7 @@ body[data-power="bypass"] .led {
       const note = document.createElement('p');
       note.className = 'bench-note';
       note.textContent = 'BYPASS — raw signal, no renderer active.';
+      note.appendChild(makeSizeControl());
       bench.appendChild(note);
       return;
     }
@@ -1559,6 +1709,7 @@ body[data-power="bypass"] .led {
       setTimeout(() => { copy.textContent = 'copy state diff'; }, 1400);
     });
     head.appendChild(copy);
+    head.appendChild(makeSizeControl());
     bench.appendChild(head);
 
     for (const group of renderer.constructor.effectSchema) {
@@ -1639,9 +1790,9 @@ body[data-power="bypass"] .led {
   }
 
   function updateReadout() {
-    const mode = webglOk
-      ? RENDERERS[rendererIdx].replace('-', ' ').toUpperCase()
-      : 'BYPASS (NO WEBGL2)';
+    const mode = !webglOk ? 'BYPASS (NO WEBGL2)'
+      : renderer ? `CRT · ${renderer._backend ? renderer._backend.kind.toUpperCase() : '—'}`
+      : 'BYPASS';
     document.getElementById('readout').textContent =
       `CH ${CHANNELS[channelIdx].num} · ${mode}${SIGNAL_W === 320 ? ' · 320' : ''}`;
   }
@@ -1653,6 +1804,7 @@ body[data-power="bypass"] .led {
     const u = new URL(window.location);
     u.searchParams.set('ch', String(CHANNELS[channelIdx].num));
     u.searchParams.set('renderer', RENDERERS[rendererIdx]);
+    if (screenW !== 640) u.searchParams.set('size', String(screenW)); else u.searchParams.delete('size');
     try { history.replaceState(null, '', u); }
     catch (_) { /* file:// or rate-limited — URL sync is best-effort */ }
   }
@@ -1661,8 +1813,12 @@ body[data-power="bypass"] .led {
     const ch = parseInt(u.searchParams.get('ch'), 10);
     const ci = CHANNELS.findIndex((c) => c.num === ch);
     if (ci >= 0) channelIdx = ci;
-    const ri = RENDERERS.indexOf(u.searchParams.get('renderer'));
+    let rq = u.searchParams.get('renderer');
+    if (rq === 'trinitron' || rq === 'shadow-mask') rq = 'crt';   // v1 deep links
+    const ri = RENDERERS.indexOf(rq);
     if (ri >= 0) rendererIdx = ri;
+    const sz = parseInt(u.searchParams.get('size'), 10);
+    if (SIZES.includes(sz)) screenW = sz;
   }
 
   // --- Bench fps meter --------------------------------------------------
@@ -1695,6 +1851,7 @@ body[data-power="bypass"] .led {
 
   // --- Boot -----------------------------------------------------------
   readUrl();
+  applyScreenSize();
   wireKnob(knobChannel,  () => CHANNELS.length,  () => channelIdx,  setChannel);
   wireKnob(knobRenderer, () => RENDERERS.length, () => rendererIdx, setRenderer);
   setRenderer(rendererIdx);
