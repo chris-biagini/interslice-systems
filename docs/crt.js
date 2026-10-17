@@ -200,7 +200,9 @@
         desc: 'Power-on: the tube starts dim, warm and undersaturated, then settles (~1.2 s).' },
     ] },
   ];
-  const PANEL_OPT_KEYS = [];
+  // hdrHeadroom has no schema row (tv.html adds its slider only when HDR is
+  // live) but belongs in "copy state diff" — it's the next knob to tune.
+  const PANEL_OPT_KEYS = ['hdrHeadroom'];
   for (const g of effectSchema) for (const it of g.items) for (const p of (it.params || [])) {
     if (!p.opt.startsWith('__')) PANEL_OPT_KEYS.push(p.opt);
   }
@@ -321,7 +323,15 @@
       if (!force && w === this._outSize[0] && h === this._outSize[1]) return;
       this._outSize = [w, h];
       this._updateTriads();
-      if (this._backend) this._backend.resize(w, h);
+      if (this._backend) {
+        this._backend.resize(w, h);
+        // Resizing the backing store blanks it. Repaint in this same frame
+        // (we may be inside a ResizeObserver callback, after this frame's
+        // animation callbacks) so a running tube never shows a black frame.
+        if (this._wasStartedByUser && this._visible) {
+          this.renderFrame(Math.max(0, performance.now() - this._startTime));
+        }
+      }
       this.requestRender();
     }
 
