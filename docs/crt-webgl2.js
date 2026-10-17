@@ -93,6 +93,12 @@ uniform float uBeamEnabled;
 uniform float uBeamMin;
 uniform float uBeamMax;
 uniform float uBeamShape;
+uniform float uGrilleEnabled;
+uniform float uTriadsAcross;
+uniform float uStripeFill;
+uniform float uMaskStrength;
+uniform float uMaskSoftness;
+uniform float uHeadroom;
 out vec4 oColor;
 const float INV_SQRT_2PI = 0.3989422804;
 float enc1(float l) { float a = abs(l); return sign(l) * (a <= 0.0031308 ? 12.92 * a : 1.055 * pow(a, 1.0 / 2.4) - 0.055); }
@@ -123,9 +129,48 @@ vec3 beam(vec2 sp) {                       // sp: signal-px coords, y top-first
   return sum;
 }
 
+// The aperture grille: continuous R/G/B stripes, period one triad, each
+// lit for stripeFill of its third. Each pixel takes the stripe's exact
+// average under a pixel filter — a 1-px box blended with a 1-px-radius
+// tent (maskSoftness). Both filters tile perfectly (their shifted copies
+// sum to 1), so the grille conserves energy at any pitch and fractional
+// pitches can't beat into moiré. The averages come from closed-form
+// integrals of the periodic box, range-reduced to stay float-exact.
+//
+// The mask then mixes toward flat only as far as the headroom demands:
+// in SDR, bright light blooms across the stripes instead of clipping;
+// with HDR headroom the stripes stay dark. P/duty has unit average, so
+// the mix never changes a region's energy.
+float boxI(float u, float d) { float n = floor(u); return n * d + min(u - n, d); }
+float boxI2(float u, float d) {
+  float n = floor(u), r = u - n;
+  float part = r < d ? 0.5 * r * r : d * r - 0.5 * d * d;
+  return 0.5 * d * n * (n - 1.0) + n * (d - 0.5 * d * d) + n * d * r + part;
+}
+float stripe(float t, float phase, float d, float px) {
+  float u = fract(t - phase) + 2.0;           // reduce; keeps u ± px ≥ 0
+  float box = (boxI(u + 0.5 * px, d) - boxI(u - 0.5 * px, d)) / px;
+  float tent = (boxI2(u + px, d) - 2.0 * boxI2(u, d) + boxI2(u - px, d)) / (px * px);
+  return mix(box, tent, uMaskSoftness);
+}
+vec3 grille(vec3 L, float xOut) {
+  if (uGrilleEnabled < 0.5) return L;
+  float triadPx = uOutSize.x / uTriadsAcross;
+  float t = xOut / triadPx;
+  float px = min(1.0 / triadPx, 1.0);
+  float duty = uStripeFill / 3.0;
+  float off = (1.0 - uStripeFill) / 6.0;
+  vec3 P = vec3(stripe(t, off, duty, px),
+                stripe(t, 1.0 / 3.0 + off, duty, px),
+                stripe(t, 2.0 / 3.0 + off, duty, px));
+  vec3 s = clamp((uHeadroom / max(L, vec3(1e-4)) - 1.0) / (1.0 / duty - 1.0), 0.0, uMaskStrength);
+  return L * mix(vec3(1.0), P / duty, s);
+}
+
 void main() {
   vec2 p = vec2(gl_FragCoord.x, uOutSize.y - gl_FragCoord.y) / uOutSize;   // top-first UV
   vec3 c = beam(p * uSignalSize);
+  c = grille(c, gl_FragCoord.x);
   oColor = vec4(enc(clamp(c, 0.0, 1.0)), 1.0);
 }`;
 

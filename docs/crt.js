@@ -89,7 +89,7 @@
     beamMin: 0.22, beamMax: 0.48, beamShape: 0.6, focusPx: 0.6,
     convergence: { r: [-0.25, 0], g: [0, 0], b: [0.25, 0] },
     // grille
-    triadTarget: 560, minPxPerTriad: 3, stripeFill: 0.8, maskStrength: 1.0, maskFilter: 1.25,
+    triadTarget: 560, minPxPerTriad: 3, stripeFill: 0.8, maskStrength: 1.0, maskSoftness: 0.5,
     headroom: 1.0, hdrHeadroom: 3.0,
     damperWires: [0.32, 0.68], damperStrength: 0.12, damperWidthPx: 1,
     // glow
@@ -138,7 +138,7 @@
           { opt: 'minPxPerTriad', sub: 'min px',    min: 2,   max: 12,   step: 0.5 },
           { opt: 'stripeFill',    sub: 'fill',      min: 0.4, max: 1,    step: 0.01 },
           { opt: 'maskStrength',  sub: 'strength',  min: 0,   max: 1,    step: 0.01 },
-          { opt: 'maskFilter',    sub: 'filter px', min: 0.5, max: 2.5,  step: 0.05 },
+          { opt: 'maskSoftness',  sub: 'softness',  min: 0,   max: 1,    step: 0.05 },
         ] },
       { key: 'damperWires', label: 'damper wires', scope: 'trinitron',
         desc: 'The two horizontal stabilizer wires — faint shadows, most visible on bright fields.',
@@ -344,7 +344,7 @@
         uConvergence: [conv.r[0], conv.g[0], conv.b[0]],
         uGrilleEnabled: on('grille'),
         uTriadsAcross: this._triads,
-        uStripeFill: o.stripeFill, uMaskStrength: o.maskStrength, uMaskFilter: o.maskFilter,
+        uStripeFill: o.stripeFill, uMaskStrength: o.maskStrength, uMaskSoftness: o.maskSoftness,
         uHeadroom: this._backend && this._backend.hdr ? o.hdrHeadroom : o.headroom,
         uBloom: e.bloom ? o.bloomStrength : 0, uBloomRadius: o.bloomRadius,
         uHalation: e.halation && this._quality < 2 ? o.halationStrength : 0, uHalationRadius: o.halationRadius,
