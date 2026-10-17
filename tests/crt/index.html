@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CRT v2 tests</title>
+<style>
+  body { margin: 0; background: #111; color: #ddd; font: 12px/1.4 ui-monospace, monospace; }
+  #out { white-space: pre-wrap; padding: 12px; }
+  #stage { position: absolute; left: 0; top: 0; opacity: 0.01; pointer-events: none; }
+  #stage canvas { display: block; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<pre id="out"></pre>
+<script src="harness.js"></script>
+<script src="util.js"></script>
+<script src="../../docs/crt.js"></script>
+<script src="../../docs/crt-webgl2.js"></script>
+<script src="sanity.test.js"></script>
+</body>
+</html>
