@@ -557,6 +557,59 @@
     }
   }
 
+  // --- Video source ---------------------------------------------------
+  // Feeds a <video> straight to the GPU (no 2D-canvas hop), letterboxed
+  // ('contain', default) or cropped ('cover') into the signal grid. The
+  // video's own frame clock drives the scheduler: each new frame marks
+  // the source dirty and wakes a parked renderer, a paused video lets it
+  // settle to idle, and nothing uploads until a real frame exists.
+  class VideoSource {
+    constructor(video, { fit = 'contain' } = {}) {
+      this.element = video;
+      this.fit = fit;
+      this._pending = false;
+      this._crt = null;
+      this._rvfc = null;
+      this._hasRvfc = typeof video.requestVideoFrameCallback === 'function';
+    }
+    get width() { return this.element.videoWidth; }
+    get height() { return this.element.videoHeight; }
+    ready() { return this.element.readyState >= 2 && this.element.videoWidth > 0; }
+
+    attach(crt) {
+      this._crt = crt;
+      const v = this.element;
+      this._pending = this.ready();
+      const wake = () => { this._pending = true; crt.requestRender(); };
+      if (this._hasRvfc) {
+        const onFrame = () => {
+          if (!this._crt) return;
+          wake();
+          this._rvfc = v.requestVideoFrameCallback(onFrame);
+        };
+        this._rvfc = v.requestVideoFrameCallback(onFrame);
+      }
+      this._wake = wake;
+      for (const ev of ['loadeddata', 'seeked', 'play']) v.addEventListener(ev, wake);
+    }
+
+    // True once per new frame. Without rVFC, a playing video is treated
+    // as new on every tick.
+    poll() {
+      if (!this.ready()) return false;
+      if (this._pending || (!this._hasRvfc && !this.element.paused)) { this._pending = false; return true; }
+      return false;
+    }
+
+    detach() {
+      const v = this.element;
+      if (this._rvfc != null && v.cancelVideoFrameCallback) v.cancelVideoFrameCallback(this._rvfc);
+      if (this._wake) for (const ev of ['loadeddata', 'seeked', 'play']) v.removeEventListener(ev, this._wake);
+      this._crt = null;
+    }
+  }
+
+  CRT.VideoSource = VideoSource;
   CRT.math = math;
   CRT.effectSchema = effectSchema;
   CRT.DEFAULT_OPTS = DEFAULT_OPTS;
