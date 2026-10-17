@@ -654,6 +654,29 @@
   }
 
   CRT.VideoSource = VideoSource;
+
+  // Async factory — the way to get HDR. backend: 'auto' (default) tries
+  // WebGPU only when the display reports high dynamic range; 'webgpu'
+  // forces it (SDR on an SDR display); 'webgl2' skips it. ?crtBackend=
+  // webgl2|webgpu in the page URL overrides. WebGPU's adapter and device
+  // are acquired before the canvas is touched, so any failure there still
+  // falls back to WebGL2 on the same canvas.
+  CRT.create = async function (canvas, opts = {}) {
+    let want = opts.backend || 'auto';
+    try {
+      const q = new URLSearchParams(location.search).get('crtBackend');
+      if (q === 'webgl2' || q === 'webgpu') want = q;
+    } catch (_) { /* no location */ }
+    const hdrScreen = !!(window.matchMedia && window.matchMedia('(dynamic-range: high)').matches);
+    const gpu = CRT.backends.webgpu;
+    if (gpu && navigator.gpu && (want === 'webgpu' || (want === 'auto' && hdrScreen))) {
+      try {
+        const prepared = await gpu.prepare();
+        return new CRT(canvas, Object.assign({}, opts, { backend: 'webgpu', _prepared: prepared }));
+      } catch (_) { /* fall through to WebGL2 */ }
+    }
+    return new CRT(canvas, Object.assign({}, opts, { backend: 'webgl2' }));
+  };
   CRT.math = math;
   CRT.effectSchema = effectSchema;
   CRT.DEFAULT_OPTS = DEFAULT_OPTS;

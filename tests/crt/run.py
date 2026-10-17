@@ -7,8 +7,9 @@ Serves the repo root on a free localhost port, opens tests/crt/ in
 headless /usr/bin/chromium with ?report=1, waits for the harness to POST
 its results, prints them, and exits 1 on any failure (or no results).
 
-WebGL defaults to SwiftShader (CPU, deterministic, slow: correctness
-only). CRT_GPU=1 uses the real GPU via ANGLE/Vulkan instead.
+WebGL (and WebGPU, via --enable-unsafe-webgpu) default to SwiftShader
+(CPU, deterministic, slow: correctness only). CRT_GPU=1 uses the real
+GPU via ANGLE/Vulkan instead.
 Stdlib only: no toolchain.
 """
 import http.server, json, os, shutil, subprocess, sys, tempfile, threading, urllib.parse
@@ -57,7 +58,7 @@ def main():
     proc = subprocess.Popen(
         [CHROMIUM, '--headless=new', '--no-first-run', '--no-default-browser-check',
          f'--user-data-dir={profile}', '--autoplay-policy=no-user-gesture-required',
-         '--window-size=1400,1100', *flags, *os.environ.get('CRT_CHROMIUM_FLAGS', '').split(), url],
+         '--window-size=1400,1100', '--enable-unsafe-webgpu', *flags, *os.environ.get('CRT_CHROMIUM_FLAGS', '').split(), url],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         ok = got.wait(TIMEOUT_S)

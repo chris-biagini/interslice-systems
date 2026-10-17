@@ -15,7 +15,7 @@ failure.
 
 - WebGL defaults to **SwiftShader** (CPU): deterministic and correct, but
   slow. Use it for correctness, never for performance numbers.
-- `CRT_GPU=1` runs on the real GPU (ANGLE/Vulkan).
+- `CRT_GPU=1` runs on the real GPU (ANGLE/Vulkan). The WebGPU parity tests need it: Dawn's SwiftShader adapter can't read back a canvas, so they skip there.
 - `CRT_CHROMIUM_FLAGS="..."` appends Chromium flags (e.g. WebGPU experiments).
 
 Interactive: serve the repo root (`python3 -m http.server 8765`) and open
