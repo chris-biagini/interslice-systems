@@ -93,3 +93,43 @@ test('lifecycle: WebGPU device loss reports through onLost', async () => {
     assert(crt._backend === null, 'backend dropped');
   } finally { try { crt.destroy(); } catch (_) {} crt.canvas.remove(); }
 });
+
+async function heroFrame(query, width) {
+  const f = document.createElement('iframe');
+  f.style.cssText = `width:${width}px;height:800px;position:absolute;left:0;top:0;opacity:0.01`;
+  f.src = '../../docs/index.html' + query;
+  document.body.appendChild(f);
+  const w = await new Promise((res) => f.addEventListener('load', () => res(f.contentWindow), { once: true }));
+  w.document.documentElement.setAttribute('data-theme', 'dark');
+  const t0 = performance.now();
+  while (!(w.__crt && w.__crt._frameCount > 5) && performance.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 50));
+  return { f, w };
+}
+const waitFor = async (fn, ms) => { const t0 = performance.now(); while (!fn() && performance.now() - t0 < ms) await new Promise((r) => setTimeout(r, 50)); return fn(); };
+
+test('lifecycle: a failed hero rebuild falls back to the SVG logo', async () => {
+  const { f, w } = await heroFrame('?crtBackend=webgl2', 1280);
+  try {
+    assert(w.document.documentElement.classList.contains('trinitron-active'), 'hero active first');
+    w.CRT.create = () => Promise.reject(new Error('simulated rebuild failure'));
+    f.style.width = '900px';                     // layout change → rebuild
+    const fellBack = await waitFor(() => !w.document.documentElement.classList.contains('trinitron-active'), 3000);
+    assert(fellBack, 'class still set after the rebuild failed (SVG hidden, no engine)');
+  } finally { f.remove(); }
+});
+
+test('lifecycle: the hero rebuilds after WebGPU device loss', async () => {
+  const a = navigator.gpu && await navigator.gpu.requestAdapter();
+  if (!a) skip('no WebGPU adapter');
+  // Dawn's SwiftShader adapter loses canvas-backed devices on its own.
+  if (a.info && a.info.isFallbackAdapter) skip('fallback adapter — run with CRT_GPU=1');
+  const { f, w } = await heroFrame('?crtBackend=webgpu', 1280);
+  try {
+    const first = w.__crt;
+    assert(first && first._backend.kind === 'webgpu', `backend ${first && first._backend.kind}`);
+    first.opts._prepared.device.destroy();       // stands in for a GPU reset
+    const rebuilt = await waitFor(() => w.__crt && w.__crt !== first && w.__crt._backend && w.__crt._mode === 'running', 4000);
+    assert(rebuilt, 'no running replacement engine');
+    assert(w.document.documentElement.classList.contains('trinitron-active'), 'hero active again');
+  } finally { f.remove(); }
+});

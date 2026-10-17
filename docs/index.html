@@ -1969,17 +1969,29 @@
     }
 
     // Async: CRT.create picks WebGPU (HDR phosphor) on HDR displays, else
-    // WebGL2. A newer call (resize mid-build) supersedes an older one; the
-    // caller syncs the theme once the engine exists.
-    let createGen = 0;
-    async function createTrinitron(newLayout) {
-      if (!newLayout) return;
-      const gen = ++createGen;
-      const wasRunning = trinitron && trinitron._wasStartedByUser;
-      if (trinitron) {
-        try { trinitron.destroy(); } catch (_) { /* defensive */ }
-        trinitron = null;
-      }
+    // WebGL2. Builds are serialized (the canvas, and with WebGPU its
+    // context, is shared between the old engine and the new), and a build
+    // whose layout was superseded while it waited is skipped — the newest
+    // layout wins. The old engine is destroyed only at the moment the new
+    // one claims the canvas (CRT.create's beforeConstruct), so a swap has
+    // no blank gap. If a build fails, the hero drops back to the static
+    // SVG logo; if the GPU device is lost later, it rebuilds.
+    let buildQueue = Promise.resolve();
+    let latestLayout = null;
+    function createTrinitron(newLayout) {
+      if (!newLayout) return Promise.resolve();
+      latestLayout = newLayout;
+      buildQueue = buildQueue.then(() => (newLayout === latestLayout ? buildTrinitron(newLayout) : undefined));
+      return buildQueue;
+    }
+    function dropToSvg() {
+      if (trinitron) { try { trinitron.destroy(); } catch (_) { /* defensive */ } }
+      trinitron = null;
+      window.__crt = null;
+      document.documentElement.classList.remove('trinitron-active');
+    }
+    async function buildTrinitron(newLayout) {
+      const wasRunning = trinitron ? trinitron._wasStartedByUser : isDark();
       layout = newLayout;
 
       // Resize the offscreen logo canvas to match the live mark size.
@@ -1995,13 +2007,21 @@
           signal,
           signalSize: [layout.width, layout.height],
           triadTarget: Math.max(1, Math.round(layout.width / 3)),
+          beforeConstruct: () => {
+            if (trinitron) { try { trinitron.destroy(); } catch (_) { /* defensive */ } }
+            trinitron = null;
+          },
+          onLost: () => {
+            dropToSvg();
+            createTrinitron(readLayout() || layout).then(syncWithTheme);
+          },
         }));
-        if (gen !== createGen) { made.destroy(); return; }
         trinitron = made;
         window.__crt = trinitron;
         if (wasRunning && isDark()) trinitron.start();
       } catch (err) {
-        // Silent fallback — SVG dark-mode logo remains as the static fallback.
+        // Silent fallback — the static SVG dark-mode logo takes over.
+        dropToSvg();
       }
     }
 
