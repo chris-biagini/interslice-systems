@@ -17,8 +17,9 @@
   // --- Pure helpers (unit-tested; mirrored in the shaders) -------------
   const math = {
     // Grille pitch rule (Chris, 2026-10-17): the full triad count on big
-    // displays, fewer/chunkier triads where a triad would drop below
-    // minPxPerTriad device pixels — so the stripes stay visible.
+    // displays, fewer/chunkier triads where a triad would drop below a
+    // minimum size — so the stripes stay visible. (The chassis passes the
+    // minimum in device px: opts.minPxPerTriad CSS px × DPR.)
     triadCount(outW, target, minPxPerTriad) {
       return Math.max(1, Math.min(Math.round(target), Math.floor(outW / Math.max(1e-6, minPxPerTriad))));
     },
@@ -99,11 +100,11 @@
     beamMin: 0.22, beamMax: 0.48, beamShape: 0.6, focusPx: 0.6,
     convergence: { r: [-0.25, 0], g: [0, 0], b: [0.25, 0] },
     // grille
-    triadTarget: 560, minPxPerTriad: 3, stripeFill: 0.8, maskStrength: 1.0, maskSoftness: 0.5,
+    triadTarget: 560, minPxPerTriad: 2.5, stripeFill: 0.8, maskStrength: 1.0, maskSoftness: 0.5,
     headroom: 1.0, hdrHeadroom: 3.0,
     damperWires: [0.32, 0.68], damperStrength: 0.12, damperWidthPx: 1,
     // glow
-    bloomStrength: 0.25, bloomRadius: 1.0, halationStrength: 0.06, halationRadius: 1.0,
+    bloomStrength: 0.12, bloomRadius: 0.6, halationStrength: 0.025, halationRadius: 1.0,
     // color + tone
     gradeTemperature: 0.3, gradeSaturation: 1.08, shoulderStart: 0.8,
     // glass
@@ -145,7 +146,7 @@
         desc: 'Continuous R/G/B phosphor stripes, independent of the signal grid, anti-aliased per pixel.',
         params: [
           { opt: 'triadTarget',   sub: 'triads',    min: 100, max: 1200, step: 10 },
-          { opt: 'minPxPerTriad', sub: 'min px',    min: 2,   max: 12,   step: 0.5 },
+          { opt: 'minPxPerTriad', sub: 'min css px', min: 1,  max: 8,    step: 0.25 },
           { opt: 'stripeFill',    sub: 'fill',      min: 0.4, max: 1,    step: 0.01 },
           { opt: 'maskStrength',  sub: 'strength',  min: 0,   max: 1,    step: 0.01 },
           { opt: 'maskSoftness',  sub: 'softness',  min: 0,   max: 1,    step: 0.05 },
@@ -324,8 +325,12 @@
       this.requestRender();
     }
 
+    // minPxPerTriad is in CSS px: CSS px track viewing size far better
+    // than device px (3 device px is a visible stripe on a 1× monitor and
+    // invisible on a 3× phone), so "stripes stay visible" holds per DPR.
     _updateTriads() {
-      this._triads = math.triadCount(this._outSize[0], this.opts.triadTarget, this.opts.minPxPerTriad);
+      const minDevicePx = this.opts.minPxPerTriad * (window.devicePixelRatio || 1);
+      this._triads = math.triadCount(this._outSize[0], this.opts.triadTarget, minDevicePx);
     }
 
     // Public: re-measure (pixelSize callers change opts.pixelSize first).
@@ -663,6 +668,10 @@
   // preset straight in: new CRT(canvas, Object.assign({}, CRT.presets.tv, {...})).
   // Values are tuned on the tv.html bench ("copy state diff").
   CRT.presets = {
+    // First tuning pass, 2026-10-17 (DPR-2 screenshots at 1280×960 and
+    // 2560×1920, plus a DPR-3 phone emulation). The healthy-tube values
+    // live in the class defaults (glow: bloom 0.12 @ 0.6, halation 0.025;
+    // grille: 560 triads, ≥ 2.5 CSS px each); the TV adds the power-on.
     tv: Object.freeze({
       effects: Object.freeze({ warmup: true }),
     }),

@@ -15,9 +15,12 @@ function channelShares(f, cx) {
 function assertBalanced(shares, label) {
   for (const v of shares) assert(v >= 0.27 && v <= 0.40, `${label}: shares ${shares.map((v) => v.toFixed(3))}`);
 }
-// Mean luminance in consecutive windows of exactly `period` px (fractional
-// edges weighted), over a column profile averaged across rows y0..y1.
-function windowMeans(f, period, y0, y1) {
+// Mean luminance in consecutive windows of a whole number of triads,
+// ≥ ~8 px wide (fractional edges weighted), over a column profile averaged
+// across rows y0..y1. A moiré beat spans many triads; windows narrower
+// than a few pixels would only measure their own aliasing.
+function windowMeans(f, triadPx, y0, y1) {
+  const period = triadPx * Math.max(1, Math.round(8 / triadPx));
   const col = new Float64Array(f.w);
   for (let x = 0; x < f.w; x++) col[x] = f.meanLum(x, y0, x + 1, y1);
   const out = [];
@@ -111,5 +114,16 @@ test('grille: energy is preserved at any mask softness', () => {
     const crt = makeCRT({ pixelSize: [1333, 1000], triadTarget: 396, maskSoftness: soft, effects: GRILLE(), signal: flatSignal(linearGray(0.25)) });
     assertNear(frameAt(crt, 0).meanLum(540, 380, 740, 580), 0.25, 0.25 * 0.06, `softness ${soft}`);
     crt.destroy();
+  }
+});
+
+test('grille: the minimum triad size is in CSS px (scales with DPR)', () => {
+  const desc = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+  Object.defineProperty(window, 'devicePixelRatio', { value: 3, configurable: true });
+  try {
+    const crt = makeCRT({ pixelSize: [1170, 878], minPxPerTriad: 2.5, effects: GRILLE(), signal: flatSignal('#000') });
+    assert(crt._triads === 156, `triads ${crt._triads}`);
+  } finally {
+    if (desc) Object.defineProperty(window, 'devicePixelRatio', desc); else delete window.devicePixelRatio;
   }
 });

@@ -12,7 +12,7 @@ test('glow: bloom lights the dark next to a bright patch', () => {
 });
 
 test('glow: halation reaches far', () => {
-  const on = makeCRT({ pixelSize: [1280, 960], effects: bare({ beam: true, halation: true }), signal: patch });
+  const on = makeCRT({ pixelSize: [1280, 960], halationStrength: 0.06, effects: bare({ beam: true, halation: true }), signal: patch });
   const off = makeCRT({ pixelSize: [1280, 960], effects: bare({ beam: true }), signal: patch });
   const a = frameAt(on, 0).lum(720, 480), b = frameAt(off, 0).lum(720, 480);
   assert(a > 0.001, `halation on, 60 px out: ${a}`);
