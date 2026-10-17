@@ -70,3 +70,56 @@ test('webgpu: SDR canvas is not HDR', async () => {
   liveGpu.push(crt);
   assert(crt._backend.kind === 'webgpu' && crt._backend.hdr === false, `kind ${crt._backend.kind} hdr ${crt._backend.hdr}`);
 });
+
+// Integration: tv.html on the WebGPU path shows a real picture. Samples
+// the CRT canvas by drawing it into a 2-D canvas (works for a WebGPU
+// canvas within the frame that rendered it, so we wait for a frame).
+test('webgpu: tv.html shows a picture on the WebGPU path', async () => {
+  await adapterOrSkip(true);
+  const f = document.createElement('iframe');
+  f.style.cssText = 'width:1400px;height:1100px;position:absolute;left:0;top:0;opacity:0.01';
+  f.src = '../../docs/tv.html?ch=9&renderer=crt-gpu';
+  document.body.appendChild(f);
+  try {
+    const w = await new Promise((res) => f.addEventListener('load', () => res(f.contentWindow), { once: true }));
+    const t0 = performance.now();
+    while (!(w.__crt && w.__crt._frameCount > 90) && performance.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 50));
+    assert(w.__crt && w.__crt._backend.kind === 'webgpu', `backend ${w.__crt && w.__crt._backend.kind}`);
+    const lum = await new Promise((res) => w.requestAnimationFrame(() => {
+      const src = w.document.getElementById('crt');
+      const c = document.createElement('canvas'); c.width = 160; c.height = 120;
+      const g = c.getContext('2d'); g.drawImage(src, 0, 0, 160, 120);
+      const d = g.getImageData(0, 0, 160, 120).data;
+      let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2];
+      res(s / (d.length / 4) / 3);
+    }));
+    assert(lum > 30, `mean picture level ${lum.toFixed(1)}/255`);
+  } finally { f.remove(); }
+});
+
+// Integration: the dark-mode hero builds through CRT.create and lights up
+// on the WebGPU path (?crtBackend=webgpu forces it on an SDR display).
+test('webgpu: the dark-mode hero glows on the WebGPU path', async () => {
+  await adapterOrSkip(true);
+  const f = document.createElement('iframe');
+  f.style.cssText = 'width:1280px;height:800px;position:absolute;left:0;top:0;opacity:0.01';
+  f.src = '../../docs/index.html?crtBackend=webgpu';
+  document.body.appendChild(f);
+  try {
+    const w = await new Promise((res) => f.addEventListener('load', () => res(f.contentWindow), { once: true }));
+    w.document.documentElement.setAttribute('data-theme', 'dark');
+    const t0 = performance.now();
+    while (!(w.__crt && w.__crt._frameCount > 60) && performance.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 50));
+    assert(w.__crt && w.__crt._backend.kind === 'webgpu', `backend ${w.__crt && w.__crt._backend.kind}`);
+    assert(w.document.documentElement.classList.contains('trinitron-active'), 'hero screen active');
+    const peak = await new Promise((res) => w.requestAnimationFrame(() => {
+      const src = w.document.querySelector('canvas.hero-screen');
+      const c = document.createElement('canvas'); c.width = 320; c.height = 100;
+      const g = c.getContext('2d'); g.drawImage(src, 0, 0, 320, 100);
+      const d = g.getImageData(0, 0, 320, 100).data;
+      let m = 0; for (let i = 0; i < d.length; i += 4) m = Math.max(m, d[i], d[i + 1], d[i + 2]);
+      res(m);
+    }));
+    assert(peak > 200, `brightest pixel ${peak}/255 (wordmark should glow)`);
+  } finally { f.remove(); }
+});

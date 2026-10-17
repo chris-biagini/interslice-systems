@@ -735,12 +735,15 @@ body[data-power="bypass"] .led {
 
           <div class="knob-station station-renderer">
             <svg class="dial" viewBox="0 0 202 164" width="202" height="164" aria-hidden="true">
-              <!-- ticks at -60,+60 deg (r 38->45 about 101,92) -->
-              <line x1="68.1"  y1="73" x2="62.0"  y2="69.5"/>
-              <line x1="133.9" y1="73" x2="140.0" y2="69.5"/>
-              <!-- position labels, r=58 -->
-              <text x="56.8"  y="63" font-size="8.5" letter-spacing="1" text-anchor="end">CRT</text>
-              <text x="145.2" y="63" font-size="8.5" letter-spacing="1" text-anchor="start">BYPASS</text>
+              <!-- ticks at -60,-20,+20,+60 deg (r 38->45 about 101,92); labels r=58 -->
+              <line x1="68.1" y1="73.0" x2="62.0" y2="69.5"/>
+              <line x1="88.0" y1="56.3" x2="85.6" y2="49.7"/>
+              <line x1="114.0" y1="56.3" x2="116.4" y2="49.7"/>
+              <line x1="133.9" y1="73.0" x2="140.0" y2="69.5"/>
+              <text x="50.8" y="63.0" font-size="8.5" letter-spacing="1" text-anchor="end">AUTO</text>
+              <text x="81.2" y="37.5" font-size="8.5" letter-spacing="1" text-anchor="middle">GL</text>
+              <text x="120.8" y="37.5" font-size="8.5" letter-spacing="1" text-anchor="middle">GPU</text>
+              <text x="151.2" y="63.0" font-size="8.5" letter-spacing="1" text-anchor="start">BYPASS</text>
               <text class="dial-caption" x="101" y="156" text-anchor="middle">RENDERER</text>
             </svg>
             <button class="knob" id="knob-renderer" aria-label="Renderer selector"><span class="grip" aria-hidden="true"></span></button>
@@ -766,6 +769,7 @@ body[data-power="bypass"] .led {
   </main>
 <script src="crt.js"></script>
 <script src="crt-webgl2.js"></script>
+<script src="crt-webgpu.js"></script>
 <script>
 (function () {
   'use strict';
@@ -776,7 +780,7 @@ body[data-power="bypass"] .led {
   // either way; only the grid feeding it changes.
   const RES = new URLSearchParams(location.search).get('res') === '320' ? 320 : 640;
   const SIGNAL_W = RES, SIGNAL_H = RES * 3 / 4;
-  const RENDERERS = ['crt', 'bypass'];
+  const RENDERERS = ['crt', 'crt-gl', 'crt-gpu', 'bypass'];   // crt = auto (WebGPU+HDR on HDR displays)
   const SIZES = [320, 480, 640, 960, 1280];      // screen CSS width options (bench header)
 
   // --- Channels --------------------------------------------------------
@@ -1533,7 +1537,7 @@ body[data-power="bypass"] .led {
   }
 
   // --- Renderer lifecycle --------------------------------------------
-  const glCanvas = document.getElementById('crt');
+  let glCanvas = document.getElementById('crt');
   const byCanvas = document.getElementById('bypass');
   const bctx = byCanvas.getContext('2d');
   const off = document.createElement('canvas');
@@ -1552,10 +1556,12 @@ body[data-power="bypass"] .led {
   // (CRT.VideoSource); every other channel paints through paintChannel.
   // `warm` replays the power-on warmup (renderer knob, boot), not on the
   // rebuild a video-channel switch needs.
-  function makeRenderer(kind, warm) {
+  const BACKEND_FOR = { 'crt': 'auto', 'crt-gl': 'webgl2', 'crt-gpu': 'webgpu' };
+  function makeRenderer(kind, warm, canvas) {
     const P = CRT.presets.tv;
     const ch = CHANNELS[channelIdx];
-    return new CRT(glCanvas, Object.assign({}, P, {
+    return CRT.create(canvas, Object.assign({}, P, {
+      backend: BACKEND_FOR[kind],
       signalSize: [SIGNAL_W, SIGNAL_H],
       effects: Object.assign({}, P.effects, warm ? {} : { warmup: false }),
     }, ch.video ? { source: new CRT.VideoSource(sampleVideo) } : { signal: paintChannel }));
@@ -1585,7 +1591,20 @@ body[data-power="bypass"] .led {
   if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', bypassMotionHandler);
   else if (reducedMotion.addListener) reducedMotion.addListener(bypassMotionHandler);
 
-  function setRenderer(idx, warm = true) {
+  // A canvas's context type is permanent (webgl2 vs webgpu), so each
+  // renderer gets a fresh <canvas> swapped into the cutout. Construction
+  // is async (CRT.create); the generation counter drops a renderer whose
+  // knob position was left before it finished building.
+  let rendererGen = 0;
+  function freshGlCanvas() {
+    const c = document.createElement('canvas');
+    c.id = 'crt';
+    glCanvas.replaceWith(c);
+    glCanvas = c;
+    return c;
+  }
+  async function setRenderer(idx, warm = true) {
+    const gen = ++rendererGen;
     rendererIdx = idx;
     staticPainted = false;      // new output device needs a fresh paint
     const kind = RENDERERS[idx];
@@ -1593,11 +1612,15 @@ body[data-power="bypass"] .led {
     stopBypass();
     const useBypass = kind === 'bypass' || !webglOk;
     if (!useBypass) {
+      let made = null;
       try {
-        renderer = makeRenderer(kind, warm);
+        made = await makeRenderer(kind, warm, freshGlCanvas());
+        if (gen !== rendererGen) { made.destroy(); return; }
+        renderer = made;
         window.__crt = renderer;
         renderer.start();
       } catch (err) {
+        if (gen !== rendererGen) return;
         console.warn('[tv] renderer init failed, bypass fallback:', err);
         // reset any half-constructed renderer (e.g. start() threw mid-frame)
         if (renderer) { try { renderer.destroy(); } catch (_) {} renderer = null; window.__crt = null; }
@@ -1613,6 +1636,7 @@ body[data-power="bypass"] .led {
         }
       }
     }
+    if (gen !== rendererGen) return;
     const inBypass = !renderer;
     glCanvas.hidden = inBypass;
     byCanvas.hidden = !inBypass;
@@ -1638,12 +1662,12 @@ body[data-power="bypass"] .led {
       // no snow interstitial; repaint exactly one frame of the new channel
       channelSwitchWall = -Infinity;
       if (renderer) renderer.start();
-      else { stopBypass(); startBypass(); }
+      else if (!byCanvas.hidden) { stopBypass(); startBypass(); }
     } else {
       channelSwitchWall = performance.now();
       // wake a parked renderer (or bypass loop) for the interstitial
       if (renderer) renderer.requestRender();
-      else { stopBypass(); startBypass(); }
+      else if (!byCanvas.hidden) { stopBypass(); startBypass(); }
     }
     updateReadout();
     // CHANNEL: dial paints positions 2–10 over -120°..+120° (30° steps);
@@ -1765,7 +1789,40 @@ body[data-power="bypass"] .led {
       }
       bench.appendChild(fs);
     }
+    appendHdrGroup(bench);
   }
+
+  // HDR group: only when the backend actually drives an extended-range
+  // canvas. hdrHeadroom is the peak phosphor level in multiples of page
+  // white; the display's real ceiling is unknowable from the web, so too
+  // much shows up as a gently compressed highlight, never a hard plateau.
+  function appendHdrGroup(bench) {
+    if (!renderer || !renderer._backend || !renderer._backend.hdr) return;
+    const fs = document.createElement('fieldset');
+    fs.className = 'bench-group';
+    const lg = document.createElement('legend');
+    lg.textContent = 'hdr';
+    fs.appendChild(lg);
+    const prow = document.createElement('div');
+    prow.className = 'bench-param';
+    const sub = document.createElement('span');
+    sub.textContent = 'headroom';
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = '1'; slider.max = '8'; slider.step = '0.1';
+    slider.value = String(renderer.opts.hdrHeadroom);
+    const val = document.createElement('output');
+    val.textContent = '×' + renderer.opts.hdrHeadroom.toFixed(1);
+    slider.addEventListener('input', () => {
+      const v = parseFloat(slider.value);
+      val.textContent = '×' + v.toFixed(1);
+      renderer.writeParam('hdrHeadroom', v);
+      updateReadout();
+    });
+    prow.append(sub, slider, val);
+    fs.appendChild(prow);
+    bench.appendChild(fs);
+  }
+
   function makeBadge(scope) {
     const b = document.createElement('span');
     b.className = `badge badge-${scope}`;
@@ -1791,7 +1848,7 @@ body[data-power="bypass"] .led {
 
   function updateReadout() {
     const mode = !webglOk ? 'BYPASS (NO WEBGL2)'
-      : renderer ? `CRT · ${renderer._backend ? renderer._backend.kind.toUpperCase() : '—'}`
+      : renderer ? `CRT · ${renderer._backend ? renderer._backend.kind.toUpperCase() : '—'} · ${renderer._backend && renderer._backend.hdr ? 'HDR ×' + renderer.opts.hdrHeadroom : 'SDR'}`
       : 'BYPASS';
     document.getElementById('readout').textContent =
       `CH ${CHANNELS[channelIdx].num} · ${mode}${SIGNAL_W === 320 ? ' · 320' : ''}`;
@@ -1854,8 +1911,7 @@ body[data-power="bypass"] .led {
   applyScreenSize();
   wireKnob(knobChannel,  () => CHANNELS.length,  () => channelIdx,  setChannel);
   wireKnob(knobRenderer, () => RENDERERS.length, () => rendererIdx, setRenderer);
-  setRenderer(rendererIdx);
-  setChannel(channelIdx);
+  setRenderer(rendererIdx).then(() => setChannel(channelIdx));
 })();
 </script>
 </body>

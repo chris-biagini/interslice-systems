@@ -1292,6 +1292,7 @@
 </main>
 <script src="crt.js"></script>
 <script src="crt-webgl2.js"></script>
+<script src="crt-webgpu.js"></script>
 <script src="sprinkles.js"></script>
 <script>
 (function () {
@@ -1967,8 +1968,13 @@
       paintScreen(ctx, timeMs);
     }
 
-    function createTrinitron(newLayout) {
+    // Async: CRT.create picks WebGPU (HDR phosphor) on HDR displays, else
+    // WebGL2. A newer call (resize mid-build) supersedes an older one; the
+    // caller syncs the theme once the engine exists.
+    let createGen = 0;
+    async function createTrinitron(newLayout) {
       if (!newLayout) return;
+      const gen = ++createGen;
       const wasRunning = trinitron && trinitron._wasStartedByUser;
       if (trinitron) {
         try { trinitron.destroy(); } catch (_) { /* defensive */ }
@@ -1985,11 +1991,13 @@
         // CSS px (1 signal px = 1 CSS px); the engine sizes its backing
         // store to the canvas's device pixels and draws the aperture
         // grille there — one triad per ~3 CSS px, as v1 did.
-        trinitron = new window.CRT(canvas, Object.assign({}, window.CRT.presets.hero, {
+        const made = await window.CRT.create(canvas, Object.assign({}, window.CRT.presets.hero, {
           signal,
           signalSize: [layout.width, layout.height],
           triadTarget: Math.max(1, Math.round(layout.width / 3)),
         }));
+        if (gen !== createGen) { made.destroy(); return; }
+        trinitron = made;
         window.__crt = trinitron;
         if (wasRunning && isDark()) trinitron.start();
       } catch (err) {
@@ -2009,8 +2017,7 @@
     }
 
     // Initial creation
-    createTrinitron(readLayout());
-    syncWithTheme();
+    createTrinitron(readLayout()).then(syncWithTheme);
 
     // Re-sync when OS preference changes
     const colorMq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -2044,8 +2051,7 @@
             && Math.abs(newLayout.fontPx - layout.fontPx) < 0.5) {
           return;
         }
-        createTrinitron(newLayout);
-        syncWithTheme();
+        createTrinitron(newLayout).then(syncWithTheme);
       }, 200);
     });
     resizeObs.observe(brand);
