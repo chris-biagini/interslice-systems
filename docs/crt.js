@@ -91,6 +91,8 @@
     backend: 'webgl2',
     outputColorSpace: 'auto',          // 'auto' | 'srgb' | 'display-p3'
     signal: null,                      // (ctx, timeMs, needsRepaint) => false | other
+    onLost: null,                      // (info) => void — the backend died (WebGPU device loss)
+    beforeConstruct: null,             // CRT.create only: runs just before the canvas is claimed
     source: null,                      // e.g. new CRT.VideoSource(video)
     respectReducedMotion: true,
     adaptiveQuality: true,
@@ -668,9 +670,19 @@
   // Async factory — the way to get HDR. backend: 'auto' (default) tries
   // WebGPU only when the display reports high dynamic range; 'webgpu'
   // forces it (SDR on an SDR display); 'webgl2' skips it. ?crtBackend=
-  // webgl2|webgpu in the page URL overrides. WebGPU's adapter and device
-  // are acquired before the canvas is touched, so any failure there still
-  // falls back to WebGL2 on the same canvas.
+  // webgl2|webgpu in the page URL overrides.
+  //
+  // WebGPU's adapter, device and every pipeline are prepared before the
+  // canvas is touched, so any failure there falls back to WebGL2 on the
+  // same canvas. A failure after the canvas has been claimed for WebGPU
+  // can't fall back (context types are permanent); it rejects with an
+  // error that deliberately doesn't say "unavailable" — WebGL2 itself may
+  // be fine, and callers latch "no WebGL2" on that word.
+  //
+  // opts.beforeConstruct(), if given, runs after the async preparation and
+  // immediately before the engine claims the canvas — the moment to
+  // destroy an engine being replaced on the same canvas, so the swap has
+  // no blank gap and the two never share a live context.
   CRT.create = async function (canvas, opts = {}) {
     let want = opts.backend || 'auto';
     try {
@@ -679,14 +691,29 @@
     } catch (_) { /* no location */ }
     const hdrScreen = !!(window.matchMedia && window.matchMedia('(dynamic-range: high)').matches);
     const gpu = CRT.backends.webgpu;
+    const before = () => { if (typeof opts.beforeConstruct === 'function') opts.beforeConstruct(); };
     if (gpu && navigator.gpu && (want === 'webgpu' || (want === 'auto' && hdrScreen))) {
-      try {
-        const prepared = await gpu.prepare();
-        return new CRT(canvas, Object.assign({}, opts, { backend: 'webgpu', _prepared: prepared }));
-      } catch (_) { /* fall through to WebGL2 */ }
+      let prepared = null;
+      try { prepared = await gpu.prepare(); } catch (_) { /* fall through to WebGL2 */ }
+      if (prepared) {
+        before();
+        try {
+          return new CRT(canvas, Object.assign({}, opts, { backend: 'webgpu', _prepared: prepared }));
+        } catch (e) {
+          try { prepared.device.destroy(); } catch (_) { /* already gone */ }
+          try { return new CRT(canvas, Object.assign({}, opts, { backend: 'webgl2' })); }
+          catch (_) {
+            const err = new Error('CRT WebGPU init failed after claiming the canvas; no WebGL2 fallback on this canvas');
+            err.cause = e;
+            throw err;
+          }
+        }
+      }
     }
+    before();
     return new CRT(canvas, Object.assign({}, opts, { backend: 'webgl2' }));
   };
+
   CRT.math = math;
   CRT.effectSchema = effectSchema;
   CRT.DEFAULT_OPTS = DEFAULT_OPTS;

@@ -286,17 +286,47 @@ fn shoulder(c: vec3f) -> vec3f {
     f32.set(v, base / 4);
   }
 
-  // Acquire adapter + device without touching the canvas (see header).
+  // Acquire adapter + device and build every pipeline without touching the
+  // canvas (see header). createRenderPipelineAsync rejects on WGSL or
+  // validation errors — so a shader the browser's compiler dislikes fails
+  // here, where CRT.create can still fall back to WebGL2, instead of
+  // rendering a silent black canvas later. Screen pipelines are built for
+  // every canvas format create() might configure.
+  const F16 = 'rgba16float';
   async function prepare() {
     const adapter = navigator.gpu && await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('WebGPU unavailable: no adapter');
     const device = await adapter.requestDevice();
-    return { adapter, device };
+    try {
+      const mods = {};
+      const pipe = async (name, code, formats) => {
+        const module = mods[name] || (mods[name] = device.createShaderModule({ code }));
+        return device.createRenderPipelineAsync({
+          layout: 'auto',
+          vertex: { module, entryPoint: 'vs' },
+          fragment: { module, entryPoint: 'fs', targets: formats.map((f) => ({ format: f })) },
+          primitive: { topology: 'triangle-list' },
+        });
+      };
+      const screenFormats = [navigator.gpu.getPreferredCanvasFormat()];
+      if (window.matchMedia && window.matchMedia('(dynamic-range: high)').matches && !screenFormats.includes(F16)) screenFormats.push(F16);
+      const [persist, hbeam, mask, down, up, ...screens] = await Promise.all([
+        pipe('persist', PERSIST, [F16]), pipe('hbeam', HBEAM, [F16, F16]), pipe('mask', MASK, [F16]),
+        pipe('down', DOWN, [F16]), pipe('up', UP, [F16]),
+        ...screenFormats.map((f) => pipe('screen', SCREEN, [f])),
+      ]);
+      const screen = {};
+      screenFormats.forEach((f, i) => { screen[f] = screens[i]; });
+      return { adapter, device, pipelines: { persist, hbeam, mask, down, up, screen } };
+    } catch (e) {
+      device.destroy();
+      throw e;
+    }
   }
 
   function create(canvas, { opts, chassis }) {
     const prep = opts._prepared;
-    if (!prep || !prep.device) throw new Error('WebGPU unavailable: use CRT.create()');
+    if (!prep || !prep.device || !prep.pipelines) throw new Error('WebGPU unavailable: use CRT.create()');
     const device = prep.device;
     const ctx = canvas.getContext('webgpu');
     if (!ctx) throw new Error('WebGPU unavailable: no canvas context');
@@ -323,18 +353,8 @@ fn shoulder(c: vec3f) -> vec3f {
     }
 
     const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
-    const mod = (code) => device.createShaderModule({ code });
-    const pipe = (code, formats) => device.createRenderPipeline({
-      layout: 'auto',
-      vertex: { module: mod(code), entryPoint: 'vs' },
-      fragment: { module: mod(code), entryPoint: 'fs', targets: formats.map((f) => ({ format: f })) },
-      primitive: { topology: 'triangle-list' },
-    });
-    const F16 = 'rgba16float';
-    const P = {
-      persist: pipe(PERSIST, [F16]), hbeam: pipe(HBEAM, [F16, F16]), mask: pipe(MASK, [F16]),
-      down: pipe(DOWN, [F16]), up: pipe(UP, [F16]), screen: pipe(SCREEN, [format]),
-    };
+    const P = Object.assign({}, prep.pipelines, { screen: prep.pipelines.screen[format] });
+    if (!P.screen) throw new Error(`CRT WebGPU: no screen pipeline for ${format}`);
 
     const SLOTS = 11;
     const ubuf = device.createBuffer({ size: SLOTS * SLOT, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -353,11 +373,16 @@ fn shoulder(c: vec3f) -> vec3f {
     let readback = null;
     const destroyAll = (arr) => arr.forEach((t) => t && t.destroy());
 
+    // Device loss (GPU reset, driver update, OS reclaim): halt cleanly and
+    // tell the owner, who can rebuild through CRT.create (a new device) or
+    // fall back. Our own destroy() is not a loss.
+    let destroying = false;
     device.lost.then((info) => {
-      if (info.reason === 'destroyed') return;
+      if (destroying) return;
       console.warn('[crt] WebGPU device lost:', info.message);
       chassis._haltLoop();
       chassis._backend = null;
+      if (typeof opts.onLost === 'function') opts.onLost(info);
     });
 
     const bind = (pipeline, slot, textures) => device.createBindGroup({
@@ -506,6 +531,8 @@ fn shoulder(c: vec3f) -> vec3f {
         if (readback) readback.buf.destroy();
         ubuf.destroy();
         try { ctx.unconfigure(); } catch (_) { /* older engines */ }
+        destroying = true;
+        device.destroy();               // each CRT.create prepares its own device
       },
     };
     return backend;
