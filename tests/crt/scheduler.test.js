@@ -15,6 +15,12 @@ function fakeBackend(log) {
   };
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Poll until the renderer parks (late observer callbacks may wake it once).
+async function untilIdle(crt, maxMs = 3000) {
+  const t0 = performance.now();
+  while (crt._mode !== 'idle' && performance.now() - t0 < maxMs) await wait(25);
+  return crt._mode;
+}
 
 test('scheduler: static signal parks', async () => {
   const log = {};
@@ -22,16 +28,15 @@ test('scheduler: static signal parks', async () => {
   const crt = makeCRT({ _backendFactory: fakeBackend(log), persistenceHalfLifeMs: 58,
     signal: () => { if (painted) return false; painted = true; } });
   crt.start();
-  await wait(58 * 8 + 300);
-  assert(crt._mode === 'idle', `mode ${crt._mode}`);
+  await wait(58 * 8);
+  assert(await untilIdle(crt) === 'idle', `mode ${crt._mode}`);
 });
 
 test('scheduler: requestRender wakes a parked renderer', async () => {
   const log = {};
   const crt = makeCRT({ _backendFactory: fakeBackend(log), persistenceHalfLifeMs: 10, signal: () => false });
   crt.start();
-  await wait(400);
-  assert(crt._mode === 'idle', `parked first, mode ${crt._mode}`);
+  assert(await untilIdle(crt) === 'idle', `parked first, mode ${crt._mode}`);
   crt.requestRender();
   assert(crt._mode === 'running', `mode ${crt._mode}`);
 });
